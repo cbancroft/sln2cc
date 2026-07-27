@@ -158,12 +158,14 @@ msvclsp/
 
 - **Branch from `main`.** Never commit directly to `main`.
 - Branch names: `feat/<short-desc>`, `fix/<short-desc>`, `docs/<short-desc>`,
-  `refactor/<short-desc>`.
+  `refactor/<short-desc>`, `chore/<short-desc>` (dependencies, tooling, CI, housekeeping).
 - **Always run the full test suite before pushing.** Both the CLI and the plugin — see
   section 7. A green local run is the minimum bar for a push; don't rely on CI to catch it.
 - Also run `cargo fmt` and `cargo clippy -- -D warnings` before pushing; CI fails on either.
 - Commits are focused and imperative-mood ("Add sln project enumeration"). Keep unrelated
   changes out.
+- A change that adds a feature or fixes a bug updates `docs/changelog.md` in the same
+  commit — see section 9.
 - Never commit generated artifacts: `cli/target/`, `.msvclsp/` (including inside
   `fixtures/`). Both are gitignored — don't force-add them.
 - Never commit golden files regenerated against a real Visual Studio installation; they must
@@ -248,14 +250,23 @@ The product is not functional yet, so calibrate expectations:
 | [docs/project_spec.md](docs/project_spec.md) | Purpose, audience, problem, product behavior, multi-solution handling. **The source of truth for *what* and *why*.** |
 | [docs/engineering_spec.md](docs/engineering_spec.md) | Tech stack, architecture, module design, engineering requirements, testing strategy, CI. **The source of truth for *how*.** |
 | [docs/milestones.md](docs/milestones.md) | Feature groupings for MVP / V1 / V2 / future. No timelines. |
+| [docs/todos.md](docs/todos.md) | Issue tracker: per-release checklist of scoped work items, each with a branch name and required tests. **Stands in for GitHub issues** until the project has a repo host. |
+| [docs/changelog.md](docs/changelog.md) | Running log of features and bugfixes. **Updated as work lands, not at release time** — it's the source material for release notes. |
 | [docs/brainstorm.md](docs/brainstorm.md) | Original thinking. **Historical — partly superseded.** It describes an LSP-proxy architecture that was abandoned. Read for context, don't treat as current. |
 | [README.md](README.md) | User-facing intro, prerequisites, build and test instructions. |
 
 **Consult these before making design decisions.** Each spec ends with an "Open Questions"
 section; if a task touches one of those, raise it rather than silently picking an answer.
 
-**Keep them current.** After completing a milestone, resolving an open question, or making a
-structural change:
+**Update the changelog as you go.** Any user-visible feature or bugfix gets an entry under
+`## [Unreleased]` in [docs/changelog.md](docs/changelog.md) *in the same change that
+implements it* — not reconstructed from git log at release time. Write entries for someone
+using the tool, not someone reading the diff: what changed for them, not which functions
+moved. Skip purely internal work (refactors, test scaffolding, doc edits) unless it changes
+behavior. At release, the `[Unreleased]` section becomes the new version's notes.
+
+**Keep the rest current.** After completing a milestone, resolving an open question, or
+making a structural change:
 
 - Record resolved open questions as decisions in the relevant spec, and remove them from the
   Open Questions list.
