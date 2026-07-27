@@ -1,0 +1,18 @@
+[package]
+name = "msvclsp"
+version = "0.1.0"
+edition = "2021"
+description = "Generates clangd compile_commands.json from Visual Studio solutions"
+license = "MIT"
+
+# Crate selection is still an open question (see docs/engineering_spec.md).
+# Candidates under consideration:
+#   XML parsing      quick-xml | roxmltree
+#   SQLite           rusqlite
+#   CLI parsing      clap
+#   Serialization    serde + serde_json
+#   Error handling   anyhow + thiserror
+#   Logging          tracing | log
+[dependencies]
+
+[dev-dependencies]
