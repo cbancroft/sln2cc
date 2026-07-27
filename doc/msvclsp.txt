@@ -1,0 +1,36 @@
+*msvclsp.txt*   clangd support for Visual Studio solutions
+
+==============================================================================
+CONTENTS                                                    *msvclsp-contents*
+
+  1. Introduction ......................... |msvclsp-introduction|
+  2. Setup ................................ |msvclsp-setup|
+  3. Commands ............................. |msvclsp-commands|
+  4. Configuration ........................ |msvclsp-configuration|
+
+==============================================================================
+1. INTRODUCTION                                         *msvclsp-introduction*
+
+msvclsp.nvim parses a Visual Studio solution, generates a compile_commands.json
+compilation database from it, and starts clangd against that database — giving
+C/C++ language support in Neovim for projects built with MSBuild rather than
+CMake.
+
+TODO: expand.
+
+==============================================================================
+2. SETUP                                                       *msvclsp-setup*
+
+TODO: installation and require("msvclsp").setup({}) example.
+
+==============================================================================
+3. COMMANDS                                                 *msvclsp-commands*
+
+TODO: document :Msvclsp* commands.
+
+==============================================================================
+4. CONFIGURATION                                       *msvclsp-configuration*
+
+TODO: document options from lua/msvclsp/config.lua.
+
+vim:tw=78:ts=8:ft=help:norl:
