@@ -9,19 +9,91 @@ Several details remain open and are tracked at the end of this document rather t
 
 ## CLI Binary
 
-- **Language:** Rust.
-- **Candidate crates** (per brainstorm.md, library selection is still to be investigated/validated,
-  not finalized):
-  - XML parsing (`.sln`/`.vcxproj`/`.props`/`.targets`) — e.g. `quick-xml` or `roxmltree`.
-  - SQLite integration — e.g. `rusqlite`.
-  - CLI argument/subcommand parsing — e.g. `clap`.
-  - Serialization (JSON output for the plugin contract, `compile_commands.json` itself) — `serde` /
-    `serde_json`.
-  - Error handling — `anyhow` and/or `thiserror`.
-  - Logging/diagnostics — `tracing` or `log` + a subscriber.
+- **Language:** Rust, edition 2024, MSRV 1.85.
+- **Dependencies** — four direct, 20 packages including transitives. See "Dependency Decisions"
+  below for the reasoning behind each, and for what was rejected.
+  - XML parsing (`.vcxproj`/`.props`/`.targets`) — `roxmltree`.
+  - CLI argument/subcommand parsing — `clap`, with derive, `default-features = false`.
+  - Serialization (JSON output for the plugin contract, `compile_commands.json`, and the state
+    file) — `serde` + `serde_json`.
+  - Error handling — `thiserror`.
+  - Persistence — no crate; a JSON state file written through `serde_json`.
+  - Logging — no crate; deferred (see below).
 - **Toolchain/SDK discovery** will need to shell out to or otherwise query `vswhere` (or equivalent)
   to locate installed Visual Studio instances, MSVC toolset versions, and Windows SDK versions —
   this is not derivable from the `.vcxproj` files themselves.
+
+## Dependency Decisions
+
+Resolved in MVP-01. Recorded here because the rejected options are the kind of thing that gets
+proposed again a year later.
+
+**`roxmltree` over `quick-xml`.** MSBuild evaluation is not a single forward pass: import
+resolution interleaves with property expansion and condition evaluation, so nodes get revisited
+and parents get walked. That calls for a DOM, and `roxmltree`'s is read-only and dependency-free.
+`quick-xml`'s main draw is its serde integration, and that is unusable here — `PropertyGroup`
+children are arbitrary user-defined element names (`<MyCustomInclude>`), which no derived schema
+can model. Generic tree access is required either way, and these files are kilobytes, so
+`quick-xml`'s throughput advantage buys nothing.
+
+*Consequence to design around:* `roxmltree` borrows from the source `&str`, so lifetimes
+propagate. Rather than keeping every file's text alive in an arena, `msbuild.rs` should parse one
+file at a time and lower it into an owned IR, dropping the `Document` before moving to the next
+import.
+
+**A JSON state file instead of SQLite.** `db.rs` stores known configuration/platform pairs, the
+last-used selection per solution, and dependency mtimes — a few KB of key-value data. Against that,
+`rusqlite` on Windows effectively requires the `bundled` feature, because there is no system SQLite
+dev library to link; `bundled` compiles the SQLite C amalgamation via `cc`, making a working C
+toolchain a hard requirement to build msvclsp at all. That is a poor trade when building from source
+is a live distribution option and the plugin's users are Neovim users, not necessarily C developers.
+
+*Tradeoffs accepted:* SQLite would have given transactional writes for free, so two Neovim
+instances in one project root are now last-writer-wins. Writes must be atomic (temp file + rename)
+so a torn file is impossible even though a lost update is possible. Staleness checks over a few
+thousand mtimes become a JSON parse rather than a query — milliseconds at MVP scale. Revisit if
+either bites.
+
+**`thiserror`, not `anyhow`.** The plugin must distinguish "solution not found" from "unsupported
+MSBuild construct" from "no Visual Studio installation" to map failures onto exit codes and JSON
+error kinds. `anyhow`'s type erasure would mean downcasting to recover the kind, which defeats the
+contract; it is not used even in `main.rs`, where it would only obscure the kind-to-exit-code
+mapping. `thiserror` is a proc macro with no runtime component, and the variant count will be high
+enough that hand-written `Display`/`Error` impls become the larger maintenance cost.
+
+**`clap` with a trimmed feature set.** Three subcommands is small enough to hand-roll over
+`std::env::args`, but the tool is invoked by hand constantly while debugging, where discoverable
+`--help` earns its keep, and derive keeps definitions declarative in `cli.rs` so `main.rs` stays
+thin. `default-features = false` drops `color` and `suggestions` — styled help and fuzzy matching
+are close to worthless when the primary consumer is a program.
+
+**Logging deferred, not chosen.** The important diagnostic requirement — warn on unsupported
+MSBuild constructs — is *structured data the plugin must surface*, not a log line, because the
+plugin is forbidden from scraping human-readable text. Those warnings therefore belong in the JSON
+contract as a `warnings` array. What remains for a facade is developer-facing debug tracing while
+building the evaluator, which no current milestone blocks on. `eprintln!` covers the few human
+progress messages. When tracing is genuinely wanted, prefer `log` over `tracing`: spans pay off in
+async and long-running services, whereas here the nesting context worth having ("evaluating
+`a.props`, imported by `b.vcxproj`") belongs in the error and diagnostic payloads where the plugin
+can use it.
+
+**Version pinning.** `Cargo.toml` carries ordinary caret requirements; `cli/Cargo.lock` is
+committed, which is where exact reproducibility actually lives for a binary crate.
+
+**MSRV 1.85** is set by `clap` 4.6, the highest floor in the tree — every other dependency sits at
+1.71 or below. It is recorded as `rust-version` in `Cargo.toml` so a too-old toolchain fails with a
+clear cargo message rather than a confusing compile error.
+
+**Edition 2024**, which requires exactly 1.85 and therefore costs no compatibility beyond the floor
+`clap` already imposes. Edition and MSRV are independent knobs and it's worth not confusing them:
+edition 2021 needs only Rust 1.56, so staying on it would have locked out nobody — but it would
+have protected nobody either, since `clap` sets the real gate. The lever for actually supporting
+older toolchains is `clap` 4.5, which holds MSRV 1.74 across all its patch releases; that was
+rejected because msvclsp only *runs* on Windows, where Rust arrives via rustup rather than a distro
+package, so the population stranded between 1.74 and 1.85 is small and `rustup update` fixes it.
+Migrating while the codebase was still stubs made the change free; the cost only grows once the
+evaluator exists. Note that edition 2024 also selects style edition 2024, which changes `use`
+statement ordering — `cargo fmt` output differs from 2021, so don't be surprised by the reordering.
 
 ## Neovim Plugin
 
@@ -67,9 +139,10 @@ Rough module breakdown implied by the parsing pipeline:
   and defines into `compile_commands.json` entries. Flags should be emitted in a form `clangd`
   understands directly (e.g. via `--driver-mode=cl` for MSVC-style flags) rather than translated to
   native clang flags, to minimize translation-fidelity risk.
-- **Persistence (SQLite)** — stores, per discovered solution: known configuration/platform values,
-  the last-active configuration/platform, and file modification timestamps used to detect when a
-  reparse is needed. Schema design is not yet finalized (see Open Questions).
+- **Persistence (JSON state file)** — stores, per discovered solution: known configuration/platform
+  values, the last-active configuration/platform, and file modification timestamps used to detect
+  when a reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
+  cannot leave a torn file. The on-disk shape is not yet finalized (see Open Questions).
 - **CLI/subcommand layer** — the contract the Neovim plugin drives. At minimum needs subcommands to:
   discover solutions under a root, list a solution's configuration/platform options, and generate/
   regenerate `compile_commands.json` for a given solution + configuration/platform. Exact
@@ -93,7 +166,7 @@ Rough module breakdown implied by the parsing pipeline:
 
 - `.msvclsp/` at the project root (project root = same root markers Neovim's LSP clients use).
 - Namespaced by solution: `.msvclsp/<solution-name>/compile_commands.json`.
-- A SQLite database (location within `.msvclsp/` TBD — likely a single db at the `.msvclsp/` root
+- A JSON state file (location within `.msvclsp/` TBD — likely a single file at the `.msvclsp/` root
   rather than one per solution, since it needs to track which solution is currently active) holds
   discovery cache, per-solution configuration/platform state, and file modification timestamps.
 
@@ -119,7 +192,7 @@ MSBuild-evaluation surface area bounded.
 # Testing Strategy
 
 - **Unit tests** for each module (XML/MSBuild parsing, macro/condition evaluation, compile database
-  generation, SQLite persistence layer), run as standard `cargo test`, on any OS — toolchain
+  generation, state-file persistence layer), run as standard `cargo test`, on any OS — toolchain
   discovery mocked out where needed.
 - **Fixture-based integration tests**: a corpus of sample `.sln`/`.vcxproj`/`.props` files of
   varying complexity (simple single-project solution, multi-project solution, property-sheet
@@ -144,6 +217,9 @@ MSBuild-evaluation surface area bounded.
   on a standard Linux CI runner; toolchain-discovery code stays mocked in this environment.
   A Windows runner job should additionally verify at least that the binary builds and runs on
   Windows, since that's the only real target runtime.
+- **MSRV:** a job pinned to the declared `rust-version` running `cargo check --all-targets
+  --locked`. Every other job uses `stable`, so without this the declared floor would drift upward
+  the first time someone used a newer language feature. `--locked` also catches a stale lockfile.
 - **Neovim plugin:** headless `plenary.nvim` test run on every push/PR.
 - Provider (e.g. GitHub Actions) and exact workflow files are not yet written — this section
   documents intent/expectations, not a finished pipeline.
@@ -152,12 +228,15 @@ MSBuild-evaluation surface area bounded.
 
 - Exact scope of MSBuild evaluation needed (property sheet inheritance, conditions, macros) to
   produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md.
-- Final crate choices (XML parser, SQLite crate, CLI parser, logging) — brainstorm.md flags these as
-  needing investigation rather than being decided.
-- SQLite schema design (tables/keys for solutions, configurations/platforms, file timestamps).
+- State file shape (keys for solutions, configurations/platforms, file timestamps) and how solution
+  identity is keyed so it survives the working directory changing.
+- Whether last-writer-wins state is acceptable long term, or whether two Neovim instances sharing a
+  project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - CLI subcommand surface and JSON output contract with the Neovim plugin — carried over from
   project_spec.md.
-- Minimum Supported Rust Version (MSRV) and Rust edition.
+- Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
+  contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
+  users directly. Worth settling alongside the release/distribution question below.
 - Source and scope of the fixture corpus for integration tests — hand-authored minimal solutions,
   sanitized real-world examples, or both.
 - Release/distribution strategy: how the CLI binary is distributed to the Neovim plugin (built from

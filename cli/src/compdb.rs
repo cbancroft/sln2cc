@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::Result;
 use crate::msbuild::EvaluatedProject;
 use crate::toolchain::Toolchain;
-use crate::Result;
 
 /// A single entry in the compilation database.
 #[derive(Debug, Clone)]

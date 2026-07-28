@@ -1,18 +1,37 @@
 [package]
 name = "msvclsp"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# Forced by clap 4.6, the highest floor in the tree — and exactly what edition 2024 needs,
+# so the edition costs no additional compatibility. See docs/engineering_spec.md.
+rust-version = "1.85"
 description = "Generates clangd compile_commands.json from Visual Studio solutions"
 license = "MIT"
 
-# Crate selection is still an open question (see docs/engineering_spec.md).
-# Candidates under consideration:
-#   XML parsing      quick-xml | roxmltree
-#   SQLite           rusqlite
-#   CLI parsing      clap
-#   Serialization    serde + serde_json
-#   Error handling   anyhow + thiserror
-#   Logging          tracing | log
+# Dependencies are deliberately few; see "Dependency Decisions" in docs/engineering_spec.md
+# for the full reasoning. Summary of what was *rejected* and why, so it isn't relitigated:
+#
+#   quick-xml         Its serde integration is the draw, but MSBuild PropertyGroup children
+#                     are arbitrary user-defined element names, which no derived schema can
+#                     model. Generic tree access is required either way, so roxmltree's
+#                     read-only DOM is the better fit for evaluation-order traversal.
+#   rusqlite          State is a few KB of config/platform selections and mtimes. `bundled`
+#                     would compile the SQLite C amalgamation, requiring a C toolchain to
+#                     build msvclsp at all. Persistence is a JSON file instead.
+#   anyhow            Errors must carry a machine-readable kind for the plugin's JSON output
+#                     and exit codes; type erasure would mean downcasting to recover it.
+#   tracing / log     Unsupported-construct warnings are structured data in the JSON
+#                     contract, not log lines. Deferred until the evaluator needs debug
+#                     tracing; adding a facade later is mechanical.
 [dependencies]
+# default-features = false drops "color" (anstream, colorchoice) and "suggestions" (strsim):
+# the primary consumer is the plugin, not a human reading styled help.
+clap = { version = "4.6.4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+roxmltree = "0.21.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.19"
 
+# Intentionally empty. Golden-file tests compare pretty-printed JSON as strings, so they
+# need no JSON parser of their own.
 [dev-dependencies]

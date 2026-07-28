@@ -11,8 +11,10 @@ pub mod msbuild;
 pub mod sln;
 pub mod toolchain;
 
-/// Placeholder error type until an error-handling crate is chosen.
-/// See the "Final crate choices" open question in docs/engineering_spec.md.
+/// Placeholder until a real error enum lands (MVP-02). The plugin has to tell
+/// "no Visual Studio installation" apart from "unsupported MSBuild construct" to map
+/// failures onto exit codes and JSON, which a boxed trait object can't express without
+/// downcasting — hence `thiserror` rather than `anyhow`.
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A configuration/platform pair as declared by a solution, e.g. `Debug|x64`.

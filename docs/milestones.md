@@ -20,8 +20,8 @@ configuration/platform, no multi-solution complexity yet.
 - Discover the configuration/platform combinations available in a solution.
 - Toolchain/Windows SDK discovery (e.g. via `vswhere`) to resolve system include paths.
 - Generate a `compile_commands.json` for a specified configuration/platform.
-- Persist parsed state in SQLite, keyed on file modification timestamps, to skip reparsing when
-  nothing has changed.
+- Persist parsed state in a JSON state file, keyed on file modification timestamps, to skip
+  reparsing when nothing has changed.
 - Structured (JSON) output for anything the Neovim plugin needs to consume programmatically.
 
 ## Neovim Plugin
@@ -42,7 +42,7 @@ workflow smoother.
 ## Rust CLI Binary
 
 - Subcommand to discover `.sln` files under a project root.
-- Per-solution state in SQLite: each discovered solution independently tracks its own last-used
+- Per-solution state on disk: each discovered solution independently tracks its own last-used
   configuration/platform.
 - `compile_commands.json` output namespaced by solution (`.msvclsp/<solution-name>/`).
 

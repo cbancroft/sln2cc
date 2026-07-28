@@ -35,8 +35,8 @@ MSVC LSP closes that gap with two artifacts that work together:
    `compile_commands.json` that `clangd` can consume directly. It also:
    - Discovers the available configuration/platform combinations in a solution so the caller can
      choose one.
-   - Persists parsed state and the active configuration/platform selection locally (e.g. SQLite),
-     so it can detect when the solution or its files have changed and avoid unnecessary reparsing.
+   - Persists parsed state and the active configuration/platform selection locally, so it can
+     detect when the solution or its files have changed and avoid unnecessary reparsing.
 
 2. **A Neovim plugin** that makes the binary practical to use day-to-day: installing/running it,
    generating and regenerating the compilation database, switching the active configuration/

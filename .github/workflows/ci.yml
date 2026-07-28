@@ -34,6 +34,28 @@ jobs:
       - run: cargo build
       - run: cargo test
 
+  # Nothing else pins a toolchain, so without this the declared MSRV could drift upward
+  # unnoticed the first time someone uses a newer language feature.
+  #
+  # The version must match `rust-version` in cli/Cargo.toml. Raising it there without
+  # updating it here fails loudly — cargo refuses to build a manifest that demands a newer
+  # toolchain than the one installed — so the duplication is self-correcting in the
+  # direction that matters.
+  #
+  # `cargo check` rather than clippy or test: the question is whether the code compiles on
+  # 1.85, and lint output legitimately varies between versions. `--locked` makes the answer
+  # deterministic by testing exactly the dependency versions we ship, and fails if the
+  # lockfile is stale. `--all-targets` covers test code, which can regress MSRV too.
+  rust-msrv:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - run: cargo check --all-targets --locked
+
   nvim:
     runs-on: ubuntu-latest
     steps:

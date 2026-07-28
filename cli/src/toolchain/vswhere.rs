@@ -4,8 +4,8 @@
 //!
 //! Windows-only at runtime; the crate as a whole must still build on other platforms.
 
-use crate::toolchain::{Toolchain, ToolchainProvider};
 use crate::Result;
+use crate::toolchain::{Toolchain, ToolchainProvider};
 
 #[derive(Debug, Default, Clone)]
 pub struct VsWhereToolchain;

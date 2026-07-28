@@ -47,7 +47,7 @@ msvclsp/
 ├── CLAUDE.md                     This file.
 ├── README.md                     User-facing intro, build and test instructions.
 ├── .gitignore                    Ignores cli/target/ and generated .msvclsp/ dirs.
-├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), Rust build (Windows), plugin tests.
+├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), build (Windows), MSRV check, plugin tests.
 │
 ├── cli/                          Rust CLI binary. All cargo commands run from here.
 │   ├── Cargo.toml                No dependencies yet — crate choices are still open.
@@ -62,7 +62,7 @@ msvclsp/
 │   │   ├── toolchain.rs          ToolchainProvider trait + FakeToolchain for tests.
 │   │   │   └── vswhere.rs        Real discovery via vswhere. Windows-only at runtime.
 │   │   ├── compdb.rs             compile_commands.json construction and serialization.
-│   │   └── db.rs                 SQLite: per-solution config/platform state and mtimes.
+│   │   └── db.rs                 JSON state file: per-solution config/platform and mtimes.
 │   └── tests/
 │       ├── generate.rs           Fixture-driven integration tests.
 │       └── golden/               Expected output per fixture. Never regenerate from a live toolchain.
@@ -128,8 +128,11 @@ msvclsp/
 **Dependencies**
 
 - Prefer the standard library. Every crate and Lua dependency is a maintenance liability.
-- Crate selection for the CLI is still an open decision — see `Cargo.toml` comments and the
-  engineering spec. Don't add dependencies casually; if one is needed, say why.
+- CLI dependencies are settled: `roxmltree`, `clap`, `serde`/`serde_json`, `thiserror`. Persistence
+  is a JSON file, not SQLite, and there is deliberately no logging crate. The reasoning — including
+  why `quick-xml`, `rusqlite`, `anyhow`, and `tracing` were rejected — is in `Cargo.toml` comments
+  and "Dependency Decisions" in the engineering spec. Read it before proposing an addition; don't
+  add dependencies casually, and if one is genuinely needed, say why.
 - The plugin depends on Neovim itself and plenary (tests only). Avoid adding runtime plugin
   dependencies.
 

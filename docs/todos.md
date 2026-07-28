@@ -27,11 +27,19 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `cli/Cargo.toml`.
 
   **Description:** The crate is currently dependency-free with candidates listed as comments.
-  Pick an XML parser, SQLite binding, argument parser, serialization stack, error-handling
-  crate, and logging facade; add them with pinned versions and record the reasoning in
+  Pick an XML parser, argument parser, serialization stack, error-handling crate, and a
+  persistence and logging approach; add them and record the reasoning in
   `engineering_spec.md`, removing the corresponding open question. Prefer fewer, well-
   maintained crates over convenience wrappers, and verify each one builds cleanly on both
   Linux and Windows before committing, since CI runs both.
+
+  **Outcome:** `roxmltree`, `clap` (derive, `default-features = false`), `serde`/`serde_json`,
+  `thiserror` — four direct dependencies, 20 packages resolved. Two candidate slots were
+  closed by deciding *not* to take a crate: persistence is a JSON state file rather than
+  `rusqlite`, whose `bundled` feature would make a C toolchain a hard build requirement, and
+  no logging facade was added because unsupported-construct warnings belong in the JSON
+  contract rather than on stderr. MSRV is pinned at 1.85 (set by `clap` 4.6). This reshaped
+  MVP-04 and MVP-18; see "Dependency Decisions" in `engineering_spec.md`.
 
   **Tests:** `cargo build` and `cargo clippy -- -D warnings` clean on Linux and Windows;
   no test coverage needed beyond CI staying green.
@@ -67,20 +75,27 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Integration tests invoking the built binary with `--help`, a missing required
   argument, and an unknown subcommand, asserting exit codes and that errors go to stderr.
 
-- [ ] **MVP-04 — Structured logging and warning output**
-  `feat/logging` · ~3h
+- [ ] **MVP-04 — Diagnostic collection and stdout/stderr discipline**
+  `feat/diagnostics` · ~3h
 
-  **Summary:** Route human-facing progress and warnings to stderr behind a verbosity flag,
-  keeping stdout reserved for machine-readable JSON.
+  **Summary:** Collect warnings into a structured diagnostic list that rides along in the JSON
+  output, and keep human-facing progress on stderr with stdout reserved for JSON.
 
-  **Description:** Parsing a large solution takes real time and emits warnings about
-  unsupported constructs, so the CLI needs a logging facade initialized once at startup with
-  a `-v/--verbose` flag controlling level. The critical invariant is that nothing but JSON is
-  ever written to stdout, because the plugin parses it directly. Avoid logging absolute user
-  paths or full environment contents at default verbosity.
+  **Description:** Reframed by MVP-01, which deliberately added no logging facade. Warnings
+  about unsupported constructs are *data the plugin must surface to the user*, and the plugin
+  is forbidden from scraping human-readable text — so they belong in the JSON payload as a
+  `warnings` array, not as log lines. Define a `Diagnostic` type (severity, message, and the
+  offending path or construct) that evaluation can accumulate into, and thread it through to
+  the output types in `cli.rs`. Parsing a large solution takes real time, so keep a
+  `-v/--verbose` flag for human progress on stderr via `eprintln!`. The critical invariant is
+  that nothing but JSON is ever written to stdout, because the plugin parses it directly.
+  Avoid emitting absolute user paths or full environment contents at default verbosity. If
+  debug tracing during evaluation later justifies a real facade, `log` is the recorded
+  preference over `tracing` — see "Dependency Decisions" in `engineering_spec.md`.
 
-  **Tests:** Integration test asserting stdout is valid JSON with warnings present on stderr;
-  unit test that the default level suppresses debug output.
+  **Tests:** Integration test asserting stdout parses as JSON and carries warnings in the
+  payload while human progress goes to stderr; unit test that diagnostics accumulate in order
+  and that default verbosity suppresses progress output.
 
 ## Solution parsing
 
@@ -304,21 +319,26 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Persistence
 
-- [ ] **MVP-18 — SQLite schema and store initialization**
+- [ ] **MVP-18 — State file shape and store initialization**
   `feat/db-schema` · ~5h
 
-  **Summary:** Create the database under `.msvclsp/` with a solution-scoped schema and a
-  version table for future migrations.
+  **Summary:** Create the JSON state file under `.msvclsp/` with a solution-scoped shape and a
+  version field for future migrations.
 
-  **Description:** Tables cover solutions, their known configuration/platform pairs, the
-  active selection per solution, and tracked file modification times — scoped per solution
-  from the start even though only one is active in the MVP, since retrofitting that later
-  means a migration. Include a schema version row so upgrades are possible, and make `open()`
-  create-or-migrate idempotently. Record the final schema in `engineering_spec.md` and close
+  **Description:** Reframed by MVP-01, which chose a JSON file over SQLite. The shape covers
+  solutions, their known configuration/platform pairs, the active selection per solution, and
+  tracked file modification times — scoped per solution from the start even though only one is
+  active in the MVP, since retrofitting that later means a migration. Include a schema version
+  field so upgrades are possible, and make `open()` create-or-load idempotently, treating a
+  missing file as empty state rather than an error. Writes must be atomic — serialize to a
+  temporary file in the same directory, then rename over the target — so neither a crash nor a
+  second Neovim instance can leave a torn file. Solution identity must be keyed so it survives
+  the working directory changing. Record the final shape in `engineering_spec.md` and close
   that open question.
 
-  **Tests:** Unit tests asserting a fresh database is created with the expected tables,
-  reopening an existing database is a no-op, and a corrupt file produces a clear error.
+  **Tests:** Unit tests asserting a fresh state file is created with the expected top-level
+  keys, reopening existing state round-trips unchanged, a missing file yields empty state, and
+  a malformed or truncated file produces a clear error rather than a panic.
 
 - [ ] **MVP-19 — Persist active configuration/platform per solution**
   `feat/db-active-config` · ~3h
