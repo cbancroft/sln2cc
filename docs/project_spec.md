@@ -4,6 +4,12 @@ This document defines the purpose of MSVC LSP: who it is for, what problem it so
 the project does. It is derived from the initial thinking in [brainstorm.md](brainstorm.md) and
 will be expanded in future sessions.
 
+Decisions about product behavior and architecture — including ones that reshape what is described
+here — are recorded as architecture decision records under [adr/](adr/), one file per decision, each
+tied to the [todos.md](todos.md) item it came out of. This document states what the product does;
+the ADRs state why it does that rather than the alternative. Conventions for writing them are in
+section 9 of [../CLAUDE.md](../CLAUDE.md).
+
 # Who This Is For
 
 Developers who:

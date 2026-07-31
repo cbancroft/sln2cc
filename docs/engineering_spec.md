@@ -5,6 +5,19 @@ architecture and system design, engineering requirements, and testing strategy. 
 product intent described in [project_spec.md](project_spec.md) and [brainstorm.md](brainstorm.md).
 Several details remain open and are tracked at the end of this document rather than guessed at.
 
+# Decision Records
+
+This document describes the design as it currently stands. *Why* it stands that way — the options
+weighed, what was rejected, and what each choice costs — is recorded in the architecture decision
+records under [adr/](adr/), one file per decision, each tied to the [todos.md](todos.md) item it
+came out of. When a section here summarizes a decision, it links to the ADR holding the full
+argument; read that before reopening the question. Conventions for writing them are in section 9 of
+[../CLAUDE.md](../CLAUDE.md).
+
+| ADR | Decision |
+| --- | --- |
+| [01](adr/01-address-dependencies.md) | CLI dependencies, persistence approach, MSRV and edition (MVP-01). |
+
 # Tech Stack
 
 ## CLI Binary
@@ -26,7 +39,8 @@ Several details remain open and are tracked at the end of this document rather t
 ## Dependency Decisions
 
 Resolved in MVP-01. Recorded here because the rejected options are the kind of thing that gets
-proposed again a year later.
+proposed again a year later; see [ADR 01](adr/01-address-dependencies.md) for the full record,
+including the discussion behind each rejection and the consequences accepted.
 
 **`roxmltree` over `quick-xml`.** MSBuild evaluation is not a single forward pass: import
 resolution interleaves with property expansion and condition evaluation, so nodes get revisited

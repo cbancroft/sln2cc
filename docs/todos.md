@@ -9,7 +9,9 @@ dependency order within each section — later items generally assume earlier on
 Estimates are rough (`~4h`, `~1d`) and exist only to keep scope honest.
 
 See [milestones.md](milestones.md) for the feature groupings these come from, and
-[engineering_spec.md](engineering_spec.md) for design detail.
+[engineering_spec.md](engineering_spec.md) for design detail. An item that settles a design question
+gets an architecture decision record in [adr/](adr/) recording the reasoning; every ADR names the
+item it came out of, so the two link both ways.
 
 ---
 
@@ -39,7 +41,8 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `rusqlite`, whose `bundled` feature would make a C toolchain a hard build requirement, and
   no logging facade was added because unsupported-construct warnings belong in the JSON
   contract rather than on stderr. MSRV is pinned at 1.85 (set by `clap` 4.6). This reshaped
-  MVP-04 and MVP-18; see "Dependency Decisions" in `engineering_spec.md`.
+  MVP-04 and MVP-18; see [ADR 01](adr/01-address-dependencies.md) and "Dependency Decisions" in
+  `engineering_spec.md`.
 
   **Tests:** `cargo build` and `cargo clippy -- -D warnings` clean on Linux and Windows;
   no test coverage needed beyond CI staying green.

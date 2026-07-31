@@ -87,6 +87,7 @@ msvclsp/
 │                                 props-inheritance, multi-config. Used by both Rust
 │                                 integration tests and manual clangd verification.
 └── docs/                         See section 9.
+    └── adr/                      Architecture decision records, numbered. One file per decision.
 ```
 
 ## 3. CLI Guidelines
@@ -169,6 +170,8 @@ msvclsp/
   changes out.
 - A change that adds a feature or fixes a bug updates `docs/changelog.md` in the same
   commit — see section 9.
+- A change that settles an architecture or design decision adds an ADR under `docs/adr/` in
+  the same commit — see section 9.
 - Never commit generated artifacts: `cli/target/`, `.msvclsp/` (including inside
   `fixtures/`). Both are gitignored — don't force-add them.
 - Never commit golden files regenerated against a real Visual Studio installation; they must
@@ -252,6 +255,7 @@ The product is not functional yet, so calibrate expectations:
 | --- | --- |
 | [docs/project_spec.md](docs/project_spec.md) | Purpose, audience, problem, product behavior, multi-solution handling. **The source of truth for *what* and *why*.** |
 | [docs/engineering_spec.md](docs/engineering_spec.md) | Tech stack, architecture, module design, engineering requirements, testing strategy, CI. **The source of truth for *how*.** |
+| [docs/adr/](docs/adr/) | Architecture decision records — one file per decision, capturing the problem, the decision, and the discussion that got there. **The source of truth for *why it isn't otherwise*.** |
 | [docs/milestones.md](docs/milestones.md) | Feature groupings for MVP / V1 / V2 / future. No timelines. |
 | [docs/todos.md](docs/todos.md) | Issue tracker: per-release checklist of scoped work items, each with a branch name and required tests. **Stands in for GitHub issues** until the project has a repo host. |
 | [docs/changelog.md](docs/changelog.md) | Running log of features and bugfixes. **Updated as work lands, not at release time** — it's the source material for release notes. |
@@ -267,6 +271,26 @@ implements it* — not reconstructed from git log at release time. Write entries
 using the tool, not someone reading the diff: what changed for them, not which functions
 moved. Skip purely internal work (refactors, test scaffolding, doc edits) unless it changes
 behavior. At release, the `[Unreleased]` section becomes the new version's notes.
+
+**Write an ADR when a decision gets made.** Anything that settles an architecture or design
+question — a dependency chosen or rejected, a module boundary drawn, an approach abandoned —
+gets a record in [docs/adr/](docs/adr/) *in the same change that implements it*. The specs say
+what the design is; ADRs say why it is that and not the alternative, so the same debate isn't
+had again a year later. Conventions:
+
+- **Filename:** a zero-padded number, then a 3–6 word hyphenated descriptor — e.g.
+  `01-address-dependencies.md`. Numbers are assigned in order and never reused, and a
+  superseded ADR stays put with its status changed rather than being deleted or rewritten.
+- **Always reference an item in [docs/todos.md](docs/todos.md).** An ADR records the reasoning
+  behind a piece of scoped work, so it names the issue it came out of. If a decision doesn't
+  correspond to a todo item, add the item first — a decision with no work behind it is a spec
+  change, not an ADR.
+- **Cover three things:** the problem being addressed, the decision reached, and the back and
+  forth that produced it — including options rejected and why, and what the decision costs.
+  The discussion is the part that has value later; a bare verdict doesn't prevent relitigation.
+- **Link both directions.** Note the decision's outcome on the todo item and record it in the
+  relevant spec, with the spec's section pointing at the ADR for the full argument. Specs stay
+  the readable current-state description; ADRs hold the depth.
 
 **Keep the rest current.** After completing a milestone, resolving an open question, or
 making a structural change:
