@@ -47,7 +47,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** `cargo build` and `cargo clippy -- -D warnings` clean on Linux and Windows;
   no test coverage needed beyond CI staying green.
 
-- [ ] **MVP-02 — Replace the placeholder error type**
+- [x] **MVP-02 — Replace the placeholder error type**
   `refactor/error-type` · ~4h
 
   **Summary:** Swap `Result<T> = Result<T, Box<dyn Error>>` for a real error enum carrying
@@ -58,6 +58,17 @@ Goal: one solution, one manually selected configuration/platform, producing a
   just a message. Define a crate-level error enum with variants per failure mode, implement
   `std::error::Error`, and include the offending path or construct where relevant. This
   underpins the exit-code and JSON-error contract, so land it before the subcommands.
+
+  **Outcome:** A flat crate-level `Error` enum in a new `cli/src/error.rs` — fourteen leaf variants
+  covering every failure mode this tracker names, plus a `Context` wrapper that **delegates its kind
+  to what it wraps**, so adding context can never reclassify a failure. The wire-facing
+  classification lives in a separate `ErrorKind` whose strings are written out by hand rather than
+  derived from Rust variant names, so a refactor can't silently break the plugin contract, with
+  `exit_code()` mapping kinds onto seven coarse classes (`2` reserved for `clap`'s usage errors).
+  Serialization was deliberately left out — `ErrorKind` derives no `serde` traits, which **narrows
+  MVP-03** to wiring `exit_code()` and `as_str()` into output types it already owns. Also: no
+  `From<std::io::Error>`, since a bare `?` would discard the path. See
+  [ADR 02](adr/02-structured-error-type.md) and "Error Handling" in `engineering_spec.md`.
 
   **Tests:** Unit tests asserting each variant's `Display` output and that error kinds
   survive being wrapped and propagated through a call chain.

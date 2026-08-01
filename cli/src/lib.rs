@@ -7,15 +7,16 @@
 pub mod cli;
 pub mod compdb;
 pub mod db;
+pub mod error;
 pub mod msbuild;
 pub mod sln;
 pub mod toolchain;
 
-/// Placeholder until a real error enum lands (MVP-02). The plugin has to tell
-/// "no Visual Studio installation" apart from "unsupported MSBuild construct" to map
-/// failures onto exit codes and JSON, which a boxed trait object can't express without
-/// downcasting — hence `thiserror` rather than `anyhow`.
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub use error::{Error, ErrorKind, ResultExt};
+
+/// The crate's fallible return type. Every error carries an [`ErrorKind`], which is what the
+/// plugin dispatches on — see [`error`] for why that isn't a boxed trait object.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// A configuration/platform pair as declared by a solution, e.g. `Debug|x64`.
 ///
@@ -25,4 +26,12 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub struct ConfigPlatform {
     pub configuration: String,
     pub platform: String,
+}
+
+/// Renders as `Debug|x64`, the form solutions and project conditions both use, so error
+/// messages and pickers name a pair the way the user's own files do.
+impl std::fmt::Display for ConfigPlatform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}|{}", self.configuration, self.platform)
+    }
 }

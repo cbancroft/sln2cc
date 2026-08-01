@@ -17,6 +17,7 @@ argument; read that before reopening the question. Conventions for writing them 
 | ADR | Decision |
 | --- | --- |
 | [01](adr/01-address-dependencies.md) | CLI dependencies, persistence approach, MSRV and edition (MVP-01). |
+| [02](adr/02-structured-error-type.md) | Structured error type with machine-readable kinds and exit codes (MVP-02). |
 
 # Tech Stack
 
@@ -163,6 +164,56 @@ Rough module breakdown implied by the parsing pipeline:
   subcommand names and output shape are not yet finalized (see Open Questions), but output intended
   for the plugin to consume programmatically should be structured (JSON) rather than
   human-formatted text.
+
+## Error Handling
+
+`error.rs` defines a flat crate-level `Error` enum and `pub type Result<T> = Result<T, Error>`. Each
+variant carries the offending path, line, or construct so the message names what actually failed;
+`Error::io(path, source)` exists because `std::io::Error` omits the path, and there is deliberately
+no `From<std::io::Error>` impl that would let a bare `?` discard it. `Error::context` and
+`ResultExt::with_context` wrap an error with a description of what was being attempted — the wrapper
+**delegates its kind to what it wraps**, so adding context can never reclassify a failure. See
+[ADR 02](adr/02-structured-error-type.md) for why this shape and not per-module error types.
+
+A separate `ErrorKind` carries the classification the plugin dispatches on. Its `as_str()` values
+are a **contract with the plugin** and are written out explicitly rather than derived from Rust
+variant names, so a refactor cannot silently change them:
+
+| Kind | Raised when |
+| ---- | ----------- |
+| `io` | A filesystem operation failed. |
+| `solution-not-found` | The requested `.sln` does not exist. |
+| `solution-parse` | A `.sln` is malformed, naming the line. |
+| `project-parse` | A `.vcxproj`/`.props` is not well-formed XML. |
+| `unsupported-construct` | An MSBuild construct outside the supported subset. |
+| `missing-import` | A required `<Import>` target does not exist. |
+| `import-cycle` | Imports form a cycle. |
+| `recursion-limit` | A macro-expansion or import depth cap was hit. |
+| `toolchain-not-found` | No `vswhere`, or no VS instance with the C++ workload. |
+| `toolchain-incomplete` | VS is present but the toolset/Windows SDK layout is not. |
+| `invalid-configuration` | The requested configuration/platform isn't one the solution declares. |
+| `state-parse` | The state file is malformed or truncated. |
+| `state-version` | The state file's schema version is unsupported. |
+| `path-escape` | A path from an untrusted project file resolved outside its permitted root. |
+
+`ErrorKind::exit_code()` maps kinds onto coarse classes rather than one code per kind — the plugin
+reads the exact kind from JSON, so exit codes only need to be useful from a shell. `2` is never
+returned, because that is `clap`'s usage-error code and overloading it would make a mistyped command
+indistinguishable from a real failure.
+
+| Code | Class | Kinds |
+| ---- | ----- | ----- |
+| 1 | generic failure | `io` |
+| 3 | input not found | `solution-not-found` |
+| 4 | malformed input | `solution-parse`, `project-parse`, `state-parse`, `state-version` |
+| 5 | unsupported construct | `unsupported-construct`, `missing-import`, `import-cycle`, `recursion-limit` |
+| 6 | toolchain unavailable | `toolchain-not-found`, `toolchain-incomplete` |
+| 7 | bad selection | `invalid-configuration` |
+| 8 | rejected path | `path-escape` |
+
+`ErrorKind` intentionally derives no `serde` traits. The JSON error payload's shape belongs to the
+subcommand output types in `cli.rs`, which serialize `as_str()`; rendering the `source()` chain as a
+human-readable message on stderr belongs to `main.rs`.
 
 ## Neovim Plugin — Responsibilities
 
