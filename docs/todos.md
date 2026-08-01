@@ -22,7 +22,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Foundation
 
-- [ ] **MVP-01 — Select and wire up CLI dependencies**
+- [x] **MVP-01 — Select and wire up CLI dependencies**
   `chore/cli-dependencies` · ~4h
 
   **Summary:** Resolve the open crate-selection question and add the chosen dependencies to
