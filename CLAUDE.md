@@ -50,7 +50,7 @@ msvclsp/
 ├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), build (Windows), MSRV check, plugin tests.
 │
 ├── cli/                          Rust CLI binary. All cargo commands run from here.
-│   ├── Cargo.toml                No dependencies yet — crate choices are still open.
+│   ├── Cargo.toml                Four deps (see section 5), MSRV 1.85. Cargo.lock is committed.
 │   ├── src/
 │   │   ├── main.rs               Thin entry point: arg parsing and dispatch only.
 │   │   ├── lib.rs                Public API surface; placeholder Result alias, ConfigPlatform.

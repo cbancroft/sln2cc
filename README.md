@@ -32,7 +32,7 @@ installed, since toolchain and Windows SDK discovery depend on it.
 
 | Tool                     | Needed for                                              |
 | ------------------------ | -------------------------------------------------------- |
-| Rust (stable) + Cargo    | Building and testing the CLI.                             |
+| Rust 1.85+ + Cargo       | Building and testing the CLI.                             |
 | Neovim 0.9+              | Running the plugin and its tests.                         |
 | [plenary.nvim]           | The plugin test harness.                                  |
 | clangd                   | Manual end-to-end verification only.                      |
@@ -43,6 +43,10 @@ installed, since toolchain and Windows SDK discovery depend on it.
 Rust builds, lints, and unit/integration tests run on any OS — toolchain discovery is
 mocked out. Only manual verification against a real solution requires Windows with Visual
 Studio.
+
+1.85 is the declared minimum supported Rust version, set by `clap` and recorded as
+`rust-version` in `cli/Cargo.toml`. An older toolchain fails with a clear cargo message rather
+than a confusing compile error; `rustup update` is the fix.
 
 ### CLI
 
