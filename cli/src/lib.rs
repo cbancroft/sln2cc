@@ -13,6 +13,7 @@ pub mod sln;
 pub mod toolchain;
 
 pub use error::{Error, ErrorKind, ResultExt};
+use serde::Serialize;
 
 /// The crate's fallible return type. Every error carries an [`ErrorKind`], which is what the
 /// plugin dispatches on — see [`error`] for why that isn't a boxed trait object.
@@ -22,7 +23,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// Solutions may define custom names, so these are always treated as opaque strings
 /// scoped to the solution they came from.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct ConfigPlatform {
     pub configuration: String,
     pub platform: String,

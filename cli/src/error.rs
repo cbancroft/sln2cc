@@ -135,6 +135,13 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+
+    /// Used for unimplemented methods as development begins. Will be dropped 
+    /// during MVP-21/MVP-22.
+    #[error("{feature} is not implemented yet")]
+    Unimplemented {
+        feature: String,
+    },
 }
 
 impl Error {
@@ -159,6 +166,7 @@ impl Error {
             Error::StateVersion { .. } => ErrorKind::StateVersion,
             Error::PathEscape { .. } => ErrorKind::PathEscape,
             Error::Context { source, .. } => source.kind(),
+            Error::Unimplemented { .. } => ErrorKind::Unimplemented
         }
     }
 
@@ -221,12 +229,13 @@ pub enum ErrorKind {
     StateParse,
     StateVersion,
     PathEscape,
+    Unimplemented,
 }
 
 impl ErrorKind {
     /// Every kind, in declaration order. Exists so tests can assert the wire strings stay
     /// unique and unchanged without listing them twice.
-    pub const ALL: [ErrorKind; 14] = [
+    pub const ALL: [ErrorKind; 15] = [
         ErrorKind::Io,
         ErrorKind::SolutionNotFound,
         ErrorKind::SolutionParse,
@@ -241,6 +250,7 @@ impl ErrorKind {
         ErrorKind::StateParse,
         ErrorKind::StateVersion,
         ErrorKind::PathEscape,
+        ErrorKind::Unimplemented,
     ];
 
     /// The stable identifier emitted in JSON. Changing one of these is a breaking change to
@@ -261,6 +271,7 @@ impl ErrorKind {
             ErrorKind::StateParse => "state-parse",
             ErrorKind::StateVersion => "state-version",
             ErrorKind::PathEscape => "path-escape",
+            ErrorKind::Unimplemented => "unimplemented",
         }
     }
 
@@ -285,6 +296,7 @@ impl ErrorKind {
             ErrorKind::ToolchainNotFound | ErrorKind::ToolchainIncomplete => 6,
             ErrorKind::InvalidConfiguration => 7,
             ErrorKind::PathEscape => 8,
+            ErrorKind::Unimplemented => 9,
         }
     }
 }
@@ -440,6 +452,10 @@ mod tests {
                 },
                 ErrorKind::PathEscape,
             ),
+            (
+                Error::Unimplemented { feature: "test_function".to_string() },
+                ErrorKind::Unimplemented,
+            ),
         ]
     }
 
@@ -540,6 +556,7 @@ mod tests {
             "state-parse",
             "state-version",
             "path-escape",
+            "unimplemented"
         ];
         let actual: Vec<&str> = ErrorKind::ALL.iter().map(|k| k.as_str()).collect();
         assert_eq!(actual, expected);
