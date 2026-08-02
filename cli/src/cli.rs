@@ -4,9 +4,9 @@
 //! Anything the plugin consumes programmatically must be emitted as structured JSON,
 //! never human-formatted text.
 
-use std::io;
 use std::{
     error::Error as StdError,
+    io,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -39,7 +39,7 @@ pub struct SolutionConfigs {
 
 /// Result of the `generate` subcommand.
 ///
-/// MVP-22 will widen this eventually
+/// MVP-22 will widen this eventually.
 #[derive(Debug, Clone, Serialize)]
 pub struct GenerateResult {
     /// Absolute path of the written `compile_commands.json`.
@@ -139,7 +139,7 @@ fn list_configs(_args: &SolutionArgs) -> crate::Result<SolutionConfigs> {
     })
 }
 
-/// MVP-22 implements this
+/// MVP-22 implements this.
 fn generate(
     _args: &SolutionArgs,
     _requested: &ConfigPlatform,
@@ -151,7 +151,6 @@ fn generate(
 }
 
 /// Main CLI commands for `msvclsp`
-///
 #[derive(Debug, PartialEq, Parser)]
 #[command(
     name = "msvclsp",
@@ -165,12 +164,12 @@ pub struct Cli {
 
     /// Emit a machine-readable JSON structure on stdout instead of
     /// human-readable text.
-    ///
-    /// The Neovim plugin will always use this. When present, nothing but the
-    /// envelope is written to stdout so that it can be decoded directly.
-    ///
-    /// `display_order` keeps the global flags below each subcommand's own arguments in
-    /// `--help`; without it they interleave, splitting `--configuration` from `--platform`.
+    //
+    // The Neovim plugin will always use this. When present, nothing but the
+    // envelope is written to stdout so that it can be decoded directly.
+    //
+    // `display_order` keeps the global flags below each subcommand's own arguments in
+    // `--help`; without it they interleave, splitting `--configuration` from `--platform`.
     #[arg(long, global = true, display_order = 100)]
     pub json: bool,
 
@@ -182,7 +181,7 @@ pub struct Cli {
     pub verbose: bool,
 }
 
-///The subcommands for the plugin.
+/// The subcommands for the plugin.
 ///
 /// `discover` is absent for now. Solution scanning will be implemented here
 /// in V1-01. For now, scanning is done in the Neovim plugin.
@@ -217,9 +216,6 @@ pub enum Command {
 
 impl Command {
     /// The solution arguments, whichever subcommand was invoked.
-    ///
-    /// Lets `main.rs` and the diagnostics channel reach the solution path without matching on
-    /// every variant.
     pub fn solution_args(&self) -> &SolutionArgs {
         match self {
             Command::ListConfigs { solution } | Command::Generate { solution, .. } => solution,
@@ -235,7 +231,7 @@ pub struct SolutionArgs {
 
     /// Project root to write the `.msvclsp/` under. Defaults to solution directory.
     ///
-    /// The plugin passes the root it detected from the Neovim's LSP root markers, which
+    /// The plugin passes the root it detected from Neovim's LSP root markers, which
     /// is often not the directory holding the solution.
     #[arg(long)]
     pub root: Option<PathBuf>,
@@ -262,7 +258,7 @@ impl SolutionArgs {
 }
 
 /// The object written out as part of the `--json` invocation.
-/// Field order is declaration order in the omitted JSON, to keep things diffable.
+/// Field order is declaration order in the emitted JSON, to keep things diffable.
 #[derive(Debug, Serialize)]
 pub struct Envelope<T> {
     pub schema_version: u32,
@@ -270,7 +266,7 @@ pub struct Envelope<T> {
     pub result: Option<T>,
     pub error: Option<ErrorPayload>,
 
-    /// Non-fatal problemes found while producing `result`. Always present, but
+    /// Non-fatal problems found while producing `result`. Always present, but
     /// empty when there were no issues found. Accumulation should be done in MVP-04.
     pub warnings: Vec<Diagnostic>,
 }
@@ -358,7 +354,7 @@ pub struct Diagnostic {
 
 /// How much a [`Diagnostic`] matters.
 ///
-/// Only one level so far. Anything fatal is an [`Error`] instead. The variants wire
+/// Only one level so far. Anything fatal is an [`Error`] instead. The variant's wire
 /// string is written literally instead of derived from the identifier to avoid any issues
 /// with renaming causing incompatibilities with the plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
