@@ -65,6 +65,7 @@ msvclsp/
 │   │   ├── compdb.rs             compile_commands.json construction and serialization.
 │   │   └── db.rs                 JSON state file: per-solution config/platform and mtimes.
 │   └── tests/
+│       ├── cli_surface.rs        Argument surface, exit codes, stdout/stderr discipline.
 │       ├── generate.rs           Fixture-driven integration tests.
 │       └── golden/               Expected output per fixture. Never regenerate from a live toolchain.
 │
@@ -93,8 +94,11 @@ msvclsp/
 
 ## 3. CLI Guidelines
 
-- **Output consumed by the plugin is JSON on stdout.** Never make the plugin scrape
-  human-readable text. Human-facing progress and warnings go to stderr.
+- **Output consumed by the plugin is JSON on stdout, behind `--json`.** Human-readable text is
+  the stdout default; the plugin always passes the flag, and under it stdout carries the JSON
+  envelope and nothing else. Never make the plugin scrape human-readable text. Human-facing
+  progress goes to stderr, which also carries the error message in both modes. See "CLI Surface"
+  in `docs/engineering_spec.md`.
 - **Exit codes are meaningful.** Non-zero on failure, with a structured error the plugin can
   surface. Don't exit 0 with an error message.
 - **Never silently guess.** If MSBuild evaluation hits an unsupported construct, warn about

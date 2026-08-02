@@ -73,7 +73,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Unit tests asserting each variant's `Display` output and that error kinds
   survive being wrapped and propagated through a call chain.
 
-- [ ] **MVP-03 — CLI skeleton with subcommand dispatch**
+- [x] **MVP-03 — CLI skeleton with subcommand dispatch**
   `feat/cli-skeleton` · ~4h
 
   **Summary:** Replace the stub `main.rs` with real argument parsing that dispatches to
@@ -86,6 +86,20 @@ Goal: one solution, one manually selected configuration/platform, producing a
   error on stderr), and making sure `--help` reads well. Record the final subcommand surface
   in `engineering_spec.md` and close that open question.
 
+  **Outcome:** Two subcommands — `list-configs` and `generate` — taking the solution as a required
+  positional, with `--configuration`/`--platform` as separate flags rather than one `Debug|x64`
+  string, and global `--json`/`--verbose`. `discover` was deliberately left out; it is V1-01.
+  Human-readable text is the stdout default and `--json` opts into a **static five-key envelope**
+  (`schema_version`, `has_error`, `result`, `error`, `warnings`) whose shape does not vary by
+  outcome. `has_error` exists because `vim.json.decode` maps `null` to `vim.NIL`, which is truthy
+  in Lua — `if result.error then` would otherwise take the error branch on every success. stderr
+  carries the human message in *both* modes, since MVP-28 folds it into the plugin's own error.
+  Handlers return a temporary `Error::Unimplemented` (exit `9`) rather than `todo!()`, so
+  CLAUDE.md §5's no-panic rule holds and the exit-code plumbing is exercised end to end;
+  **MVP-21 and MVP-22 remove it**. `--force` and `-v` are defined but inert so the recorded surface
+  is genuinely final. This **reshaped MVP-04** and reworded CLAUDE.md §3. See
+  [ADR 03](adr/03-cli-surface-and-json-contract.md) and "CLI Surface" in `engineering_spec.md`.
+
   **Tests:** Integration tests invoking the built binary with `--help`, a missing required
   argument, and an unknown subcommand, asserting exit codes and that errors go to stderr.
 
@@ -95,15 +109,16 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Summary:** Collect warnings into a structured diagnostic list that rides along in the JSON
   output, and keep human-facing progress on stderr with stdout reserved for JSON.
 
-  **Description:** Reframed by MVP-01, which deliberately added no logging facade. Warnings
-  about unsupported constructs are *data the plugin must surface to the user*, and the plugin
-  is forbidden from scraping human-readable text — so they belong in the JSON payload as a
-  `warnings` array, not as log lines. Define a `Diagnostic` type (severity, message, and the
-  offending path or construct) that evaluation can accumulate into, and thread it through to
-  the output types in `cli.rs`. Parsing a large solution takes real time, so keep a
-  `-v/--verbose` flag for human progress on stderr via `eprintln!`. The critical invariant is
-  that nothing but JSON is ever written to stdout, because the plugin parses it directly.
-  Avoid emitting absolute user paths or full environment contents at default verbosity. If
+  **Description:** Reframed by MVP-01, which deliberately added no logging facade, and narrowed
+  again by MVP-03. Warnings about unsupported constructs are *data the plugin must surface to the
+  user*, and the plugin is forbidden from scraping human-readable text — so they belong in the JSON
+  payload as a `warnings` array, not as log lines. `cli.rs` already defines the `Diagnostic` type
+  (severity, message, file, line), the envelope's `warnings` field, and
+  `Envelope::with_warnings`, so this issue owns **accumulating** into them during evaluation and
+  wiring the `-v/--verbose` flag, not designing the shape. Parsing a large solution takes real
+  time, so `-v` reports human progress on stderr via `eprintln!`. The critical invariant is that
+  under `--json`, nothing but the envelope is written to stdout, because the plugin parses it
+  directly. Avoid emitting absolute user paths or full environment contents at default verbosity. If
   debug tracing during evaluation later justifies a real facade, `log` is the recorded
   preference over `tracing` — see "Dependency Decisions" in `engineering_spec.md`.
 

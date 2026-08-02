@@ -5,7 +5,11 @@
 //! never human-formatted text.
 
 use std::io;
-use std::{error::Error as StdError, io::Write, path::{Path, PathBuf}};
+use std::{
+    error::Error as StdError,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
@@ -54,7 +58,7 @@ pub struct GenerateResult {
 #[serde(untagged)]
 pub enum Outcome {
     ListConfigs(SolutionConfigs),
-    Generate(GenerateResult)
+    Generate(GenerateResult),
 }
 
 /// Human-readable string render, used when `--json` is not specified.
@@ -113,13 +117,13 @@ impl Render for GenerateResult {
 pub fn run(cli: &Cli) -> crate::Result<Outcome> {
     match &cli.command {
         Command::ListConfigs { solution } => list_configs(solution).map(Outcome::ListConfigs),
-        Command::Generate { 
-            solution, 
-            configuration, 
-            platform, 
+        Command::Generate {
+            solution,
+            configuration,
+            platform,
             force,
         } => {
-            let requested = ConfigPlatform{
+            let requested = ConfigPlatform {
                 configuration: configuration.clone(),
                 platform: platform.clone(),
             };
@@ -130,7 +134,9 @@ pub fn run(cli: &Cli) -> crate::Result<Outcome> {
 
 /// MVP-21 implements this.
 fn list_configs(_args: &SolutionArgs) -> crate::Result<SolutionConfigs> {
-    Err(Error::Unimplemented { feature: "list-configs".to_string() })
+    Err(Error::Unimplemented {
+        feature: "list-configs".to_string(),
+    })
 }
 
 /// MVP-22 implements this
@@ -139,7 +145,9 @@ fn generate(
     _requested: &ConfigPlatform,
     _force: bool,
 ) -> crate::Result<GenerateResult> {
-    Err(Error::Unimplemented { feature: "generate".to_string() })
+    Err(Error::Unimplemented {
+        feature: "generate".to_string(),
+    })
 }
 
 /// Main CLI commands for `msvclsp`
@@ -155,25 +163,28 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    /// Emit a machine-readable JSON structure on stdout instead of 
+    /// Emit a machine-readable JSON structure on stdout instead of
     /// human-readable text.
     ///
     /// The Neovim plugin will always use this. When present, nothing but the
     /// envelope is written to stdout so that it can be decoded directly.
-    #[arg(long, global = true)]
+    ///
+    /// `display_order` keeps the global flags below each subcommand's own arguments in
+    /// `--help`; without it they interleave, splitting `--configuration` from `--platform`.
+    #[arg(long, global = true, display_order = 100)]
     pub json: bool,
 
     /// Report progress on stderr while parsing.
     ///
-    /// Parsing a large solution may take time, this can be used to keep track 
+    /// Parsing a large solution may take time, this can be used to keep track
     /// of what is happening. Stdout is unaffected.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, display_order = 101)]
     pub verbose: bool,
 }
 
 ///The subcommands for the plugin.
 ///
-/// `discover` is absent for now. Solution scanning will be implemented here 
+/// `discover` is absent for now. Solution scanning will be implemented here
 /// in V1-01. For now, scanning is done in the Neovim plugin.
 #[derive(Debug, PartialEq, Subcommand)]
 pub enum Command {
@@ -191,11 +202,11 @@ pub enum Command {
         solution: SolutionArgs,
 
         /// Configuration to evaluate, as the solution spells it -- e.g. `Debug`.
-        #[arg(long)]
+        #[arg(long, short)]
         configuration: String,
 
         /// Platform to evaluate, as the solution spells it -- e.g. `x64`.
-        #[arg(long)]
+        #[arg(long, short)]
         platform: String,
 
         /// Regenerate even when no input file has changed since the last run.
@@ -276,7 +287,7 @@ impl<T> Envelope<T> {
         }
     }
 
-    /// A failed response. Takes the error by reference because the caller still may need to 
+    /// A failed response. Takes the error by reference because the caller still may need to
     /// use it for other message output.
     pub fn err(error: &Error) -> Self {
         Envelope {
@@ -290,7 +301,7 @@ impl<T> Envelope<T> {
 
     /// Attach warnings collected during the run.
     ///
-    /// Separate from the constructors because warnings accumulate 
+    /// Separate from the constructors because warnings accumulate
     /// independently of whether the run actually succeeded.
     pub fn with_warnings(mut self, warnings: Vec<Diagnostic>) -> Self {
         self.warnings = warnings;
@@ -327,7 +338,7 @@ impl ErrorPayload {
         ErrorPayload {
             kind: error.kind().as_str(),
             message: error.to_string(),
-            causes
+            causes,
         }
     }
 }
@@ -358,9 +369,161 @@ pub enum Severity {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+    use clap::error::ErrorKind as ClapErrorKind;
     use serde_json::json;
 
     use super::*;
+
+    fn solution_args(solution: &str, root: Option<&str>) -> SolutionArgs {
+        SolutionArgs {
+            solution: PathBuf::from(solution),
+            root: root.map(PathBuf::from),
+        }
+    }
+
+    /// clap's own consistency check over the derived definition. Catches duplicate flags,
+    /// conflicting short options, and malformed help before any of them reach a user.
+    #[test]
+    fn the_command_definition_is_internally_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_list_configs() {
+        let cli = Cli::try_parse_from(["msvclsp", "list-configs", "app.sln"]).expect("parses");
+
+        assert_eq!(
+            cli.command,
+            Command::ListConfigs {
+                solution: solution_args("app.sln", None),
+            }
+        );
+        assert!(!cli.json);
+        assert!(!cli.verbose);
+    }
+
+    #[test]
+    fn parses_generate_with_every_flag() {
+        let cli = Cli::try_parse_from([
+            "msvclsp",
+            "generate",
+            "app.sln",
+            "--configuration",
+            "Debug",
+            "--platform",
+            "x64",
+            "--root",
+            "..",
+            "--force",
+        ])
+        .expect("parses");
+
+        assert_eq!(
+            cli.command,
+            Command::Generate {
+                solution: solution_args("app.sln", Some("..")),
+                configuration: "Debug".to_string(),
+                platform: "x64".to_string(),
+                force: true,
+            }
+        );
+    }
+
+    #[test]
+    fn global_flags_parse_in_either_position() {
+        let before = Cli::try_parse_from(["msvclsp", "--json", "-v", "list-configs", "app.sln"])
+            .expect("parses");
+        let after = Cli::try_parse_from(["msvclsp", "list-configs", "app.sln", "--json", "-v"])
+            .expect("parses");
+
+        assert_eq!(before, after);
+        assert!(before.json && before.verbose);
+    }
+
+    /// The plugin passes `--json` on every call, so both subcommands have to accept it.
+    /// MVP-28 should extend this to assert against the argv `cli.lua` actually builds, once
+    /// it builds any.
+    #[test]
+    fn both_subcommands_accept_json() {
+        assert!(Cli::try_parse_from(["msvclsp", "list-configs", "a.sln", "--json"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "msvclsp",
+                "generate",
+                "a.sln",
+                "--configuration",
+                "Debug",
+                "--platform",
+                "x64",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn missing_required_arguments_are_usage_errors() {
+        let cases: [&[&str]; 3] = [
+            &["msvclsp", "list-configs"],
+            &["msvclsp", "generate", "a.sln", "--platform", "x64"],
+            &["msvclsp", "generate", "a.sln", "--configuration", "Debug"],
+        ];
+
+        for args in cases {
+            let error = Cli::try_parse_from(args).expect_err("must not parse");
+            assert_eq!(
+                error.kind(),
+                ClapErrorKind::MissingRequiredArgument,
+                "wrong error for {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn root_defaults_to_the_solutions_directory() {
+        assert_eq!(
+            solution_args(r"C:\proj\app.sln", None).root(),
+            PathBuf::from(r"C:\proj")
+        );
+        assert_eq!(
+            solution_args(r"C:\proj\app.sln", Some(r"C:\workspace")).root(),
+            PathBuf::from(r"C:\workspace")
+        );
+        // `Path::parent` yields an empty path for a bare filename, not `None`.
+        assert_eq!(solution_args("app.sln", None).root(), PathBuf::from("."));
+    }
+
+    #[test]
+    fn handlers_report_themselves_unimplemented() {
+        let cases: [(&[&str], &str); 2] = [
+            (&["msvclsp", "list-configs", "a.sln"], "list-configs"),
+            (
+                &[
+                    "msvclsp",
+                    "generate",
+                    "a.sln",
+                    "--configuration",
+                    "Debug",
+                    "--platform",
+                    "x64",
+                ],
+                "generate",
+            ),
+        ];
+
+        for (args, expected) in cases {
+            let cli = Cli::try_parse_from(args).expect("parses");
+            let error = run(&cli).expect_err("no handler is implemented yet");
+
+            assert_eq!(error.kind(), crate::ErrorKind::Unimplemented);
+            assert_eq!(
+                error.to_string(),
+                format!("{expected} is not implemented yet")
+            );
+            assert_eq!(error.kind().exit_code(), 9);
+        }
+    }
 
     #[test]
     fn success_and_failure_share_one_key_set() {
@@ -394,7 +557,7 @@ mod tests {
         );
 
         assert_eq!(
-            err, 
+            err,
             json!({
                 "schema_version": 1,
                 "has_error": true,
@@ -411,8 +574,8 @@ mod tests {
 
     #[test]
     fn result_serializes_as_a_bare_object() {
-        let outcome = Outcome::Generate(GenerateResult { 
-            database: PathBuf::from(r"C:\proj\.msvclsp\app\compile_commands.json"), 
+        let outcome = Outcome::Generate(GenerateResult {
+            database: PathBuf::from(r"C:\proj\.msvclsp\app\compile_commands.json"),
             regenerated: true,
         });
 
@@ -441,14 +604,14 @@ mod tests {
         let configs = SolutionConfigs {
             solution: PathBuf::from(r"C:\proj\app.sln"),
             available: vec![config("Debug", "x64"), config("Release", "x64")],
-            active: Some(config("Release", "x64"))
+            active: Some(config("Release", "x64")),
         };
 
         let mut rendered = Vec::new();
         configs
             .render_human(&mut rendered)
             .expect("writing a Vec cannot fail");
-        
+
         assert_eq!(
             String::from_utf8(rendered).expect("rendering is UTF-8"),
             "Configurations for C:\\proj\\app.sln:\n  Debug|x64\n  Release|x64  (active)\n"

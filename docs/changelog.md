@@ -13,4 +13,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ## [Unreleased]
 
-Nothing yet — the project is still scaffolding, with no user-visible behavior to report.
+### Added
+
+- A command line: `msvclsp list-configs <solution>` and `msvclsp generate <solution>
+  --configuration <name> --platform <name>`, both accepting `--root` to say where `.msvclsp/`
+  should live. `--json` switches stdout to a machine-readable envelope for the Neovim plugin;
+  without it you get readable text. Failures exit with a distinct code per class and explain
+  themselves on stderr. The commands parse, validate, and report correctly — the generation
+  pipeline behind them is not built yet, so both currently report that they are unimplemented.

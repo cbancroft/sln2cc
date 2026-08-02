@@ -158,12 +158,77 @@ Rough module breakdown implied by the parsing pipeline:
   values, the last-active configuration/platform, and file modification timestamps used to detect
   when a reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
   cannot leave a torn file. The on-disk shape is not yet finalized (see Open Questions).
-- **CLI/subcommand layer** — the contract the Neovim plugin drives. At minimum needs subcommands to:
-  discover solutions under a root, list a solution's configuration/platform options, and generate/
-  regenerate `compile_commands.json` for a given solution + configuration/platform. Exact
-  subcommand names and output shape are not yet finalized (see Open Questions), but output intended
-  for the plugin to consume programmatically should be structured (JSON) rather than
-  human-formatted text.
+- **CLI/subcommand layer** — the contract the Neovim plugin drives, defined in full under
+  "CLI Surface" below.
+
+## CLI Surface
+
+Settled by MVP-03; see [ADR 03](adr/03-cli-surface-and-json-contract.md) for the reasoning.
+
+```
+msvclsp [--json] [-v] <COMMAND>
+
+Commands:
+  list-configs  List the configuration/platform pairs a solution declares
+  generate      Generate compile_commands.json for one configuration/platform
+
+msvclsp list-configs <SOLUTION> [--root <DIR>]
+msvclsp generate <SOLUTION> --configuration <NAME> --platform <NAME> [--root <DIR>] [--force]
+```
+
+The plugin always spells flags in full; `-c` and `-p` exist for invoking the tool by hand.
+
+| Argument | Applies to | Meaning |
+| -------- | ---------- | ------- |
+| `<SOLUTION>` | both | Required positional; the `.sln` to read. |
+| `--root <DIR>` | both | Project root to create `.msvclsp/` under. Defaults to the solution's own directory. The plugin passes the root it detected from Neovim's LSP root markers, which often is not where the solution lives. |
+| `--configuration <NAME>`, `-c` | `generate` | Required. Separate from `--platform` so no shell has to quote a pipe character. |
+| `--platform <NAME>`, `-p` | `generate` | Required. |
+| `--force` | `generate` | Regenerate even when the staleness cache is current. Inert until MVP-22. |
+| `--json` | global | Emit the envelope below on stdout instead of human-readable text. |
+| `-v`, `--verbose` | global | Progress on stderr. Inert until MVP-04. |
+
+`discover` is deliberately absent — it is V1-01, and the MVP plugin scans in Lua (MVP-27). Adding a
+subcommand later is additive.
+
+### Stream discipline
+
+- **stdout** is human-readable text by default, and exactly one JSON object under `--json`. Never a
+  mix, and never partially written.
+- **stderr** carries the human-readable message and any progress output, in *both* modes. MVP-28
+  folds its contents into the plugin's own structured error whenever the exit code is non-zero.
+- **`clap` usage errors are a carve-out.** `clap` writes its own text to stderr and exits `2`;
+  stdout stays empty and no envelope is produced, regardless of `--json`. This is why no
+  `ErrorKind` may return `2`.
+
+### JSON envelope
+
+One shape for every response, with all five keys always present. No field is conditionally
+omitted, so the plugin decodes one documented structure rather than branching on which keys exist.
+
+```jsonc
+// success
+{ "schema_version": 1, "has_error": false, "result": { /* subcommand result */ },
+  "error": null, "warnings": [] }
+
+// failure
+{ "schema_version": 1, "has_error": true, "result": null,
+  "error": { "kind": "solution-not-found",
+             "message": "solution not found: C:\\proj\\app.sln",
+             "causes": [] },
+  "warnings": [] }
+```
+
+| Key | Meaning |
+| --- | ------- |
+| `schema_version` | Bumped only when a change would break a plugin that decoded the previous shape. Adding a field does not require a bump. |
+| `has_error` | The discriminator. **Not** redundant with `error == null`: `vim.json.decode` maps JSON `null` to `vim.NIL`, which is truthy in Lua, so `if result.error then` would take the error branch on every success. |
+| `result` | The subcommand's own result object, serialized bare. `null` on failure. |
+| `error` | `kind` is [`ErrorKind::as_str()`](#error-handling); `message` is the outermost `Display`; `causes` is the `source()` chain, outermost-inward. `null` on success. |
+| `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. MVP-04 owns accumulating into it. |
+
+`result` is `SolutionConfigs` (`solution`, `available`, `active`) for `list-configs` and
+`GenerateResult` (`database`, `regenerated`) for `generate`.
 
 ## Error Handling
 
@@ -195,6 +260,7 @@ variant names, so a refactor cannot silently change them:
 | `state-parse` | The state file is malformed or truncated. |
 | `state-version` | The state file's schema version is unsupported. |
 | `path-escape` | A path from an untrusted project file resolved outside its permitted root. |
+| `unimplemented` | A subcommand's argument surface exists but its pipeline does not. **Temporary** — removed by MVP-22. |
 
 `ErrorKind::exit_code()` maps kinds onto coarse classes rather than one code per kind — the plugin
 reads the exact kind from JSON, so exit codes only need to be useful from a shell. `2` is never
@@ -210,10 +276,12 @@ indistinguishable from a real failure.
 | 6 | toolchain unavailable | `toolchain-not-found`, `toolchain-incomplete` |
 | 7 | bad selection | `invalid-configuration` |
 | 8 | rejected path | `path-escape` |
+| 9 | not implemented | `unimplemented` (temporary) |
 
 `ErrorKind` intentionally derives no `serde` traits. The JSON error payload's shape belongs to the
-subcommand output types in `cli.rs`, which serialize `as_str()`; rendering the `source()` chain as a
-human-readable message on stderr belongs to `main.rs`.
+subcommand output types in `cli.rs` — see the envelope's `error` object under "CLI Surface" above,
+whose `kind` is `as_str()`. Rendering the `source()` chain as a human-readable message on stderr
+belongs to `main.rs`.
 
 ## Neovim Plugin — Responsibilities
 
@@ -297,8 +365,8 @@ MSBuild-evaluation surface area bounded.
   identity is keyed so it survives the working directory changing.
 - Whether last-writer-wins state is acceptable long term, or whether two Neovim instances sharing a
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
-- CLI subcommand surface and JSON output contract with the Neovim plugin — carried over from
-  project_spec.md.
+- Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only
+  for a human reading a captured payload. Nothing enforces it today.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.

@@ -127,6 +127,16 @@ pub enum Error {
     #[error("{}: path escapes {}", path.display(), root.display())]
     PathEscape { path: PathBuf, root: PathBuf },
 
+    /// A subcommand whose argument surface is settled but whose pipeline is not built yet.
+    ///
+    /// Deliberately temporary. `todo!()` would panic on a path reachable from the CLI, which
+    /// CLAUDE.md forbids, and would leave the exit-code plumbing with nothing exercising it.
+    /// MVP-21 and MVP-22 each drop their call site; whichever lands second removes this
+    /// variant, [`ErrorKind::Unimplemented`], and exit code `9` along with it. See
+    /// [ADR 03](../../docs/adr/03-cli-surface-and-json-contract.md).
+    #[error("{feature} is not implemented yet")]
+    Unimplemented { feature: String },
+
     /// Wraps another error with context describing what was being attempted. Its
     /// [`kind`](Error::kind) is the wrapped error's — see [`Error::context`].
     #[error("{context}")]
@@ -134,13 +144,6 @@ pub enum Error {
         context: String,
         #[source]
         source: Box<Error>,
-    },
-
-    /// Used for unimplemented methods as development begins. Will be dropped 
-    /// during MVP-21/MVP-22.
-    #[error("{feature} is not implemented yet")]
-    Unimplemented {
-        feature: String,
     },
 }
 
@@ -165,8 +168,8 @@ impl Error {
             Error::StateParse { .. } => ErrorKind::StateParse,
             Error::StateVersion { .. } => ErrorKind::StateVersion,
             Error::PathEscape { .. } => ErrorKind::PathEscape,
+            Error::Unimplemented { .. } => ErrorKind::Unimplemented,
             Error::Context { source, .. } => source.kind(),
-            Error::Unimplemented { .. } => ErrorKind::Unimplemented
         }
     }
 
@@ -453,7 +456,9 @@ mod tests {
                 ErrorKind::PathEscape,
             ),
             (
-                Error::Unimplemented { feature: "test_function".to_string() },
+                Error::Unimplemented {
+                    feature: "test_function".to_string(),
+                },
                 ErrorKind::Unimplemented,
             ),
         ]
@@ -522,6 +527,7 @@ mod tests {
             r"C:\proj\.msvclsp\state.json: state file version 9 is not supported (expected 1)"
         );
         assert_eq!(rendered[13], r"C:\Windows\System32: path escapes C:\proj");
+        assert_eq!(rendered[14], "test_function is not implemented yet");
     }
 
     #[test]
@@ -556,7 +562,7 @@ mod tests {
             "state-parse",
             "state-version",
             "path-escape",
-            "unimplemented"
+            "unimplemented",
         ];
         let actual: Vec<&str> = ErrorKind::ALL.iter().map(|k| k.as_str()).collect();
         assert_eq!(actual, expected);
@@ -587,6 +593,7 @@ mod tests {
         assert_eq!(ErrorKind::ToolchainIncomplete.exit_code(), 6);
         assert_eq!(ErrorKind::InvalidConfiguration.exit_code(), 7);
         assert_eq!(ErrorKind::PathEscape.exit_code(), 8);
+        assert_eq!(ErrorKind::Unimplemented.exit_code(), 9);
 
         for kind in ErrorKind::ALL {
             let code = kind.exit_code();
