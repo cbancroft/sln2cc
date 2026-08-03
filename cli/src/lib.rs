@@ -39,6 +39,9 @@ impl std::fmt::Display for ConfigPlatform {
 
 impl ConfigPlatform {
     pub fn new(config: &str, platform: &str) -> Self {
-        ConfigPlatform { configuration: config.to_string(), platform: platform.to_string() }
+        ConfigPlatform {
+            configuration: config.to_string(),
+            platform: platform.to_string(),
+        }
     }
 }

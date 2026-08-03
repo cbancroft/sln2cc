@@ -593,7 +593,7 @@ fn version_warnings(path: &Path, version: Option<(String, usize)>) -> Vec<Diagno
 mod tests {
 
     use super::*;
-    use crate::{cli::Severity, ErrorKind};
+    use crate::{ErrorKind, cli::Severity};
 
     /// Test project GUIDs
     const A1: &str = "{A1}";
@@ -884,10 +884,10 @@ EndProject
         assert_eq!(
             solution.configurations,
             vec![
-            ConfigPlatform::new("Debug", "Win32"),
-            ConfigPlatform::new("Debug", "x64"),
-            ConfigPlatform::new("Release", "Win32"),
-            ConfigPlatform::new("Release", "x64"),
+                ConfigPlatform::new("Debug", "Win32"),
+                ConfigPlatform::new("Debug", "x64"),
+                ConfigPlatform::new("Release", "Win32"),
+                ConfigPlatform::new("Release", "x64"),
             ]
         );
         assert!(solution.warnings.is_empty(), "{:?}", solution.warnings);
@@ -907,7 +907,10 @@ EndProject
 
         let solution = parse_sln_text(&text, &sln()).expect("parses");
 
-        assert_eq!(solution.configurations, vec![ConfigPlatform::new("Debug", "x64")]);
+        assert_eq!(
+            solution.configurations,
+            vec![ConfigPlatform::new("Debug", "x64")]
+        );
     }
 
     #[test]
@@ -942,10 +945,12 @@ EndProject
         assert_eq!(project.mappings.len(), 4);
         for declared in &solution.configurations {
             let mapping = project.config_for(declared).expect("every pair is mapped");
-            assert_eq!(&mapping.project, declared, "identity mapping for {declared}");
+            assert_eq!(
+                &mapping.project, declared,
+                "identity mapping for {declared}"
+            );
             assert!(mapping.build, "{declared} is built");
         }
-
     }
 
     #[test]
@@ -966,7 +971,7 @@ EndProject
         ));
 
         let solution = parse_sln_text(&text, &sln()).expect("parses");
-        
+
         assert_eq!(
             solution.projects[0].config_for(&ConfigPlatform::new("Debug", "x64")),
             Some(&ProjectConfigMapping {
@@ -979,7 +984,7 @@ EndProject
 
     #[test]
     fn a_custom_configuration_name_is_kept_verbatim() {
-        // The name has a space and a dot. This ensures the parser is not thrown off by 
+        // The name has a space and a dot. This ensures the parser is not thrown off by
         // delimiter assumptions.
         let text = solution_text(&format!(
             r#"Project("{CPP}") = "app", "app\app.vcxproj", "{A1}"
@@ -1006,7 +1011,6 @@ EndProject
                 .map(|mapping| &mapping.project),
             Some(&ConfigPlatform::new("Debug With Asserts.2", "Win32"))
         );
-
     }
 
     #[test]
@@ -1213,7 +1217,10 @@ EndProject
 
         let solution = parse_sln_text(&text, &sln()).expect("parses");
 
-        assert_eq!(solution.configurations, vec![ConfigPlatform::new("Debug", "x64")]);
+        assert_eq!(
+            solution.configurations,
+            vec![ConfigPlatform::new("Debug", "x64")]
+        );
     }
 
     #[test]
@@ -1281,8 +1288,8 @@ EndProject
 
     #[test]
     fn a_stray_end_global_section_errors() {
-        let error =
-            parse_sln_text(&solution_text("EndGlobalSection\n"), &sln()).expect_err("must not parse");
+        let error = parse_sln_text(&solution_text("EndGlobalSection\n"), &sln())
+            .expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::SolutionParse);
         assert!(error.to_string().contains(":2:"), "names the line: {error}");
