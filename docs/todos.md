@@ -140,6 +140,22 @@ Goal: one solution, one manually selected configuration/platform, producing a
   solution folders and non-native project types should be skipped rather than treated as
   errors. Malformed lines must produce a clear error naming the line number, not a panic.
 
+  **Outcome:** Members are classified by project type GUID
+  (`{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}`, matched case-insensitively) rather than by file
+  extension, and anything else — solution folder, C#, `.vcxitems` — is skipped **silently**, since
+  it is correct solution content and warning about it would devalue MVP-13's warnings. Entry lines
+  are read by scanning their four quoted fields rather than matching the `Project(...) = ...`
+  grammar, because project names legitimately contain commas. `SolutionProject` gained a `guid`
+  field that nothing here reads: **MVP-06 keys `ProjectConfigurationPlatforms` off it**, and MVP-06
+  also adds its `GlobalSection` arms to this issue's single line-oriented scan rather than writing a
+  second parser — which is why `parse()` returns `configurations: Vec::new()` for now. Project
+  locations are made absolute with `std::path::absolute` and normalized lexically, never
+  `fs::canonicalize` (it requires the file to exist and yields `\\?\` paths on Windows). `..` is
+  resolved rather than refused, so **path-escape validation stays with MVP-10** and
+  `Error::PathEscape` remains unused until then. See
+  [ADR 04](adr/04-sln-project-enumeration.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests over inline `.sln` snippets covering a single project, multiple
   projects, solution folders, a non-C++ project type, and a truncated/malformed entry.
 

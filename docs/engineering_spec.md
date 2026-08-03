@@ -142,7 +142,17 @@ filesystem and a subprocess boundary — no persistent daemon or IPC channel:
 
 Rough module breakdown implied by the parsing pipeline:
 
-- **`sln` parsing** — reads a `.sln` file to enumerate member projects.
+- **`sln` parsing** — reads a `.sln` file to enumerate member projects, and the
+  configuration/platform pairs it declares. `.sln` is line-oriented text rather than XML, so it has
+  its own small parser instead of sharing the `roxmltree` stack. Members are classified by project
+  type GUID — `{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}` is C++, and solution folders, C# projects,
+  and `.vcxitems` are skipped as ordinary solution content rather than reported. Project locations
+  are solution-relative and backslash-spelled; they are made absolute against the solution
+  directory and normalized lexically, never with `fs::canonicalize`, which requires the file to
+  exist and yields `\\?\` paths on Windows. `..` is resolved rather than refused, since a project
+  living outside the solution folder is ordinary — escape validation belongs to import resolution
+  below. A malformed entry is an error naming the line, never a panic. See
+  [ADR 04](adr/04-sln-project-enumeration.md).
 - **`vcxproj`/MSBuild evaluation** — reads each project's `.vcxproj`, follows `<Import>`s of
   `.props`/`.targets` files (including property sheets), evaluates `Condition` attributes and
   macros (e.g. `$(Configuration)`, `$(Platform)`, `$(SolutionDir)`) for the selected
