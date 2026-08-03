@@ -76,10 +76,10 @@ fn parse_text(text: &str, path: &Path) -> Result<Solution> {
             }
             open_entry = Some(line_number);
             if let Some(project) = parse_project_entry(rest, path, line_number, &dir)? {
-                projects.push(project)
+                projects.push(project);
             }
         } else if line == "EndProject" {
-            // Exact match: `EndProjectSession` closes a nested section, not the entry.
+            // Exact match: `EndProjectSection` closes a nested section, not the entry.
             if open_entry.take().is_none() {
                 return Err(malformed(
                     path,
@@ -114,7 +114,7 @@ fn parse_text(text: &str, path: &Path) -> Result<Solution> {
 /// "{TYPE-GUID}") = "Name", "relative/path.vcxproj", "{PROJECT-GUID}"
 /// ```
 ///
-/// `Ok(None)` means "not a c++ project" - A solution folder or a C# project is a normal thing to
+/// `Ok(None)` means "not a C++ project" -- A solution folder or a C# project is a normal thing to
 /// find in a solution, that is not a failure.
 fn parse_project_entry(
     rest: &str,
@@ -175,7 +175,7 @@ fn quoted_fields(line: &str) -> Vec<&str> {
 /// Resolve a project location declared in the solution against a solution's directory.
 ///
 /// Split by hand rather than `PathBuf::from`. The solution will always use `\` separators and when
-/// the CI runs on linux it will not do the right thing.
+/// the CI runs on Linux `PathBuf::from` will not do the right thing.
 fn resolve_path(dir: &Path, location: &str) -> PathBuf {
     let joined = if is_absolute_location(location) {
         // Rare, but legal. Joining it onto `dir` would be incorrect
@@ -191,11 +191,11 @@ fn resolve_path(dir: &Path, location: &str) -> PathBuf {
     normalize(&joined)
 }
 
-// Check whether the location is a full absolute path or not.
-//
-// `Path::is_absolute` can't answer this as it is platform dependent.
+/// Check whether the location is a full absolute path or not.
+///
+/// `Path::is_absolute` can't answer this as it is platform dependent.
 fn is_absolute_location(location: &str) -> bool {
-    matches!(location.as_bytes(), [drive, b':', b'\\', | b'/', ..] if drive.is_ascii_alphabetic())
+    matches!(location.as_bytes(), [drive, b':', b'\\' | b'/', ..] if drive.is_ascii_alphabetic())
         || location.starts_with("\\\\")
         || location.starts_with('/')
 }
@@ -207,24 +207,23 @@ fn is_absolute_location(location: &str) -> bool {
 /// file. `..` is resolved rather than rejected as it is a normal part of a program specification.
 /// It is ok for projects to be located out of tree.
 fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
+    let mut out: Vec<Component> = Vec::new();
 
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                // Only a real directory name can be popped. '..' on a root stays literal.
-                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                if matches!(out.last(), Some(Component::Normal(_))) {
                     out.pop();
                 } else {
-                    out.push("..");
+                    out.push(Component::ParentDir);
                 }
             }
-            other => out.push(other),
+            other => out.push(other) 
         }
     }
 
-    out
+    out.into_iter().collect()
 }
 
 fn malformed(path: &Path, line: usize, detail: impl Into<String>) -> Error {
@@ -470,5 +469,21 @@ EndProject
     fn a_missing_solution_is_not_an_io_error() {
         let error = parse(Path::new("no-such-solution.sln")).expect_err("must not parse");
         assert_eq!(error.kind(), ErrorKind::SolutionNotFound);
+    }
+
+    #[test]
+    fn parent_traversal_past_the_root_stays_literal() {
+        // `..\..\..\` climbs past the root. Surplus markers have nothing to pop.
+        let text = format!(
+            r#"Project("{CPP}") = "app", "..\..\..\app\app.vcxproj", "{{A1}}"
+EndProject
+"#
+        );
+
+        let solution = parse_text(&text, &sln()).expect("parses");
+
+        let resolved = solution.projects[0].path.display().to_string();
+        assert!(resolved.contains(".."), "surplus markers stay literal: {resolved}");
+        assert!(!resolved.contains("proj\\") && !resolved.contains("proj/"), "the solution directory is consumed: {resolved}");
     }
 }
