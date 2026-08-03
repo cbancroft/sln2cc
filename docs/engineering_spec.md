@@ -151,8 +151,24 @@ Rough module breakdown implied by the parsing pipeline:
   directory and normalized lexically, never with `fs::canonicalize`, which requires the file to
   exist and yields `\\?\` paths on Windows. `..` is resolved rather than refused, since a project
   living outside the solution folder is ordinary — escape validation belongs to import resolution
-  below. A malformed entry is an error naming the line, never a panic. See
-  [ADR 04](adr/04-sln-project-enumeration.md).
+  below. A malformed entry is an error naming the line, never a panic. A duplicate project GUID is an
+  error: rows in the section below are keyed by GUID, so a duplicate would leave one member with no
+  mapping and see it silently skipped. See [ADR 04](adr/04-sln-project-enumeration.md).
+
+  The same scan reads two `GlobalSection`s. `SolutionConfigurationPlatforms` gives the pairs the
+  solution declares, taken from the key side of each row, deduplicated in declaration order.
+  `ProjectConfigurationPlatforms` maps each of those onto a per-project pair, which legitimately
+  differs — a solution-level `Debug|x64` can mean `Debug|Win32` for one member — so both are kept and
+  MSBuild evaluation is handed the *project* pair. Row keys are `{GUID}.<pair>.<Property>`, taken
+  apart by stripping a known property off the right rather than splitting on `.`, since configuration
+  names may contain one. `Build.0`'s presence (not its value) means the project is built in that
+  configuration; a project with a mapping but no `Build.0` is unchecked in Configuration Manager,
+  while a project with no mapping takes no part in the configuration at all — generation distinguishes
+  the two. Names are opaque strings, normalized no further than trimming, and looked up exactly, so a
+  mismatched request fails as `InvalidConfiguration` listing the valid pairs. The format-version
+  header is warned about rather than enforced, since `12.00` spans VS2013–VS2022; the diagnostic rides
+  in `Solution::warnings` until MVP-04 accumulates it. See
+  [ADR 05](adr/05-sln-configuration-mapping.md).
 - **`vcxproj`/MSBuild evaluation** — reads each project's `.vcxproj`, follows `<Import>`s of
   `.props`/`.targets` files (including property sheets), evaluates `Condition` attributes and
   macros (e.g. `$(Configuration)`, `$(Platform)`, `$(SolutionDir)`) for the selected

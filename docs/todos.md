@@ -122,6 +122,11 @@ Goal: one solution, one manually selected configuration/platform, producing a
   debug tracing during evaluation later justifies a real facade, `log` is the recorded
   preference over `tracing` — see "Dependency Decisions" in `engineering_spec.md`.
 
+  **MVP-06 landed the first producer:** `sln::parse` parks its format-version diagnostic in
+  `Solution::warnings` because this issue does not exist yet. Draining that field into the envelope
+  is part of the work here, and if accumulation ends up as a collector threaded through evaluation,
+  that field is what it replaces — see [ADR 05](adr/05-sln-configuration-mapping.md).
+
   **Tests:** Integration test asserting stdout parses as JSON and carries warnings in the
   payload while human progress goes to stderr; unit test that diagnostics accumulate in order
   and that default verbosity suppresses progress output.
@@ -159,7 +164,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Unit tests over inline `.sln` snippets covering a single project, multiple
   projects, solution folders, a non-C++ project type, and a truncated/malformed entry.
 
-- [ ] **MVP-06 — Enumerate solution configurations and platforms**
+- [x] **MVP-06 — Enumerate solution configurations and platforms**
   `feat/sln-configurations` · ~5h
 
   **Summary:** Parse `SolutionConfigurationPlatforms` and the per-project mapping in
@@ -171,6 +176,22 @@ Goal: one solution, one manually selected configuration/platform, producing a
   treating names as opaque strings since solutions may define custom ones. Projects excluded
   from a given solution configuration must be identifiable so they can be skipped during
   generation.
+
+  **Outcome:** Both sections are read by adding `GlobalSection` tracking to MVP-05's single scan, as
+  ADR 04 anticipated. `Solution::configurations` comes from the **key** side of each declared row,
+  deduplicated in declaration order, and `SolutionProject` gains a `configurations:
+  Vec<ProjectConfigMapping>` holding the solution pair, the project pair it resolves to, and a
+  `build` flag, reached via `SolutionProject::config_for`. Row keys are taken apart by stripping a
+  known property (`.ActiveCfg`, `.Build.0`) off the **right**, never by splitting on `.`, because
+  configuration names may contain a dot; `Build.0`'s presence sets `build` and its value is never
+  read. Exclusion is deliberately two states — a mapping with `build: false` versus no mapping at all
+  — so **MVP-22 decides** whether an unbuilt project's files are still worth indexing. Two questions
+  MVP-05 handed forward are answered: a **duplicate project GUID is now an error** naming both lines,
+  tracked across all entry types since a C#/C++ clash would misattach rows, which closes ADR 04's
+  open question; and the **format-version header warns rather than being enforced**, which makes this
+  the first issue to emit a diagnostic at all and **gives MVP-04 its first producer** in a new
+  `Solution::warnings` field. See [ADR 05](adr/05-sln-configuration-mapping.md) and "CLI Binary —
+  Internal Modules" in `engineering_spec.md`.
 
   **Tests:** Unit tests covering standard Debug/Release × Win32/x64, a custom configuration
   name, a project whose platform differs from the solution's, and a project excluded from one
@@ -443,6 +464,12 @@ Goal: one solution, one manually selected configuration/platform, producing a
   dependency mtimes, then report the output path and any warnings as JSON. Skip regeneration
   when nothing has changed unless `--force` is passed. An invalid configuration/platform for
   the given solution must fail with a message listing the valid ones.
+
+  Per-project configurations come from `SolutionProject::config_for` (MVP-06): evaluate
+  `mapping.project`, **not** the pair the user selected, since the two legitimately differ. A project
+  with no mapping takes no part in the chosen configuration; one with `build: false` is unchecked in
+  Configuration Manager, and whether its files are still worth indexing for clangd is a decision this
+  issue owns — see [ADR 05](adr/05-sln-configuration-mapping.md).
 
   **Tests:** Integration test generating from the `simple` fixture and comparing against its
   golden file; tests covering an invalid configuration, `--force` overriding the cache, and a
