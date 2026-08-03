@@ -10,16 +10,26 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use msvclsp::Error;
 use msvclsp::cli::{self, Cli, Envelope, Outcome, Render};
+use msvclsp::{Diagnostic, Error, Reporter};
 
 fn main() -> ExitCode {
     // A usage error never reaches us: clap writes its own message to stderr and exits 2,
     // which is why no ErrorKind is allowed to claim that code.
     let cli = Cli::parse();
 
-    match cli::run(&cli) {
-        Ok(outcome) => match write_success(&cli, &outcome) {
+    // Progress goes to the reporter's own channel as it happens; warnings accumulate and are
+    // attached below, to whichever envelope the run produces.
+    let mut reporter = Reporter::new(cli.verbose);
+    let outcome = cli::run(&cli, &mut reporter);
+    let warnings = reporter.into_warnings();
+
+    // Before either branch: a warning explains a result, so it has to precede it, and it must
+    // not be the last thing on stderr when there is also an error to read.
+    write_warnings(&cli, &warnings);
+
+    match outcome {
+        Ok(outcome) => match write_success(&cli, &outcome, warnings) {
             Ok(()) => ExitCode::SUCCESS,
             // A failed write is usually a closed pipe. Report it, but do not pretend the
             // command itself failed in a way the plugin should classify.
@@ -29,7 +39,7 @@ fn main() -> ExitCode {
             }
         },
         Err(error) => {
-            write_failure(&cli, &error);
+            write_failure(&cli, &error, warnings);
             exit_code(&error)
         }
     }
@@ -38,12 +48,16 @@ fn main() -> ExitCode {
 /// Write the successful result to stdout, as either the envelope or human-readable text.
 ///
 /// Never both and never a mix: under `--json` the plugin decodes stdout in its entirety.
-fn write_success(cli: &Cli, outcome: &Outcome) -> io::Result<()> {
+fn write_success(cli: &Cli, outcome: &Outcome, warnings: Vec<Diagnostic>) -> io::Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     if cli.json {
-        writeln!(out, "{}", encode(&Envelope::ok(outcome)))?;
+        writeln!(
+            out,
+            "{}",
+            encode(&Envelope::ok(outcome).with_warnings(warnings))
+        )?;
     } else {
         outcome.render_human(&mut out)?;
     }
@@ -56,7 +70,7 @@ fn write_success(cli: &Cli, outcome: &Outcome) -> io::Result<()> {
 ///
 /// stderr carries the message in *both* modes because MVP-28 folds its contents into the
 /// plugin's own structured error whenever the exit code is non-zero.
-fn write_failure(cli: &Cli, error: &Error) {
+fn write_failure(cli: &Cli, error: &Error, warnings: Vec<Diagnostic>) {
     // Write errors are ignored throughout this function: the process is already failing, and
     // the exit code is the part that still has to be right.
     let stderr = io::stderr();
@@ -75,8 +89,32 @@ fn write_failure(cli: &Cli, error: &Error) {
         // envelope's type parameter from.
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        let _ = writeln!(out, "{}", encode(&Envelope::<&Outcome>::err(error)));
+        let envelope = Envelope::<&Outcome>::err(error).with_warnings(warnings);
+        let _ = writeln!(out, "{}", encode(&envelope));
         let _ = out.flush();
+    }
+}
+
+/// Report accumulated warnings on stderr, in *both* output modes.
+///
+/// Under `--json` these also ride in the envelope, which is what the plugin reads; the duplicate
+/// on stderr is deliberate. stderr is never parsed, and a captured run should still be legible to
+/// a human without decoding JSON by hand.
+fn write_warnings(cli: &Cli, warnings: &[Diagnostic]) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    // The root is where paths are shortened against at default verbosity, so it comes from the
+    // same place `.msvclsp/` would: `--root`, or the solution's own directory.
+    let root = cli.command.solution_args().root();
+
+    let stderr = io::stderr();
+    let mut err = stderr.lock();
+    for warning in warnings {
+        // Ignored for the same reason as in `write_failure`: a warning that cannot be printed
+        // must not change the outcome of the run.
+        let _ = warning.render_human(&mut err, &root, cli.verbose);
     }
 }
 

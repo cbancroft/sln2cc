@@ -7,11 +7,13 @@
 pub mod cli;
 pub mod compdb;
 pub mod db;
+pub mod diagnostics;
 pub mod error;
 pub mod msbuild;
 pub mod sln;
 pub mod toolchain;
 
+pub use diagnostics::{Diagnostic, Reporter, Severity};
 pub use error::{Error, ErrorKind, ResultExt};
 use serde::Serialize;
 

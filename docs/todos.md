@@ -103,7 +103,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Integration tests invoking the built binary with `--help`, a missing required
   argument, and an unknown subcommand, asserting exit codes and that errors go to stderr.
 
-- [ ] **MVP-04 — Diagnostic collection and stdout/stderr discipline**
+- [x] **MVP-04 — Diagnostic collection and stdout/stderr discipline**
   `feat/diagnostics` · ~3h
 
   **Summary:** Collect warnings into a structured diagnostic list that rides along in the JSON
@@ -126,6 +126,25 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `Solution::warnings` because this issue does not exist yet. Draining that field into the envelope
   is part of the work here, and if accumulation ends up as a collector threaded through evaluation,
   that field is what it replaces — see [ADR 05](adr/05-sln-configuration-mapping.md).
+
+  **Outcome:** Accumulation *is* a collector. A new `cli/src/diagnostics.rs` owns `Diagnostic`,
+  `Severity`, and a `Reporter` threaded as `&mut`, carrying both the warning list and the `-v`
+  progress channel — one object because progress is inherently push-down (the point of `-v` is
+  feedback while work is in flight) and because **`?` would discard floated-up warnings on exactly
+  the failure path `Envelope::with_warnings` exists for**. `Solution::warnings` is gone, closing
+  ADR 05's temporary field. The progress channel is an `Option<Box<dyn Write>>` rather than a
+  `verbose: bool`, which makes suppression structural — quiet means there is no sink — and gives the
+  required unit test something to assert. `Diagnostic` moved out of `cli.rs` so evaluation modules
+  stop reaching into the CLI layer; `Diagnostic::render_human` lives in the library rather than
+  `main.rs` because a binary crate is unreachable from integration tests. Warnings go to stderr in
+  *both* modes plus the envelope under `--json`, with paths shown **relative to the project root at
+  default verbosity** per CLAUDE.md §5. Found and removed a live `println!` in `sln::split_row`
+  writing debug output to stdout — the exact invariant this issue owns, invisible because no CLI path
+  reaches `parse_sln` yet — and added an integration test asserting stdout under `--json` is one line
+  holding one object, so the next one fails a test instead of shipping. **This shrinks MVP-13** to
+  deciding which constructs warn, and **MVP-07+ thread `&mut Reporter`**. The end-to-end
+  "warnings in the payload" test is `#[ignore]`d naming **MVP-21**, which unblocks it. See
+  [ADR 06](adr/06-diagnostic-collection.md) and "Stream discipline" in `engineering_spec.md`.
 
   **Tests:** Integration test asserting stdout parses as JSON and carries warnings in the
   payload while human progress goes to stderr; unit test that diagnostics accumulate in order
@@ -310,6 +329,13 @@ Goal: one solution, one manually selected configuration/platform, producing a
   evaluation with enough context to act on — file, line, and the construct itself — and emit
   them on stderr plus in the JSON result so the plugin can surface them. Generation still
   succeeds; this is a warning channel, not a failure mode.
+
+  **Narrowed by MVP-04**, which built the channel: call `Reporter::warn_at(file, line, message)` on
+  the reporter already threaded through evaluation, and the stderr rendering and the envelope's
+  `warnings` array both follow for free. What is left here is *which* constructs warn and what each
+  message tells the user to do — see [ADR 06](adr/06-diagnostic-collection.md), which also raises
+  whether `Severity` needs a second level to separate "your flags may be wrong" from "this is
+  merely unusual".
 
   **Tests:** Unit tests asserting a warning is recorded for an unsupported condition function
   and an undefined property; integration test asserting warnings appear in both stderr and

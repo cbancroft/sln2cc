@@ -4,8 +4,7 @@
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::cli::Diagnostic;
-use crate::{ConfigPlatform, Error, Result};
+use crate::{ConfigPlatform, Error, Reporter, Result, progress};
 
 /// The project type GUID Visual Studio stamps on every `.vcxproj` member.                                         
 //
@@ -51,9 +50,6 @@ pub struct Solution {
     pub projects: Vec<SolutionProject>,
     /// The pairs the solution declares, deduplicated and in declaration order
     pub configurations: Vec<ConfigPlatform>,
-    /// Non-fatal problems found while parsing. MVP-04 owns draining these into the JSON
-    /// envelope's `warnings`.
-    pub warnings: Vec<Diagnostic>,
 }
 
 /// The mapping from Project Configuration definition to Solution Configuration.
@@ -112,7 +108,7 @@ enum RowProperty {
 ///
 /// Note: `.sln` is a line-oriented text format, not XML — unlike the `.vcxproj`/`.props`
 /// files it references.
-pub fn parse_sln(path: &Path) -> Result<Solution> {
+pub fn parse_sln(path: &Path, reporter: &mut Reporter) -> Result<Solution> {
     let text = std::fs::read_to_string(path).map_err(|err| match err.kind() {
         io::ErrorKind::NotFound => Error::SolutionNotFound {
             path: path.to_path_buf(),
@@ -124,13 +120,13 @@ pub fn parse_sln(path: &Path) -> Result<Solution> {
     // U+FEFF. Harmless to the entry scan, but MVP-06 reads the header line it lands on.
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
 
-    parse_sln_text(text, path)
+    parse_sln_text(text, path, reporter)
 }
 
 /// Parsing proper, split from I/O so tests can validate parsing without a file.
 ///
 /// `path` is only used to build absolute project paths and to name the file in errors.
-fn parse_sln_text(text: &str, path: &Path) -> Result<Solution> {
+fn parse_sln_text(text: &str, path: &Path, reporter: &mut Reporter) -> Result<Solution> {
     let solution_path = std::path::absolute(path).map_err(|err| Error::io(path, err))?;
 
     // An absolute path has a parent, unless it is a filesystem root, which cannot be a filename
@@ -267,13 +263,20 @@ fn parse_sln_text(text: &str, path: &Path) -> Result<Solution> {
     }
 
     attach_rows(&mut projects, rows);
-    let warnings = version_warnings(&solution_path, format_version);
+    report_version(&solution_path, format_version, reporter);
+
+    progress!(
+        reporter,
+        "{}: {} C/C++ project(s), {} configuration(s)",
+        solution_path.display(),
+        projects.len(),
+        configurations.len()
+    );
 
     Ok(Solution {
         path: solution_path,
         projects,
         configurations,
-        warnings,
     })
 }
 
@@ -429,7 +432,6 @@ fn classify_section(rest: &str) -> Section {
 /// considered malformed rather than something to skip. If we just drop the config and report
 /// nothing it could lead to silently wrong compile_commands.json files.
 fn split_row<'a>(line: &'a str, sln: &Path, number: usize) -> Result<(&'a str, &'a str)> {
-    println!("Splitting line '{line}'");
     let Some((key, value)) = line.split_once('=') else {
         return Err(malformed(
             sln,
@@ -566,9 +568,9 @@ fn attach_rows(projects: &mut [SolutionProject], rows: Vec<ConfigRow>) {
 ///
 /// These are warnings rather than errors as we assume that we are being handed a solution that VS
 /// otherwise opens normally.
-fn version_warnings(path: &Path, version: Option<(String, usize)>) -> Vec<Diagnostic> {
+fn report_version(path: &Path, version: Option<(String, usize)>, reporter: &mut Reporter) {
     let (message, line) = match version {
-        Some((version, _)) if version == SUPPORTED_FORMAT_VERSION => return Vec::new(),
+        Some((version, _)) if version == SUPPORTED_FORMAT_VERSION => return,
         Some((version, line)) => (
             format!(
                 "solution format version {version} is not {SUPPORTED_FORMAT_VERSION}; \
@@ -582,18 +584,13 @@ fn version_warnings(path: &Path, version: Option<(String, usize)>) -> Vec<Diagno
         ),
     };
 
-    vec![Diagnostic {
-        severity: crate::cli::Severity::Warning,
-        message,
-        file: Some(path.to_path_buf()),
-        line,
-    }]
+    reporter.warn_at(path, line, message);
 }
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::{ErrorKind, cli::Severity};
+    use crate::{ErrorKind, Severity};
 
     /// Test project GUIDs
     const A1: &str = "{A1}";
@@ -624,6 +621,18 @@ mod tests {
         format!("{FORMAT_VERSION_PREFIX}{SUPPORTED_FORMAT_VERSION}\n{body}")
     }
 
+    /// Parse with a quiet reporter, for the majority of tests that assert on the parse itself.
+    fn parse(text: &str) -> Result<Solution> {
+        parse_sln_text(text, &sln(), &mut Reporter::new(false))
+    }
+
+    /// Parse and hand back the reporter, for the tests that assert on what was warned about.
+    fn parse_reporting(text: &str) -> (Result<Solution>, Reporter) {
+        let mut reporter = Reporter::new(false);
+        let result = parse_sln_text(text, &sln(), &mut reporter);
+        (result, reporter)
+    }
+
     #[test]
     fn a_single_project_resolves_against_the_solution_directory() {
         let text = format!(
@@ -632,7 +641,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -657,7 +666,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -683,7 +692,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -720,7 +729,7 @@ EndProject
             CPP.to_lowercase()
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -745,7 +754,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -766,7 +775,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -788,7 +797,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects,
@@ -818,7 +827,7 @@ EndProject
 "#
         );
 
-        let error = parse_sln_text(&text, &sln()).expect_err("must not parse");
+        let error = parse(&text).expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::SolutionParse);
         assert!(error.to_string().contains(":3:"), "names the line: {error}");
@@ -831,7 +840,7 @@ EndProject
 "#
         );
 
-        let error = parse_sln_text(&text, &sln()).expect_err("must not parse");
+        let error = parse(&text).expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::SolutionParse);
         assert!(error.to_string().contains(":1:"), "names the line: {error}");
@@ -839,7 +848,8 @@ EndProject
 
     #[test]
     fn a_missing_solution_is_not_an_io_error() {
-        let error = parse_sln(Path::new("no-such-solution.sln")).expect_err("must not parse");
+        let error = parse_sln(Path::new("no-such-solution.sln"), &mut Reporter::new(false))
+            .expect_err("must not parse");
         assert_eq!(error.kind(), ErrorKind::SolutionNotFound);
     }
 
@@ -852,7 +862,7 @@ EndProject
 "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         let resolved = solution.projects[0].path.display().to_string();
         assert!(
@@ -879,7 +889,8 @@ EndProject
             "#,
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let (result, reporter) = parse_reporting(&text);
+        let solution = result.expect("parses");
 
         assert_eq!(
             solution.configurations,
@@ -890,7 +901,7 @@ EndProject
                 ConfigPlatform::new("Release", "x64"),
             ]
         );
-        assert!(solution.warnings.is_empty(), "{:?}", solution.warnings);
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
     }
 
     #[test]
@@ -905,7 +916,7 @@ EndProject
             "#,
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.configurations,
@@ -939,7 +950,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
         let project = &solution.projects[0];
 
         assert_eq!(project.mappings.len(), 4);
@@ -970,7 +981,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects[0].config_for(&ConfigPlatform::new("Debug", "x64")),
@@ -1001,7 +1012,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         let custom = ConfigPlatform::new("Debug With Asserts.2", "x64");
         assert_eq!(solution.configurations, vec![custom.clone()]);
@@ -1034,7 +1045,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
         let project = &solution.projects[0];
 
         assert!(
@@ -1071,7 +1082,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(solution.configurations.len(), 2);
         assert_eq!(solution.projects[0].mappings.len(), 1);
@@ -1100,7 +1111,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(solution.projects.len(), 1);
         assert_eq!(solution.projects[0].mappings.len(), 1);
@@ -1127,11 +1138,12 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let (result, reporter) = parse_reporting(&text);
+        let solution = result.expect("parses");
 
         assert!(solution.projects.is_empty());
         assert!(solution.configurations.is_empty());
-        assert!(solution.warnings.is_empty(), "{:?}", solution.warnings);
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
     }
 
     #[test]
@@ -1150,7 +1162,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert!(solution.projects[0].mappings.is_empty());
     }
@@ -1171,7 +1183,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects[0]
@@ -1196,7 +1208,7 @@ EndProject
             "#
         ));
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.projects[0].config_for(&ConfigPlatform::new("Debug", "x64")),
@@ -1215,7 +1227,7 @@ EndProject
             "Global\n\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\n\t\tDebug|x64 = Debug|x64\n\tEndGlobalSection\nEndGlobal\n",
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let solution = parse(&text).expect("parses");
 
         assert_eq!(
             solution.configurations,
@@ -1229,9 +1241,10 @@ EndProject
         // found by scanning rather than by reading line 1.
         let text = format!("\n{FORMAT_VERSION_PREFIX}{SUPPORTED_FORMAT_VERSION}\n");
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses");
+        let (result, reporter) = parse_reporting(&text);
+        result.expect("parses");
 
-        assert!(solution.warnings.is_empty(), "{:?}", solution.warnings);
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
     }
 
     #[test]
@@ -1258,7 +1271,7 @@ EndProject
                  EndGlobalSection\nEndGlobal\n"
             ));
 
-            let error = parse_sln_text(&text, &sln()).expect_err("must not parse");
+            let error = parse(&text).expect_err("must not parse");
 
             assert_eq!(error.kind(), ErrorKind::SolutionParse, "for `{row}`");
             assert!(
@@ -1280,7 +1293,7 @@ EndProject
         ];
 
         for body in bodies {
-            let error = parse_sln_text(&solution_text(body), &sln()).expect_err("must not parse");
+            let error = parse(&solution_text(body)).expect_err("must not parse");
 
             assert_eq!(error.kind(), ErrorKind::SolutionParse);
         }
@@ -1288,8 +1301,7 @@ EndProject
 
     #[test]
     fn a_stray_end_global_section_errors() {
-        let error = parse_sln_text(&solution_text("EndGlobalSection\n"), &sln())
-            .expect_err("must not parse");
+        let error = parse(&solution_text("EndGlobalSection\n")).expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::SolutionParse);
         assert!(error.to_string().contains(":2:"), "names the line: {error}");
@@ -1307,7 +1319,7 @@ EndProject
             "#
         ));
 
-        let error = parse_sln_text(&text, &sln()).expect_err("must not parse");
+        let error = parse(&text).expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::SolutionParse);
         assert!(error.to_string().contains(":4:"), "names the line: {error}");
@@ -1326,17 +1338,21 @@ EndProject
             "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses anyway");
+        let (result, reporter) = parse_reporting(&text);
+        let solution = result.expect("parses anyway");
 
         assert_eq!(solution.projects.len(), 1, "the warning is not a refusal");
-        assert_eq!(solution.warnings.len(), 1);
-        assert_eq!(solution.warnings[0].severity, Severity::Warning);
-        assert_eq!(solution.warnings[0].line, Some(1));
-        assert_eq!(solution.warnings[0].file.as_ref(), Some(&solution.path));
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.line, Some(1));
+        assert_eq!(warning.file.as_ref(), Some(&solution.path));
         assert!(
-            solution.warnings[0].message.contains("11.00"),
+            warning.message.contains("11.00"),
             "names the version: {}",
-            solution.warnings[0].message
+            warning.message
         );
     }
 
@@ -1350,10 +1366,13 @@ EndProject
             "#
         );
 
-        let solution = parse_sln_text(&text, &sln()).expect("parses anyway");
+        let (result, reporter) = parse_reporting(&text);
+        result.expect("parses anyway");
 
-        assert_eq!(solution.warnings.len(), 1);
-        assert_eq!(solution.warnings[0].severity, Severity::Warning);
-        assert_eq!(solution.warnings[0].line, None, "there is no line to name");
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.line, None, "there is no line to name");
     }
 }

@@ -14,7 +14,7 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::{ConfigPlatform, Error};
+use crate::{ConfigPlatform, Diagnostic, Error, Reporter, progress};
 
 /// Version of the envelope shape below. Bumped when a change would break a plugin
 /// that decoded the previous version. No change needed if we are just adding a field.
@@ -113,10 +113,21 @@ impl Render for GenerateResult {
 /// Dispatch a parsed command line to its handler.
 ///
 /// Takes `&Cli` rather than consuming it so `main.rs` can still read the `--json` and `--verbose`
-/// flags when deciding how to render whatever comes back.
-pub fn run(cli: &Cli) -> crate::Result<Outcome> {
+/// flags when deciding how to render whatever comes back. `reporter` is borrowed rather than
+/// returned because warnings have to survive a failure — see [`Reporter`].
+pub fn run(cli: &Cli, reporter: &mut Reporter) -> crate::Result<Outcome> {
+    let args = cli.command.solution_args();
+    progress!(
+        reporter,
+        "{}: {}",
+        cli.command.name(),
+        args.solution.display()
+    );
+
     match &cli.command {
-        Command::ListConfigs { solution } => list_configs(solution).map(Outcome::ListConfigs),
+        Command::ListConfigs { solution } => {
+            list_configs(solution, reporter).map(Outcome::ListConfigs)
+        }
         Command::Generate {
             solution,
             configuration,
@@ -127,13 +138,14 @@ pub fn run(cli: &Cli) -> crate::Result<Outcome> {
                 configuration: configuration.clone(),
                 platform: platform.clone(),
             };
-            generate(solution, &requested, *force).map(Outcome::Generate)
+            generate(solution, &requested, *force, reporter).map(Outcome::Generate)
         }
     }
 }
 
-/// MVP-21 implements this.
-fn list_configs(_args: &SolutionArgs) -> crate::Result<SolutionConfigs> {
+/// MVP-21 implements this. It takes the reporter already so that landing the pipeline does not
+/// have to reopen this signature and every caller of it.
+fn list_configs(_args: &SolutionArgs, _reporter: &mut Reporter) -> crate::Result<SolutionConfigs> {
     Err(Error::Unimplemented {
         feature: "list-configs".to_string(),
     })
@@ -144,6 +156,7 @@ fn generate(
     _args: &SolutionArgs,
     _requested: &ConfigPlatform,
     _force: bool,
+    _reporter: &mut Reporter,
 ) -> crate::Result<GenerateResult> {
     Err(Error::Unimplemented {
         feature: "generate".to_string(),
@@ -221,6 +234,19 @@ impl Command {
             Command::ListConfigs { solution } | Command::Generate { solution, .. } => solution,
         }
     }
+
+    /// The subcommand's name as spelled on the command line.
+    ///
+    /// Written out rather than derived, for the same reason [`ErrorKind::as_str`] is: these
+    /// strings are what the plugin passes in `argv`, so a rename must not silently change them.
+    ///
+    /// [`ErrorKind::as_str`]: crate::ErrorKind::as_str
+    pub fn name(&self) -> &'static str {
+        match self {
+            Command::ListConfigs { .. } => "list-configs",
+            Command::Generate { .. } => "generate",
+        }
+    }
 }
 
 /// Arguments shared by every subcommand: solution and root
@@ -266,8 +292,9 @@ pub struct Envelope<T> {
     pub result: Option<T>,
     pub error: Option<ErrorPayload>,
 
-    /// Non-fatal problems found while producing `result`. Always present, but
-    /// empty when there were no issues found. Accumulation should be done in MVP-04.
+    /// Non-fatal problems found while producing `result`. Always present, but empty when there
+    /// were no issues found. Accumulated by a [`Reporter`] and attached by `main.rs`, so a run
+    /// that failed still reports what it found on the way — see [`Envelope::with_warnings`].
     pub warnings: Vec<Diagnostic>,
 }
 
@@ -337,30 +364,6 @@ impl ErrorPayload {
             causes,
         }
     }
-}
-
-/// A non-fatal problem found while evaluating a solution.
-///
-/// Warnings are the data the plugin surfaces to the user. Not log lines.
-#[derive(Debug, Clone, Serialize)]
-pub struct Diagnostic {
-    pub severity: Severity,
-    pub message: String,
-    /// The file the issue was found in, when it is attributable to one.
-    pub file: Option<PathBuf>,
-    /// Line within `file`, when the parser knows it.
-    pub line: Option<usize>,
-}
-
-/// How much a [`Diagnostic`] matters.
-///
-/// Only one level so far. Anything fatal is an [`Error`] instead. The variant's wire
-/// string is written literally instead of derived from the identifier to avoid any issues
-/// with renaming causing incompatibilities with the plugin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum Severity {
-    #[serde(rename = "warning")]
-    Warning,
 }
 
 #[cfg(test)]
@@ -510,7 +513,8 @@ mod tests {
 
         for (args, expected) in cases {
             let cli = Cli::try_parse_from(args).expect("parses");
-            let error = run(&cli).expect_err("no handler is implemented yet");
+            let mut reporter = Reporter::new(false);
+            let error = run(&cli, &mut reporter).expect_err("no handler is implemented yet");
 
             assert_eq!(error.kind(), crate::ErrorKind::Unimplemented);
             assert_eq!(
@@ -565,6 +569,61 @@ mod tests {
                 },
                 "warnings": [],
             })
+        );
+    }
+
+    /// The failure case is the invariant worth pinning: a run that collected warnings and *then*
+    /// failed still has to report them, which is why `with_warnings` is a builder separate from
+    /// `ok` and `err` rather than a constructor argument.
+    #[test]
+    fn warnings_ride_on_both_envelope_shapes() {
+        let warning = || Diagnostic {
+            severity: crate::Severity::Warning,
+            message: "no `Format Version` header".to_string(),
+            file: Some(PathBuf::from(r"C:\proj\app.sln")),
+            line: None,
+        };
+        let expected = json!([{
+            "severity": "warning",
+            "message": "no `Format Version` header",
+            "file": r"C:\proj\app.sln",
+            "line": null,
+        }]);
+
+        let ok = serde_json::to_value(Envelope::ok("payload").with_warnings(vec![warning()]))
+            .expect("serializes");
+        assert_eq!(ok["has_error"], json!(false));
+        assert_eq!(ok["warnings"], expected);
+
+        let err = serde_json::to_value(
+            Envelope::<&str>::err(&Error::Unimplemented {
+                feature: "generate".to_string(),
+            })
+            .with_warnings(vec![warning()]),
+        )
+        .expect("serializes");
+        assert_eq!(err["has_error"], json!(true));
+        assert_eq!(err["result"], json!(null));
+        assert_eq!(err["warnings"], expected);
+    }
+
+    /// These strings are what the plugin puts in `argv`, and `run` reports one as progress.
+    #[test]
+    fn subcommand_names_match_the_command_line() {
+        let name = |args: &[&str]| Cli::try_parse_from(args).expect("parses").command.name();
+
+        assert_eq!(name(&["msvclsp", "list-configs", "a.sln"]), "list-configs");
+        assert_eq!(
+            name(&[
+                "msvclsp",
+                "generate",
+                "a.sln",
+                "--configuration",
+                "Debug",
+                "--platform",
+                "x64",
+            ]),
+            "generate"
         );
     }
 

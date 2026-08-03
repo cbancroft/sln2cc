@@ -18,6 +18,10 @@ argument; read that before reopening the question. Conventions for writing them 
 | --- | --- |
 | [01](adr/01-address-dependencies.md) | CLI dependencies, persistence approach, MSRV and edition (MVP-01). |
 | [02](adr/02-structured-error-type.md) | Structured error type with machine-readable kinds and exit codes (MVP-02). |
+| [03](adr/03-cli-surface-and-json-contract.md) | Subcommand surface and the JSON envelope contract (MVP-03). |
+| [04](adr/04-sln-project-enumeration.md) | `.sln` member enumeration and path resolution (MVP-05). |
+| [05](adr/05-sln-configuration-mapping.md) | Solution configurations and the per-project mapping (MVP-06). |
+| [06](adr/06-diagnostic-collection.md) | Diagnostic collection via a threaded `Reporter`, and stream discipline (MVP-04). |
 
 # Tech Stack
 
@@ -166,9 +170,16 @@ Rough module breakdown implied by the parsing pipeline:
   while a project with no mapping takes no part in the configuration at all — generation distinguishes
   the two. Names are opaque strings, normalized no further than trimming, and looked up exactly, so a
   mismatched request fails as `InvalidConfiguration` listing the valid pairs. The format-version
-  header is warned about rather than enforced, since `12.00` spans VS2013–VS2022; the diagnostic rides
-  in `Solution::warnings` until MVP-04 accumulates it. See
-  [ADR 05](adr/05-sln-configuration-mapping.md).
+  header is warned about rather than enforced, since `12.00` spans VS2013–VS2022; the diagnostic goes
+  to the `Reporter` the parse is handed. See [ADR 05](adr/05-sln-configuration-mapping.md).
+- **`diagnostics`** — the non-fatal counterpart to `error.rs`. Owns `Diagnostic` (severity, message,
+  file, line), `Severity`, and `Reporter`, which is threaded through evaluation as `&mut` and carries
+  two things at once: the accumulating warning list, and the `-v` progress channel as an
+  `Option<Box<dyn Write>>` that is `None` when quiet. Warnings are accumulated rather than returned
+  because `?` would discard them on exactly the failure path where they matter, and progress is
+  push-down by nature since the point of `-v` is feedback while work is still in flight. The type
+  lives here rather than in `cli.rs` so that evaluation modules do not have to reach into the CLI
+  layer to report a finding. See [ADR 06](adr/06-diagnostic-collection.md).
 - **`vcxproj`/MSBuild evaluation** — reads each project's `.vcxproj`, follows `<Import>`s of
   `.props`/`.targets` files (including property sheets), evaluates `Condition` attributes and
   macros (e.g. `$(Configuration)`, `$(Platform)`, `$(SolutionDir)`) for the selected
@@ -212,17 +223,31 @@ The plugin always spells flags in full; `-c` and `-p` exist for invoking the too
 | `--platform <NAME>`, `-p` | `generate` | Required. |
 | `--force` | `generate` | Regenerate even when the staleness cache is current. Inert until MVP-22. |
 | `--json` | global | Emit the envelope below on stdout instead of human-readable text. |
-| `-v`, `--verbose` | global | Progress on stderr. Inert until MVP-04. |
+| `-v`, `--verbose` | global | Progress on stderr as work proceeds, and absolute rather than root-relative paths in warnings. Never affects stdout. |
 
 `discover` is deliberately absent — it is V1-01, and the MVP plugin scans in Lua (MVP-27). Adding a
 subcommand later is additive.
 
 ### Stream discipline
 
+Settled alongside diagnostic collection by MVP-04; see [ADR 06](adr/06-diagnostic-collection.md).
+
 - **stdout** is human-readable text by default, and exactly one JSON object under `--json`. Never a
-  mix, and never partially written.
-- **stderr** carries the human-readable message and any progress output, in *both* modes. MVP-28
-  folds its contents into the plugin's own structured error whenever the exit code is non-zero.
+  mix, and never partially written. Nothing in the library writes to stdout — `main.rs` is the only
+  place that may, which is asserted by an integration test rather than left as a convention.
+- **stderr** carries the human-readable message, warnings, and any progress output, in *both* modes.
+  MVP-28 folds its contents into the plugin's own structured error whenever the exit code is
+  non-zero.
+- **Warnings reach stderr in both modes**, and additionally ride in the envelope's `warnings` array
+  under `--json`. The duplication is deliberate: stderr is never parsed, and a captured `--json` run
+  should still be legible without decoding it by hand. They are written before the result or the
+  error message, so an error stays the last thing on stderr.
+- **Progress is opt-in via `-v`** and goes only to stderr. A `Reporter` constructed without it has no
+  sink at all, so suppression is structural rather than a check each call site has to remember.
+- **Absolute paths are kept out of stderr at default verbosity.** A diagnostic's `file` is absolute in
+  the envelope, because that is the plugin's contract, but on stderr it is shown relative to the
+  project root when it lives underneath it. `-v` opts into the full path. Per CLAUDE.md §5, stderr
+  text is what ends up pasted into a bug report.
 - **`clap` usage errors are a carve-out.** `clap` writes its own text to stderr and exits `2`;
   stdout stays empty and no envelope is produced, regardless of `--json`. This is why no
   `ErrorKind` may return `2`.
@@ -251,7 +276,7 @@ omitted, so the plugin decodes one documented structure rather than branching on
 | `has_error` | The discriminator. **Not** redundant with `error == null`: `vim.json.decode` maps JSON `null` to `vim.NIL`, which is truthy in Lua, so `if result.error then` would take the error branch on every success. |
 | `result` | The subcommand's own result object, serialized bare. `null` on failure. |
 | `error` | `kind` is [`ErrorKind::as_str()`](#error-handling); `message` is the outermost `Display`; `causes` is the `source()` chain, outermost-inward. `null` on success. |
-| `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. MVP-04 owns accumulating into it. |
+| `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. Accumulated by a `Reporter` and attached to the envelope by `main.rs` — including on failure, so a run that warned and *then* failed still reports both. `file` is absolute. |
 
 `result` is `SolutionConfigs` (`solution`, `available`, `active`) for `list-configs` and
 `GenerateResult` (`database`, `regenerated`) for `generate`.
@@ -393,6 +418,12 @@ MSBuild-evaluation surface area bounded.
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only
   for a human reading a captured payload. Nothing enforces it today.
+- Whether `Severity` needs a second level. One variant covers everything so far — anything fatal is an
+  `Error` instead — but MVP-13 may want to separate "this construct was skipped, so your flags may be
+  wrong" from "this is merely unusual", which are different things for a user to act on.
+- Which channel warnings should actually reach the user through in Neovim: rendered from the
+  envelope's `warnings` array, or folded in with stderr the way MVP-28 handles errors. V2-04 owns
+  error surfacing; nothing yet says who owns warnings.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.

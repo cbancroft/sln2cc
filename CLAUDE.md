@@ -55,6 +55,7 @@ msvclsp/
 │   │   ├── main.rs               Thin entry point: arg parsing and dispatch only.
 │   │   ├── lib.rs                Public API surface; Result alias, ConfigPlatform.
 │   │   ├── error.rs              Error enum + ErrorKind: wire-facing kinds and exit codes.
+│   │   ├── diagnostics.rs        Diagnostic/Severity + Reporter: warning accumulation and -v progress.
 │   │   ├── cli.rs                Subcommand definitions and JSON output types (plugin contract).
 │   │   ├── sln.rs                .sln parsing: member projects and declared configurations.
 │   │   ├── msbuild.rs            .vcxproj evaluation — the hardest part of the system.

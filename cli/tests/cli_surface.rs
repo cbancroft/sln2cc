@@ -33,6 +33,31 @@ fn code(output: &Output) -> i32 {
         .expect("the binary exits normally rather than being signalled")
 }
 
+/// Assert that stdout under `--json` is decodable in its entirety: exactly one line, and that
+/// line a single JSON object.
+///
+/// Checked structurally rather than with a JSON parser, matching the exact-string style of the
+/// assertions below. This is the invariant the plugin depends on, and it is worth an assertion of
+/// its own because the way it breaks is a stray `print!` somewhere deep in evaluation — which is
+/// invisible to every test that only looks at what it expected to find.
+fn assert_stdout_is_one_json_object(output: &Output, context: &str) {
+    let out = stdout(output);
+    let mut lines = out.lines();
+
+    let Some(line) = lines.next() else {
+        panic!("stdout was empty for {context}");
+    };
+    assert!(
+        line.starts_with('{') && line.ends_with('}'),
+        "stdout for {context} is not a bare JSON object:\n{out}"
+    );
+    assert_eq!(
+        lines.next(),
+        None,
+        "stdout for {context} carried more than the envelope:\n{out}"
+    );
+}
+
 #[test]
 fn help_names_both_subcommands() {
     let output = run(&["--help"]);
@@ -119,6 +144,87 @@ fn unimplemented_subcommands_leave_stdout_empty_without_json() {
     assert_eq!(code(&output), 9);
     assert_eq!(stdout(&output), "");
     assert!(stderr(&output).contains("generate is not implemented yet"));
+}
+
+/// Every `--json` invocation the tool accepts, checked against the one-object rule in one place.
+///
+/// The list is the reachable surface today; MVP-21 and MVP-22 should extend it to the paths that
+/// actually parse a solution, which is where a stray print is most likely to appear.
+#[test]
+fn json_stdout_is_always_exactly_one_object() {
+    let cases: [&[&str]; 4] = [
+        &["list-configs", "missing.sln", "--json"],
+        &["list-configs", "missing.sln", "--json", "-v"],
+        &[
+            "generate",
+            "missing.sln",
+            "--configuration",
+            "Debug",
+            "--platform",
+            "x64",
+            "--json",
+        ],
+        &[
+            "generate",
+            "missing.sln",
+            "--configuration",
+            "Debug",
+            "--platform",
+            "x64",
+            "--json",
+            "-v",
+        ],
+    ];
+
+    for args in cases {
+        assert_stdout_is_one_json_object(&run(args), &format!("{args:?}"));
+    }
+}
+
+#[test]
+fn verbose_reports_progress_on_stderr_without_touching_stdout() {
+    let quiet = run(&["list-configs", "missing.sln", "--json"]);
+    let loud = run(&["list-configs", "missing.sln", "--json", "-v"]);
+
+    // Progress must never change what the plugin decodes — it is the same run either way.
+    assert_eq!(stdout(&quiet), stdout(&loud));
+    assert_eq!(code(&quiet), code(&loud));
+
+    // The progress line names the subcommand and the solution it was handed.
+    let progress = "msvclsp: list-configs: missing.sln";
+    assert!(
+        stderr(&loud).contains(progress),
+        "stderr under -v was:\n{}",
+        stderr(&loud)
+    );
+    assert!(
+        !stderr(&quiet).contains(progress),
+        "default verbosity must not report progress; stderr was:\n{}",
+        stderr(&quiet)
+    );
+}
+
+#[test]
+fn verbose_does_not_write_progress_to_stdout_in_human_mode() {
+    // Without `--json` stdout is human-readable text, but progress still belongs on stderr:
+    // anything a caller pipes must be the result, not the narration.
+    let output = run(&["list-configs", "missing.sln", "-v"]);
+
+    assert_eq!(stdout(&output), "");
+    assert!(stderr(&output).contains("msvclsp: list-configs: missing.sln"));
+}
+
+/// MVP-21 unblocks this: `list-configs` currently returns `Error::Unimplemented` without ever
+/// reaching `sln::parse_sln`, so no CLI path produces a warning yet. The plumbing either side of
+/// that gap is unit-tested in `diagnostics.rs` and `cli.rs`; this is the end-to-end assertion,
+/// left visible rather than absent.
+#[test]
+#[ignore = "no subcommand reaches sln::parse_sln until MVP-21"]
+fn warnings_ride_in_the_envelope() {
+    todo!(
+        "run list-configs against a .sln with no `Format Version` header; assert the envelope's \
+         warnings array carries the diagnostic and that the same message appears on stderr"
+    )
 }
 
 #[test]
