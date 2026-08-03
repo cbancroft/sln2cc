@@ -43,8 +43,13 @@ pub fn parse(path: &Path) -> Result<Solution> {
         _ => Error::io(path, err),
     })?;
 
-    parse_text(&text, path)
+    // Visual Studio writes `.sln` as UTF-8 with a BOM, which `read_to_string` keeps as a leading
+    // U+FEFF. Harmless to the entry scan, but MVP-06 reads the header line it lands on.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+
+    parse_text(text, path)
 }
+
 /// Parsing proper, split from I/O so tests can validate parsing without a file.
 ///
 /// `path` is only used to build absolute project paths and to name the file in errors.
@@ -65,7 +70,6 @@ fn parse_text(text: &str, path: &Path) -> Result<Solution> {
         let line_number = index + 1;
         let line = raw.trim();
 
-        println!("Parsing solution line: '{line}'");
         if let Some(rest) = line.strip_prefix("Project(") {
             if let Some(opened) = open_entry {
                 return Err(malformed(
@@ -219,7 +223,7 @@ fn normalize(path: &Path) -> PathBuf {
                     out.push(Component::ParentDir);
                 }
             }
-            other => out.push(other) 
+            other => out.push(other),
         }
     }
 
@@ -483,7 +487,13 @@ EndProject
         let solution = parse_text(&text, &sln()).expect("parses");
 
         let resolved = solution.projects[0].path.display().to_string();
-        assert!(resolved.contains(".."), "surplus markers stay literal: {resolved}");
-        assert!(!resolved.contains("proj\\") && !resolved.contains("proj/"), "the solution directory is consumed: {resolved}");
+        assert!(
+            resolved.contains(".."),
+            "surplus markers stay literal: {resolved}"
+        );
+        assert!(
+            !resolved.contains("proj\\") && !resolved.contains("proj/"),
+            "the solution directory is consumed: {resolved}"
+        );
     }
 }

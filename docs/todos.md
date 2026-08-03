@@ -128,7 +128,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Solution parsing
 
-- [ ] **MVP-05 — Enumerate projects from a `.sln`**
+- [x] **MVP-05 — Enumerate projects from a `.sln`**
   `feat/sln-projects` · ~5h
 
   **Summary:** Parse a solution file's `Project(...)` entries into names and absolute
