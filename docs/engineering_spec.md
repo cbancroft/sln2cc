@@ -202,6 +202,24 @@ Rough module breakdown implied by the parsing pipeline:
   distinct from a `project-parse` corruption because "this is not a C++ project" is a different
   thing to tell a user. One `Document` is parsed, lowered and dropped before the next import is
   read, per ADR 01's borrowing constraint. See [ADR 07](adr/07-vcxproj-reader-ir.md).
+
+  Macro expansion is settled by MVP-08 and lives in `msbuild/eval.rs`. It is **eager**: a value is
+  expanded at the point of *assignment*, against the property bag as it stood at that moment, so
+  what is stored contains no `$(` at all. That is MSBuild's own rule, and it is load-bearing — it is
+  why `$(PreprocessorDefinitions);_DEBUG` appends rather than regressing infinitely, why redefining
+  a property never reaches back into values already built from it, and why a cyclic property cannot
+  be constructed at all. Expansion is therefore a single non-recursive pass, and the depth limit a
+  lazy design would need is replaced by a 1 MiB cap on the expanded value, which is what actually
+  bounds the one runaway case eagerness leaves open (`<A>$(A)$(A)</A>` doubles per assignment). The
+  cap reuses `Error::RecursionLimit` rather than adding a kind to the plugin contract. Property
+  names are matched case-insensitively, as MSBuild matches them; a property assigned an empty value
+  is *defined*, distinct from one never assigned, because `Condition="'$(X)' != ''"` is how projects
+  test for absence and warning about it would train users to ignore warnings. Constructs outside the
+  supported subset — property functions, registry reads, nested references, an unterminated `$(` —
+  are copied through verbatim and recorded rather than emptied, so a bogus entry in the database
+  names its own cause; `%(Metadata)` and `@(Item)` are left untouched for MVP-12. Expansion returns
+  what it could not resolve rather than warning about it, since it knows neither the file nor the
+  line and MVP-13 owns the wording. See [ADR 08](adr/08-eager-macro-expansion.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.

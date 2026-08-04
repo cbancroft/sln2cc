@@ -75,8 +75,13 @@ pub enum Error {
     #[error("import cycle: {}", join_paths(chain, " -> "))]
     ImportCycle { chain: Vec<PathBuf> },
 
-    /// A depth cap was hit — a cyclic `$(Macro)` reference or an import chain too deep to be
-    /// plausible. Failing here is what keeps hostile project files from hanging the tool.
+    /// A cap was hit — an import chain too deep to be plausible, or a property value that grew
+    /// past its size limit. Failing here is what keeps hostile project files from hanging the tool.
+    ///
+    /// `limit` is not always a depth. [ADR 08](../../docs/adr/08-eager-macro-expansion.md) reuses
+    /// this variant for MVP-08's cap on an expanded value, where it is a byte count, and has the
+    /// `context` string say so rather than leaving the number to be misread. A *cyclic* `$(Macro)`
+    /// reference is not among the causes: eager expansion makes one impossible to construct.
     #[error("recursion limit of {limit} exceeded while {context}")]
     RecursionLimit { limit: usize, context: String },
 

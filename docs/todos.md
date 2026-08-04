@@ -257,7 +257,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   verbatim, `ClCompile` items are extracted, and malformed XML produces an error rather than
   a panic.
 
-- [ ] **MVP-08 — Property bag and `$(Macro)` expansion**
+- [x] **MVP-08 — Property bag and `$(Macro)` expansion**
   `feat/msbuild-macros` · ~1d
 
   **Summary:** Implement the property store and recursive expansion of `$(Name)` references
@@ -269,8 +269,35 @@ Goal: one solution, one manually selected configuration/platform, producing a
   or cyclic property fails cleanly instead of hanging. Unknown properties expand to the empty
   string, matching MSBuild, but should be recorded so MVP-13 can warn about them.
 
+  **Outcome:** `cli/src/msbuild/eval.rs` gains `Properties` — an opaque bag keyed case-insensitively,
+  because `$(configuration)` reaching a different slot than `$(Configuration)` surfaces as an empty
+  include path rather than as anything legible — and `expand`, a single non-recursive pass returning
+  `Expansion { value, undefined, unsupported }`. The decision that shapes everything is that
+  **expansion is eager**: a value is expanded when it is *assigned*, against the bag as it stood then,
+  so what is stored contains no `$(` at all. That is MSBuild's own rule, and it is why
+  `$(PreprocessorDefinitions);_DEBUG` appends rather than looping, why redefining a property never
+  reaches back into values already built from it, and why **a cycle cannot be constructed** — which
+  in turn means this item's "recursion depth limit" has nothing to count. The real hostile-input risk
+  is `<A>$(A)$(A)</A>`, which doubles per assignment, so **the guard is a 1 MiB cap on the expanded
+  value**, raised as the existing `Error::RecursionLimit` rather than a new wire string. `Some("")`
+  and `None` stay distinct, since conflating them would have **MVP-13** warn on every idiomatic
+  `Condition="'$(X)' != ''"`. Constructs outside the subset — property functions, registry reads,
+  nested references, an unterminated `$(` — are copied through *verbatim* and recorded, never
+  emptied: a bogus entry in the database names its own cause where a missing one does not. `expand`
+  takes no `Reporter` and warns about nothing, so **MVP-13 owns every word** and gets one finding per
+  distinct name rather than per occurrence. **MVP-11 seeds through `set`** (literal paths, nothing to
+  expand) while everything read from a project file goes through `assign`. See
+  [ADR 08](adr/08-eager-macro-expansion.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests for simple expansion, nested expansion, redefinition ordering, an
   undefined property expanding to empty, and a cyclic reference erroring at the depth limit.
+
+  The last of those **could not be written as specified** and was replaced by two: a self-reference
+  is legal and terminates, and runaway doubling is refused at the size cap. Eager expansion makes a
+  cyclic property unconstructible — see ADR 08. Also covered: `%(...)`/`@(...)` left untouched, a
+  bare `$` staying literal, case-insensitive lookup, empty-versus-undefined, dedup order, a property
+  function keeping its own parentheses, and a non-ASCII value surviving the byte-offset scan.
 
 - [ ] **MVP-09 — `Condition` expression evaluation**
   `feat/msbuild-conditions` · ~1d
