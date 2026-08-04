@@ -9,6 +9,7 @@
 
 pub mod eval;
 pub mod imports;
+pub mod project;
 
 use std::path::{Path, PathBuf};
 

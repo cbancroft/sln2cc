@@ -145,6 +145,13 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+
+    #[error("{}: invalid project file: {detail}", format_site(path, *line))]
+    ProjectSchema {
+        path: PathBuf,
+        line: Option<usize>,
+        detail: String,
+    }
 }
 
 impl Error {
@@ -169,6 +176,7 @@ impl Error {
             Error::StateVersion { .. } => ErrorKind::StateVersion,
             Error::PathEscape { .. } => ErrorKind::PathEscape,
             Error::Unimplemented { .. } => ErrorKind::Unimplemented,
+            Error::ProjectSchema { .. } => ErrorKind::ProjectSchema,
             Error::Context { source, .. } => source.kind(),
         }
     }
@@ -233,12 +241,13 @@ pub enum ErrorKind {
     StateVersion,
     PathEscape,
     Unimplemented,
+    ProjectSchema,
 }
 
 impl ErrorKind {
     /// Every kind, in declaration order. Exists so tests can assert the wire strings stay
     /// unique and unchanged without listing them twice.
-    pub const ALL: [ErrorKind; 15] = [
+    pub const ALL: [ErrorKind; 16] = [
         ErrorKind::Io,
         ErrorKind::SolutionNotFound,
         ErrorKind::SolutionParse,
@@ -254,6 +263,7 @@ impl ErrorKind {
         ErrorKind::StateVersion,
         ErrorKind::PathEscape,
         ErrorKind::Unimplemented,
+        ErrorKind::ProjectSchema,
     ];
 
     /// The stable identifier emitted in JSON. Changing one of these is a breaking change to
@@ -275,6 +285,7 @@ impl ErrorKind {
             ErrorKind::StateVersion => "state-version",
             ErrorKind::PathEscape => "path-escape",
             ErrorKind::Unimplemented => "unimplemented",
+            ErrorKind::ProjectSchema => "project-schema",
         }
     }
 
@@ -290,6 +301,7 @@ impl ErrorKind {
             ErrorKind::SolutionNotFound => 3,
             ErrorKind::SolutionParse
             | ErrorKind::ProjectParse
+            | ErrorKind::ProjectSchema
             | ErrorKind::StateParse
             | ErrorKind::StateVersion => 4,
             ErrorKind::UnsupportedConstruct
