@@ -231,6 +231,28 @@ Goal: one solution, one manually selected configuration/platform, producing a
   files come from `ClCompile` items; headers and other item types can be recorded but aren't
   needed for the compilation database.
 
+  **Outcome:** A new `cli/src/msbuild/project.rs` lowers one file — `.vcxproj`, `.props` and
+  `.targets` are one format with one `<Project>` root, so MVP-10 reads property sheets through the
+  same function — into an owned `Vec<Element>` in document order. Duplicates are kept, inside a
+  group as well as across groups, because which assignment wins depends on conditions this pass
+  deliberately does not evaluate; there is no correct merge available here. A group's `Condition`
+  is kept **separate** from its children's rather than combined into `(a) and (b)`, which would put
+  an expression in the IR that appears in no file. One `Setting` type covers property assignments
+  and item metadata, since the XML is identical and so is what MVP-08 and MVP-09 do with it.
+  Elements match on their local name so the namespace is optional; values are trimmed and
+  conditions are not. Unmodelled elements split two ways: `Target`/`UsingTask`/`ProjectExtensions`
+  are skipped in silence as content that cannot change how a file compiles, and everything else —
+  `<Choose>` above all — becomes `Element::Unsupported` *and* a warning, so **MVP-13 inherits the
+  fact and owns only the wording**. Well-formed XML that is not a project fails as a new
+  `project-schema` kind, distinct from `project-parse` because "this is not a C++ project" is a
+  different thing to tell a user; a missing file stays `Io`, since **MVP-10 owns `MissingImport`**
+  and is the only caller that knows the referrer. **MVP-12 consumes `items_of_type("ClCompile")`**
+  and the `ItemDefinitionGroup` metadata beside it. Writing the hostile-input test found that
+  `roxmltree::Document::parse` recurses per nesting level and aborts the process at ~200 levels of
+  nesting, which **MVP-35** now owns; the test is `#[ignore]`d because running it takes the test
+  binary with it. See [ADR 07](adr/07-vcxproj-reader-ir.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests asserting element order is preserved, conditions are captured
   verbatim, `ClCompile` items are extracted, and malformed XML produces an error rather than
   a panic.
@@ -340,6 +362,36 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Unit tests asserting a warning is recorded for an unsupported condition function
   and an undefined property; integration test asserting warnings appear in both stderr and
   the JSON output.
+
+- [ ] **MVP-35 — Bound XML nesting depth before parsing**
+  `fix/xml-depth-guard` · ~3h
+
+  **Summary:** Reject a project file nested deeper than a fixed limit, before its text reaches
+  `roxmltree`.
+
+  **Description:** Found while writing MVP-07's hostile-input test.
+  `roxmltree::Document::parse` recurses once per nesting level: a debug build on a 2 MiB thread
+  stack survives 100 levels and dies at 200, from roughly 1.5 KB of XML. The process aborts, so
+  there is no error, no exit code, and nothing for the plugin to surface — exactly what CLAUDE.md
+  §5 says must not happen. `roxmltree`'s own options do not help: `allow_dtd` is already `false`
+  and closes the entity-expansion surface, but `nodes_limit` caps the *number* of nodes rather
+  than their depth and cannot separate deep nesting from a large but ordinary project with
+  thousands of items.
+
+  So the depth has to be bounded before parsing, which is a byte scan rather than an XML parse.
+  It can be conservative — real MSBuild files nest about four levels, so a limit in the tens
+  leaves enormous headroom, and over-counting only costs a rejection nobody will hit. `<` cannot
+  appear inside an attribute value in well-formed XML, so the scan needs no quote tracking; it
+  does need to skip comments and CDATA, both of which have unambiguous terminators. Fail as
+  `Error::RecursionLimit`, which already exists and already carries a limit and a context.
+
+  Numbered 35 rather than slotted into this section's sequence because numbers are assigned in
+  order and never reused. See [ADR 07](adr/07-vcxproj-reader-ir.md).
+
+  **Tests:** Un-`#[ignore]` `a_deeply_nested_document_is_rejected_rather_than_crashing` in
+  `msbuild/project.rs`, which already asserts `ErrorKind::RecursionLimit`. Add a unit test that a
+  file at the limit still parses, and one that `<` inside a comment or CDATA does not count
+  toward depth.
 
 ## Toolchain discovery
 

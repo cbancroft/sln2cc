@@ -59,6 +59,7 @@ msvclsp/
 │   │   ├── cli.rs                Subcommand definitions and JSON output types (plugin contract).
 │   │   ├── sln.rs                .sln parsing: member projects and declared configurations.
 │   │   ├── msbuild.rs            .vcxproj evaluation — the hardest part of the system.
+│   │   │   ├── project.rs        Lowers one .vcxproj/.props/.targets into a document-ordered IR.
 │   │   │   ├── imports.rs        .props/.targets import resolution, in evaluation order.
 │   │   │   └── eval.rs           $(Macro) expansion and Condition evaluation.
 │   │   ├── toolchain.rs          ToolchainProvider trait + FakeToolchain for tests.

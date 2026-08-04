@@ -151,7 +151,7 @@ pub enum Error {
         path: PathBuf,
         line: Option<usize>,
         detail: String,
-    }
+    },
 }
 
 impl Error {
@@ -473,6 +473,14 @@ mod tests {
                 },
                 ErrorKind::Unimplemented,
             ),
+            (
+                Error::ProjectSchema {
+                    path: PathBuf::from(r"C:\proj\app.vcxproj"),
+                    line: Some(1),
+                    detail: "root element is <Filters>".to_string(),
+                },
+                ErrorKind::ProjectSchema,
+            ),
         ]
     }
 
@@ -540,6 +548,10 @@ mod tests {
         );
         assert_eq!(rendered[13], r"C:\Windows\System32: path escapes C:\proj");
         assert_eq!(rendered[14], "test_function is not implemented yet");
+        assert_eq!(
+            rendered[15],
+            r"C:\proj\app.vcxproj:1: invalid project file: root element is <Filters>"
+        );
     }
 
     #[test]
@@ -575,6 +587,7 @@ mod tests {
             "state-version",
             "path-escape",
             "unimplemented",
+            "project-schema",
         ];
         let actual: Vec<&str> = ErrorKind::ALL.iter().map(|k| k.as_str()).collect();
         assert_eq!(actual, expected);
@@ -600,6 +613,10 @@ mod tests {
         assert_eq!(ErrorKind::SolutionNotFound.exit_code(), 3);
         assert_eq!(ErrorKind::SolutionParse.exit_code(), 4);
         assert_eq!(ErrorKind::StateVersion.exit_code(), 4);
+        // A file that is not a project and a file that is not XML are the same class of problem
+        // to a user, so they share an exit code while staying distinct on the wire.
+        assert_eq!(ErrorKind::ProjectSchema.exit_code(), 4);
+        assert_eq!(ErrorKind::ProjectParse.exit_code(), 4);
         assert_eq!(ErrorKind::UnsupportedConstruct.exit_code(), 5);
         assert_eq!(ErrorKind::ImportCycle.exit_code(), 5);
         assert_eq!(ErrorKind::ToolchainIncomplete.exit_code(), 6);

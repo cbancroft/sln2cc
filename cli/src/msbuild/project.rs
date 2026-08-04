@@ -32,13 +32,16 @@ pub enum Element {
     ImportGroup(ImportGroup),
     /// An element this reader models nothing for.
     /// Recorded rather than discarded so MVP-13 owns the message.
-    Unsupported { name: String, line: usize },
+    Unsupported {
+        name: String,
+        line: usize,
+    },
 }
 
 /// A `<Name Condition="...">value</Name>` child.
 ///
 /// This one type covers two MSBuild concepts, property assignment and item metadata, because the
-/// XML is identical and every later pass treats them identically: expand value and check the 
+/// XML is identical and every later pass treats them identically: expand value and check the
 /// condition. Splitting them buys nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setting {
@@ -127,7 +130,7 @@ impl ProjectFile {
             .iter()
             .filter_map(|element| match element {
                 Element::Items(group) => Some(group),
-                _ => None
+                _ => None,
             })
             .flat_map(|group| &group.items)
             .filter(move |item| item.item_type.eq_ignore_ascii_case(item_type))
@@ -142,17 +145,17 @@ const IGNORED: [&str; 3] = ["Target", "UsingTask", "ProjectExtensions"];
 /// A missing file ir an [`Error::Io`] rather than a dedicated variant: only MVP-10 knows which file
 /// referenced this one, so `MissingImport` is reported there, by checking before calling in.
 pub fn parse_project(path: &Path, reporter: &mut Reporter) -> Result<ProjectFile> {
-    let text = std::fs::read_to_string(path).map_err(|err| Error::io(path,err))?;
+    let text = std::fs::read_to_string(path).map_err(|err| Error::io(path, err))?;
     parse_project_text(&text, path, reporter)
 }
 
-/// Parse project XML text. 
+/// Parse project XML text.
 ///
 /// `path` names the file in errors and diagnostics. Nothing is read from the disk here
 fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Result<ProjectFile> {
-    let doc = Document::parse(text).map_err(|err| Error::ProjectParse { 
-        path: path.to_path_buf(), 
-        source: err 
+    let doc = Document::parse(text).map_err(|err| Error::ProjectParse {
+        path: path.to_path_buf(),
+        source: err,
     })?;
 
     let root = doc.root_element();
@@ -163,7 +166,7 @@ fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Resul
             detail: format!(
                 "root element is <{}>, expected <Project>",
                 root.tag_name().name()
-                ),
+            ),
         });
     }
 
@@ -180,9 +183,9 @@ fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Resul
                 properties: settings(&doc, child),
                 line,
             }),
-            "ItemDefinitionGroup" => Element::ItemDefinitions(ItemDefinitionGroup { 
+            "ItemDefinitionGroup" => Element::ItemDefinitions(ItemDefinitionGroup {
                 condition,
-                definitions: item_definitions(&doc, child), 
+                definitions: item_definitions(&doc, child),
                 line,
             }),
             "ItemGroup" => Element::Items(ItemGroup {
@@ -199,29 +202,32 @@ fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Resul
             name if IGNORED.contains(&name) => continue,
             name => {
                 reporter.warn_at(
-                    path, 
-                    Some(line), 
-                    format!("`<{name}>` is not supported; whatever it configures will be ignored")
+                    path,
+                    Some(line),
+                    format!("`<{name}>` is not supported; whatever it configures will be ignored"),
                 );
-                Element::Unsupported { name: name.to_string(), line }
+                Element::Unsupported {
+                    name: name.to_string(),
+                    line,
+                }
             }
         };
 
         elements.push(element);
     }
 
-    progress!(reporter,
+    progress!(
+        reporter,
         "{}: {} top-level element(s)",
         path.display(),
         elements.len()
     );
 
-    Ok( ProjectFile {
+    Ok(ProjectFile {
         path: path.to_path_buf(),
-        elements
+        elements,
     })
 }
-
 
 /// The `<Name>value</Name>` children of a group, in document order.
 ///
@@ -234,10 +240,10 @@ fn settings(doc: &Document, parent: Node) -> Vec<Setting> {
             name: child.tag_name().name().to_string(),
             value: text_of(child),
             condition: attribute(child, "Condition"),
-            line: line_of(doc, child)
+            line: line_of(doc, child),
         })
-    .collect()
-} 
+        .collect()
+}
 
 fn item_definitions(doc: &Document, parent: Node) -> Vec<ItemDefinition> {
     parent
@@ -247,7 +253,7 @@ fn item_definitions(doc: &Document, parent: Node) -> Vec<ItemDefinition> {
             item_type: child.tag_name().name().to_string(),
             condition: attribute(child, "Condition"),
             metadata: settings(doc, child),
-            line: line_of(doc, child)
+            line: line_of(doc, child),
         })
         .collect()
 }
@@ -272,11 +278,15 @@ fn items(doc: &Document, parent: Node, path: &Path, reporter: &mut Reporter) -> 
                 line: line_of(doc, child),
             };
 
-            if item.include.is_none() && item.exclude.is_none() && item.update.is_none() {
-                reporter.warn_at(path, Some(item.line), 
-                    format!("`<{}>` names no Include, Remove or Update and so configures nothing",
-                        item.item_type)
-                    );
+            if item.include.is_none() && item.remove.is_none() && item.update.is_none() {
+                reporter.warn_at(
+                    path,
+                    Some(item.line),
+                    format!(
+                        "`<{}>` names no Include, Remove or Update and so configures nothing",
+                        item.item_type
+                    ),
+                );
             }
             item
         })
@@ -306,7 +316,12 @@ fn import(doc: &Document, node: Node, path: &Path) -> Result<Import> {
 }
 
 /// The `<Import>` children of an `ImportGroup`. Anything else in one is warned about and skipped.
-fn imports(doc: &Document, parent: Node, path: &Path, reporter: &mut Reporter) -> Result<Vec<Import>> {
+fn imports(
+    doc: &Document,
+    parent: Node,
+    path: &Path,
+    reporter: &mut Reporter,
+) -> Result<Vec<Import>> {
     let mut imports = Vec::new();
 
     for child in parent.children().filter(Node::is_element) {
@@ -319,7 +334,7 @@ fn imports(doc: &Document, parent: Node, path: &Path, reporter: &mut Reporter) -
                 format!(
                     "`<{}>` inside an ImportGroup is not an Import and was skipped",
                     child.tag_name().name()
-                )
+                ),
             );
         }
     }
@@ -349,4 +364,736 @@ fn text_of(node: Node) -> String {
         value.push_str(child.text().unwrap_or_default());
     }
     value.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ErrorKind, Severity};
+
+    /// What Visual Studio stamps on the root element. Hand-written property sheets routinely omit
+    /// it, which is why the reader matches on the local name.
+    const MSBUILD_NS: &str = "http://schemas.microsoft.com/developer/msbuild/2003";
+
+    /// A rooted project path for the platform under test, matching `sln.rs`'s approach: a
+    /// `C:\`-prefixed path is *relative* on Linux CI, and diagnostics are compared against it.
+    fn project() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\proj\app\app.vcxproj")
+        } else {
+            PathBuf::from("/proj/app/app.vcxproj")
+        }
+    }
+
+    /// Wrap `body` in the `<Project>` element Visual Studio writes.
+    ///
+    /// The declaration is line 1 and `<Project>` is line 2, so **the body starts at line 3** —
+    /// which is what every line-number assertion below counts from.
+    fn project_text(body: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+             <Project DefaultTargets=\"Build\" xmlns=\"{MSBUILD_NS}\">\n\
+             {body}\n\
+             </Project>\n"
+        )
+    }
+
+    /// Parse with a quiet reporter, for the majority of tests that assert on the parse itself.
+    fn parse(text: &str) -> Result<ProjectFile> {
+        parse_project_text(text, &project(), &mut Reporter::new(false))
+    }
+
+    /// Parse and hand back the reporter, for the tests that assert on what was warned about.
+    fn parse_reporting(text: &str) -> (Result<ProjectFile>, Reporter) {
+        let mut reporter = Reporter::new(false);
+        let result = parse_project_text(text, &project(), &mut reporter);
+        (result, reporter)
+    }
+
+    /// The element sequence by kind, which is what the ordering tests actually pin. Comparing
+    /// whole `ProjectFile`s would drag line numbers into assertions that do not care about them.
+    fn shape(file: &ProjectFile) -> Vec<&'static str> {
+        file.elements
+            .iter()
+            .map(|element| match element {
+                Element::Properties(_) => "PropertyGroup",
+                Element::ItemDefinitions(_) => "ItemDefinitionGroup",
+                Element::Items(_) => "ItemGroup",
+                Element::Import(_) => "Import",
+                Element::ImportGroup(_) => "ImportGroup",
+                Element::Unsupported { .. } => "Unsupported",
+            })
+            .collect()
+    }
+
+    /// `(name, value, condition)` per setting — the parts a test usually cares about, with line
+    /// numbers left to `line_numbers_name_the_element_they_came_from`.
+    fn triples(settings: &[Setting]) -> Vec<(&str, &str, Option<&str>)> {
+        settings
+            .iter()
+            .map(|setting| {
+                (
+                    setting.name.as_str(),
+                    setting.value.as_str(),
+                    setting.condition.as_deref(),
+                )
+            })
+            .collect()
+    }
+
+    fn as_property_group(file: &ProjectFile, index: usize) -> &PropertyGroup {
+        match &file.elements[index] {
+            Element::Properties(group) => group,
+            other => panic!("element {index} is not a PropertyGroup: {other:?}"),
+        }
+    }
+
+    fn as_item_definitions(file: &ProjectFile, index: usize) -> &ItemDefinitionGroup {
+        match &file.elements[index] {
+            Element::ItemDefinitions(group) => group,
+            other => panic!("element {index} is not an ItemDefinitionGroup: {other:?}"),
+        }
+    }
+
+    fn as_item_group(file: &ProjectFile, index: usize) -> &ItemGroup {
+        match &file.elements[index] {
+            Element::Items(group) => group,
+            other => panic!("element {index} is not an ItemGroup: {other:?}"),
+        }
+    }
+
+    fn as_import(file: &ProjectFile, index: usize) -> &Import {
+        match &file.elements[index] {
+            Element::Import(import) => import,
+            other => panic!("element {index} is not an Import: {other:?}"),
+        }
+    }
+
+    fn as_import_group(file: &ProjectFile, index: usize) -> &ImportGroup {
+        match &file.elements[index] {
+            Element::ImportGroup(group) => group,
+            other => panic!("element {index} is not an ImportGroup: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn top_level_elements_keep_document_order() {
+        // Interleaved on purpose, with `Import`s either side of the settings: which assignment
+        // wins is decided by position, so a reader that grouped by kind would hold every element
+        // and still have lost the answer.
+        let text = project_text(
+            r#"  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A1}</ProjectGuid>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(
+            shape(&file),
+            [
+                "PropertyGroup",
+                "Import",
+                "PropertyGroup",
+                "ItemDefinitionGroup",
+                "ItemGroup",
+                "Import",
+            ]
+        );
+        assert_eq!(file.path, project(), "the file names where it came from");
+    }
+
+    #[test]
+    fn a_property_assigned_twice_keeps_both_in_order() {
+        // Which assignment wins is MVP-08's decision to make. Collecting into a map here would
+        // make it instead — invisibly, and with no way for a later pass to recover the loser.
+        let text = project_text(
+            r#"  <PropertyGroup>
+    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+  </PropertyGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(
+            triples(&as_property_group(&file, 0).properties),
+            [
+                ("ConfigurationType", "Application", None),
+                ("ConfigurationType", "StaticLibrary", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_condition_is_captured_verbatim() {
+        // No macro expanded, no whitespace normalized, and the group's condition kept apart from
+        // its child's: combining them into `(a) and (b)` would put an expression in the IR that
+        // appears in no file.
+        let text = project_text(
+            r#"  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <UseDebugLibraries Condition=" '$(Foo)' != '' ">true</UseDebugLibraries>
+  </PropertyGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+        let group = as_property_group(&file, 0);
+
+        assert_eq!(
+            group.condition.as_deref(),
+            Some("'$(Configuration)|$(Platform)'=='Debug|x64'")
+        );
+        assert_eq!(
+            group.properties[0].condition.as_deref(),
+            Some(" '$(Foo)' != '' "),
+            "even the padding survives — MVP-09 owns what a condition means"
+        );
+    }
+
+    #[test]
+    fn an_escaped_condition_is_decoded_and_not_otherwise_touched() {
+        // `&apos;` is how a condition survives XML at all. MVP-09 has to see the string the file
+        // means, not the one it spells.
+        let text = project_text(
+            r#"  <PropertyGroup Condition="&apos;$(Configuration)&apos;==&apos;Debug&apos;" />"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(
+            as_property_group(&file, 0).condition.as_deref(),
+            Some("'$(Configuration)'=='Debug'")
+        );
+    }
+
+    #[test]
+    fn an_unconditional_element_has_no_condition() {
+        let text = project_text(r#"  <PropertyGroup><X>1</X></PropertyGroup>"#);
+
+        let file = parse(&text).expect("parses");
+        let group = as_property_group(&file, 0);
+
+        assert!(group.condition.is_none());
+        assert!(group.properties[0].condition.is_none());
+    }
+
+    #[test]
+    fn clcompile_items_are_extracted_across_groups_in_order() {
+        let text = project_text(
+            r#"  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClInclude Include="app.h" />
+    <ClCompile Include="util.cpp">
+      <PreprocessorDefinitions>EXTRA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="late.cpp" />
+  </ItemGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        let sources: Vec<&str> = file
+            .items_of_type("ClCompile")
+            .filter_map(|item| item.include.as_deref())
+            .collect();
+        assert_eq!(sources, ["main.cpp", "util.cpp", "late.cpp"]);
+
+        let util = file
+            .items_of_type("ClCompile")
+            .nth(1)
+            .expect("three sources");
+        assert_eq!(
+            triples(&util.metadata),
+            [(
+                "PreprocessorDefinitions",
+                "EXTRA;%(PreprocessorDefinitions)",
+                None
+            )],
+            "`%(...)` is left alone; MVP-12 owns inheritance"
+        );
+
+        // The header is recorded, not discarded — it is simply not a source file.
+        assert_eq!(as_item_group(&file, 0).items.len(), 3);
+        assert_eq!(file.items_of_type("ClInclude").count(), 1);
+    }
+
+    #[test]
+    fn an_item_type_is_matched_case_insensitively() {
+        // MSBuild item names are case-insensitive and `<Clcompile>` builds in Visual Studio.
+        // Treating it as a different type would silently drop the source file.
+        let text = project_text(r#"  <ItemGroup><Clcompile Include="main.cpp" /></ItemGroup>"#);
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(file.items_of_type("ClCompile").count(), 1);
+    }
+
+    #[test]
+    fn an_items_attributes_are_recorded_unexpanded() {
+        let (result, reporter) = parse_reporting(&project_text(
+            r#"  <ItemGroup>
+    <ClCompile Include="src\*.cpp" Exclude="src\gen.cpp" />
+    <ClCompile Update="main.cpp">
+      <PrecompiledHeader>Use</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Remove="old.cpp" />
+  </ItemGroup>"#,
+        ));
+        let file = result.expect("parses");
+        let items: Vec<&Item> = file.items_of_type("ClCompile").collect();
+
+        // Stored as written. Nothing expands the wildcard yet — a known gap, see ADR 07.
+        assert_eq!(items[0].include.as_deref(), Some(r"src\*.cpp"));
+        assert_eq!(items[0].exclude.as_deref(), Some(r"src\gen.cpp"));
+        // `Update` attaches metadata to an item declared elsewhere, which is one way per-file
+        // compiler settings reach MVP-12.
+        assert_eq!(items[1].update.as_deref(), Some("main.cpp"));
+        assert_eq!(
+            triples(&items[1].metadata),
+            [("PrecompiledHeader", "Use", None)]
+        );
+        assert_eq!(items[2].remove.as_deref(), Some("old.cpp"));
+
+        // Each of the three names something, so none of them is the "configures nothing" case.
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
+    }
+
+    #[test]
+    fn project_configuration_items_come_out_of_the_same_accessor() {
+        // The `Label="ProjectConfigurations"` group declares which pairs the project supports.
+        // Nothing special-cases it: it is an `ItemGroup` of items with metadata like any other.
+        let text = project_text(
+            r#"  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+        let declared: Vec<&Item> = file.items_of_type("ProjectConfiguration").collect();
+
+        assert_eq!(declared.len(), 1);
+        assert_eq!(declared[0].include.as_deref(), Some("Debug|Win32"));
+        assert_eq!(
+            triples(&declared[0].metadata),
+            [
+                ("Configuration", "Debug", None),
+                ("Platform", "Win32", None)
+            ]
+        );
+    }
+
+    #[test]
+    fn item_definition_metadata_is_read_per_item_type() {
+        // Where nearly every flag lives: `ClCompile` sets the project-wide defaults MVP-12 turns
+        // into include paths and defines, and `Link` sits beside it, recorded and unread.
+        let text = project_text(
+            r#"  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+        let group = as_item_definitions(&file, 0);
+
+        assert_eq!(
+            group.condition.as_deref(),
+            Some("'$(Configuration)'=='Debug'")
+        );
+        assert_eq!(
+            group
+                .definitions
+                .iter()
+                .map(|definition| definition.item_type.as_str())
+                .collect::<Vec<_>>(),
+            ["ClCompile", "Link"]
+        );
+        assert_eq!(
+            triples(&group.definitions[0].metadata),
+            [
+                (
+                    "AdditionalIncludeDirectories",
+                    "$(ProjectDir)inc;%(AdditionalIncludeDirectories)",
+                    None
+                ),
+                (
+                    "PreprocessorDefinitions",
+                    "WIN32;_DEBUG;%(PreprocessorDefinitions)",
+                    None
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_import_group_keeps_its_own_condition_and_its_children() {
+        // The `PropertySheets` group every Visual Studio project carries. The group's condition
+        // gates every child and each child carries its own; both are needed, separately.
+        let text = project_text(
+            r#"  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)'=='Debug'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
+    <Import Project="..\shared\common.props" />
+  </ImportGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+        let group = as_import_group(&file, 0);
+
+        assert_eq!(
+            group.condition.as_deref(),
+            Some("'$(Configuration)'=='Debug'")
+        );
+        assert_eq!(
+            group
+                .imports
+                .iter()
+                .map(|import| import.project.as_str())
+                .collect::<Vec<_>>(),
+            [
+                r"$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props",
+                r"..\shared\common.props",
+            ]
+        );
+        assert!(group.imports[0].condition.is_some());
+        assert!(
+            group.imports[1].condition.is_none(),
+            "an unconditional import must not inherit the group's condition"
+        );
+    }
+
+    #[test]
+    fn an_empty_group_is_kept_rather_than_dropped() {
+        // Visual Studio writes `<ImportGroup Label="ExtensionSettings">` and
+        // `<PropertyGroup Label="UserMacros" />` with nothing in them. An element with no children
+        // is not an absent element.
+        let text = project_text(
+            r#"  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(shape(&file), ["ImportGroup", "PropertyGroup"]);
+        assert!(as_import_group(&file, 0).imports.is_empty());
+        assert!(as_property_group(&file, 1).properties.is_empty());
+    }
+
+    #[test]
+    fn a_value_split_across_lines_is_trimmed() {
+        // Hand-formatted sheets wrap long lists. MSBuild preserves the whitespace; keeping it here
+        // would leave a trailing newline inside a directory-valued property and corrupt every path
+        // concatenated from it.
+        let text = project_text(
+            "  <PropertyGroup>\n    \
+             <OutDir>\n      $(SolutionDir)bin\\\n    </OutDir>\n    \
+             <Empty></Empty>\n    \
+             <SelfClosing />\n  \
+             </PropertyGroup>",
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(
+            triples(&as_property_group(&file, 0).properties),
+            [
+                ("OutDir", r"$(SolutionDir)bin\", None),
+                ("Empty", "", None),
+                ("SelfClosing", "", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_msbuild_namespace_is_optional() {
+        // Visual Studio always writes `xmlns`; hand-written property sheets routinely omit it, and
+        // MSBuild reads both. Line numbers differ between the two spellings, so the comparison is
+        // on shape and content rather than on whole `ProjectFile`s.
+        let body = r#"  <PropertyGroup>
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>"#;
+
+        let with_ns = parse(&project_text(body)).expect("parses");
+        let without_ns = parse(&format!("<Project>\n{body}\n</Project>\n")).expect("parses");
+
+        assert_eq!(shape(&with_ns), shape(&without_ns));
+        assert_eq!(
+            triples(&as_property_group(&with_ns, 0).properties),
+            triples(&as_property_group(&without_ns, 0).properties)
+        );
+        assert_eq!(
+            without_ns.items_of_type("ClCompile").count(),
+            1,
+            "item types are local names too"
+        );
+    }
+
+    #[test]
+    fn an_unmodelled_element_is_recorded_and_warned_about() {
+        // `<Choose>` decides *which* properties apply. Dropping it in silence is exactly how a
+        // plausible-but-wrong compilation database gets built, so it stays in the IR and says so.
+        let text = project_text(
+            r#"  <Choose>
+    <When Condition="'$(Platform)'=='x64'">
+      <PropertyGroup>
+        <Bits>64</Bits>
+      </PropertyGroup>
+    </When>
+  </Choose>"#,
+        );
+
+        let (result, reporter) = parse_reporting(&text);
+        let file = result.expect("parses anyway");
+
+        // The nested `PropertyGroup` is deliberately *not* lifted out: it is gated by a `When`
+        // this reader cannot evaluate, so hoisting it would apply it unconditionally.
+        assert_eq!(
+            file.elements,
+            [Element::Unsupported {
+                name: "Choose".to_string(),
+                line: 3,
+            }]
+        );
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.line, Some(3));
+        assert_eq!(warning.file.as_deref(), Some(project().as_path()));
+        assert!(
+            warning.message.contains("Choose"),
+            "names the element: {}",
+            warning.message
+        );
+    }
+
+    #[test]
+    fn build_only_elements_are_skipped_without_a_warning() {
+        // A `Target` runs during a build and `ProjectExtensions` is IDE bookkeeping; neither can
+        // change how a source file compiles. Skipped in silence the way `sln.rs` skips a solution
+        // folder — warning about correct, common content would devalue every other warning.
+        let text = project_text(
+            r#"  <Target Name="AfterBuild">
+    <Message Text="done" />
+  </Target>
+  <UsingTask TaskName="X" AssemblyFile="x.dll" />
+  <ProjectExtensions>
+    <VisualStudio />
+  </ProjectExtensions>
+  <PropertyGroup />"#,
+        );
+
+        let (result, reporter) = parse_reporting(&text);
+        let file = result.expect("parses");
+
+        assert_eq!(shape(&file), ["PropertyGroup"]);
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
+    }
+
+    #[test]
+    fn an_item_naming_nothing_warns_but_still_parses() {
+        // An item with no `Include`, `Remove` or `Update` configures nothing. Worth saying, not
+        // worth failing a parse that is otherwise fine.
+        let (result, reporter) = parse_reporting(&project_text(
+            r#"  <ItemGroup>
+    <ClCompile />
+  </ItemGroup>"#,
+        ));
+        let file = result.expect("parses anyway");
+
+        assert_eq!(
+            file.items_of_type("ClCompile").count(),
+            1,
+            "the warning is not a refusal"
+        );
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.line, Some(4));
+    }
+
+    #[test]
+    fn a_non_import_inside_an_import_group_warns_and_is_skipped() {
+        let (result, reporter) = parse_reporting(&project_text(
+            r#"  <ImportGroup>
+    <PropertyGroup />
+    <Import Project="a.props" />
+  </ImportGroup>"#,
+        ));
+        let file = result.expect("parses anyway");
+
+        assert_eq!(as_import_group(&file, 0).imports.len(), 1);
+        assert_eq!(reporter.warnings().len(), 1);
+        assert_eq!(reporter.warnings()[0].line, Some(4));
+    }
+
+    #[test]
+    fn line_numbers_name_the_element_they_came_from() {
+        // Counted against the literal below, where the body starts at line 3. Diagnostics and
+        // errors are only actionable if these are right, and nothing else asserts them.
+        let text = project_text(
+            r#"  <PropertyGroup>
+    <ConfigurationType>Application</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="a.props" />
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>"#,
+        );
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(as_property_group(&file, 0).line, 3);
+        assert_eq!(as_property_group(&file, 0).properties[0].line, 4);
+        assert_eq!(as_import(&file, 1).line, 6);
+        assert_eq!(as_item_group(&file, 2).line, 7);
+        assert_eq!(as_item_group(&file, 2).items[0].line, 8);
+    }
+
+    #[test]
+    fn a_utf8_bom_does_not_prevent_parsing() {
+        // Visual Studio writes one. `roxmltree` skips it itself, which is why there is no
+        // counterpart here to the manual strip in `sln.rs`.
+        let text = format!("\u{feff}{}", project_text(r#"  <PropertyGroup />"#));
+
+        let file = parse(&text).expect("parses");
+
+        assert_eq!(shape(&file), ["PropertyGroup"]);
+        assert_eq!(
+            as_property_group(&file, 0).line,
+            3,
+            "the BOM must not shift line numbers"
+        );
+    }
+
+    #[test]
+    fn malformed_xml_is_an_error_not_a_panic() {
+        let cases = [
+            ("<Project><PropertyGroup></Project>", "mismatched tag"),
+            ("<Project>", "unclosed root"),
+            ("", "empty input"),
+            ("not xml at all", "not markup"),
+            (
+                r#"<Project><PropertyGroup Condition="unterminated /></Project>"#,
+                "unterminated attribute",
+            ),
+        ];
+
+        for (text, what) in cases {
+            let error = parse(text).expect_err("must not parse");
+            assert_eq!(error.kind(), ErrorKind::ProjectParse, "for {what}");
+        }
+    }
+
+    #[test]
+    fn a_root_element_that_is_not_project_is_rejected() {
+        // A `.vcxproj.filters`, or any XML file handed to the wrong argument. Well-formed, so
+        // `roxmltree` is content; there is simply nothing here to evaluate.
+        let error = parse("<Filters><ItemGroup /></Filters>").expect_err("must not parse");
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::ProjectSchema,
+            "distinct from `project-parse`: the XML is fine, the content is not"
+        );
+        assert!(
+            error.to_string().contains("Filters"),
+            "names the element: {error}"
+        );
+        assert!(error.to_string().contains(":1:"), "names the line: {error}");
+    }
+
+    #[test]
+    fn an_import_without_a_project_attribute_is_rejected() {
+        // `<Import Sdk="..."/>` included: an import is how the entire flag set arrives, so one
+        // that resolves to nothing leaves a database quietly missing settings.
+        let error = parse(&project_text(r#"  <Import Sdk="Microsoft.NET.Sdk" />"#))
+            .expect_err("must not parse");
+
+        assert_eq!(error.kind(), ErrorKind::ProjectSchema);
+        assert!(error.to_string().contains(":3:"), "names the line: {error}");
+    }
+
+    #[test]
+    fn a_dtd_is_rejected() {
+        // The entity-expansion surface. Project files are untrusted input (CLAUDE.md §5) and have
+        // no legitimate use for a DTD, so `roxmltree`'s defaults — which refuse one — are never
+        // overridden.
+        let text = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<!DOCTYPE Project [<!ENTITY a \"aaaaaaaaaa\">]>\n",
+            "<Project><PropertyGroup><X>&a;</X></PropertyGroup></Project>",
+        );
+
+        let error = parse(text).expect_err("must not parse");
+
+        assert_eq!(error.kind(), ErrorKind::ProjectParse);
+    }
+
+    /// CLAUDE.md §5: hostile input must fail gracefully rather than hang or panic. It does not.
+    ///
+    /// `roxmltree::Document::parse` recurses once per nesting level, and a debug build on a 2 MiB
+    /// thread stack dies somewhere between 100 and 200 levels — around 1.5 KB of XML. The whole
+    /// process aborts, so there is no error, no exit code, and nothing for the plugin to report.
+    /// The lowering below the parse is iterative and not implicated.
+    ///
+    /// Left `#[ignore]`d rather than deleted so the gap stays visible, per CLAUDE.md §8: running
+    /// it aborts the test binary and takes every other test with it. **MVP-35 unblocks this** by
+    /// bounding depth before the text reaches `roxmltree`; `nodes_limit` is not that guard, since
+    /// it cannot tell 5,000 nested elements from a large but ordinary project file.
+    #[test]
+    #[ignore = "MVP-35: no depth guard yet, and running this aborts the whole test binary"]
+    fn a_deeply_nested_document_is_rejected_rather_than_crashing() {
+        const DEPTH: usize = 5_000;
+        let text = format!(
+            "<Project><PropertyGroup>{}{}</PropertyGroup></Project>",
+            "<X>".repeat(DEPTH),
+            "</X>".repeat(DEPTH),
+        );
+
+        let error = parse(&text).expect_err("must not parse");
+
+        assert_eq!(error.kind(), ErrorKind::RecursionLimit);
+    }
+
+    #[test]
+    fn a_missing_project_file_is_an_io_error() {
+        // Not `MissingImport`: only MVP-10 knows which file referenced this one, so naming the
+        // referrer is its job rather than the reader's.
+        let error = parse_project(
+            Path::new("no-such-project.vcxproj"),
+            &mut Reporter::new(false),
+        )
+        .expect_err("must not parse");
+
+        assert_eq!(error.kind(), ErrorKind::Io);
+    }
 }

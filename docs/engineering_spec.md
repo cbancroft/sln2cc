@@ -184,6 +184,24 @@ Rough module breakdown implied by the parsing pipeline:
   `.props`/`.targets` files (including property sheets), evaluates `Condition` attributes and
   macros (e.g. `$(Configuration)`, `$(Platform)`, `$(SolutionDir)`) for the selected
   configuration/platform. This is the most complex piece of the system — see Open Questions.
+
+  The reading half is settled by MVP-07 and lives in `msbuild/project.rs`, which serves `.vcxproj`,
+  `.props` and `.targets` alike — one format, one `<Project>` root, one function. It lowers a file
+  into an owned `Vec<Element>` in **document order**, because order decides which assignment wins
+  and any map keyed by property name destroys that answer invisibly; duplicates are kept for the
+  same reason. Nothing is evaluated here — no macro expanded, no condition evaluated, no import
+  followed — and every `Condition` is carried forward as a string, with a group's condition kept
+  separate from its children's rather than combined, since synthesizing `(a) and (b)` would put an
+  expression in the IR that appears in no file. One `Setting` type covers property assignments and
+  item metadata, which are the same XML and get the same treatment downstream. Elements match on
+  their local name, so the MSBuild namespace is optional; values are trimmed but conditions are
+  not. `Target`, `UsingTask` and `ProjectExtensions` are skipped silently as content that cannot
+  change how a file compiles, while anything else unmodelled — `<Choose>` above all — is recorded
+  as `Element::Unsupported` *and* warned about, so a construct that could change the flags is never
+  dropped in silence. Files that are well-formed XML but not projects fail as `project-schema`,
+  distinct from a `project-parse` corruption because "this is not a C++ project" is a different
+  thing to tell a user. One `Document` is parsed, lowered and dropped before the next import is
+  read, per ADR 01's borrowing constraint. See [ADR 07](adr/07-vcxproj-reader-ir.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.
@@ -427,6 +445,13 @@ MSBuild-evaluation surface area bounded.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.
+- Whether wildcard `Include` attributes are expanded or refused. `<ClCompile Include="src\*.cpp"/>`
+  is legal MSBuild and Visual Studio never writes it, so it has stayed out of scope by accident
+  rather than by decision; MVP-12 does not mention globbing either. A project written that way
+  currently produces no source files at all, silently, which is the worst available outcome.
+- Whether a property value containing element children should warn. MVP-07's reader keeps the text
+  and drops the elements. It is not valid MSBuild, so the exposure is small, but it is the one
+  place the reader drops something without saying so.
 - Source and scope of the fixture corpus for integration tests — hand-authored minimal solutions,
   sanitized real-world examples, or both.
 - Release/distribution strategy: how the CLI binary is distributed to the Neovim plugin (built from
