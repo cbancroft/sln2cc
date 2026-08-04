@@ -218,7 +218,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## MSBuild evaluation
 
-- [ ] **MVP-07 — Read `.vcxproj` structure**
+- [x] **MVP-07 — Read `.vcxproj` structure**
   `feat/vcxproj-reader` · ~1d
 
   **Summary:** Parse a `.vcxproj` into its `PropertyGroup`, `ItemDefinitionGroup`,
