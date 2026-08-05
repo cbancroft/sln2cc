@@ -103,8 +103,9 @@ pub struct Item {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
-    /// Raw and unexpanded: `$(VCTargetsPath)\Microsoft.cpp.props` only resolves once MVP-11 has
-    /// seeded the reserved properties.
+    /// Raw and unexpanded. `$(SolutionDir)shared\common.props` resolves against the bag
+    /// `msbuild/reserved.rs` seeds; `$(VCTargetsPath)\Microsoft.cpp.props` stays unresolved until
+    /// MVP-15 supplies the Visual Studio paths.
     pub project: String,
     pub condition: Option<String>,
     pub line: usize,

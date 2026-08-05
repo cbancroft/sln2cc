@@ -257,6 +257,30 @@ Rough module breakdown implied by the parsing pipeline:
   This is also where MVP-08's and MVP-09's recorded findings finally become `Reporter` warnings,
   this being the first code that holds both a finding and the file and line it came from. See
   [ADR 10](adr/10-import-resolution.md).
+
+  The bag that pass starts from is seeded by MVP-11, in `msbuild/reserved.rs`. Project files
+  reference `$(SolutionDir)`, `$(ProjectDir)`, `$(Configuration)` and `$(MSBuildThisFileDirectory)`
+  without defining them, so against an empty bag every include path loses its prefix and no
+  configuration-specific `PropertyGroup` applies at all — a database that generates cleanly and is
+  wrong. Twenty-four properties are seeded in five families (`Solution*`, `Configuration`/`Platform`,
+  `MSBuildProject*`, `MSBuildThisFile*`, `Project*`), all derived from three inputs: the `.sln` path,
+  the `.vcxproj` path, and the selected **project** pair per ADR 05. Toolchain-derived properties
+  (`$(VCTargetsPath)`, `$(VSInstallDir)`) are deliberately absent until MVP-15 can supply them from a
+  real installation. Directory-valued properties carry MSBuild's trailing separator — spelled with
+  `MAIN_SEPARATOR` so a Linux CI run never mixes separators inside one path — except
+  `$(MSBuildProjectDirectory)`, which MSBuild deliberately leaves without one; both conventions are
+  load-bearing, since files concatenate these values directly. This module owns the *policy* of which
+  names exist; `eval.rs` owns the *mechanism* that protects them, as a locked-key set where
+  `set_reserved` writes and `assign` refuses, setting `Expansion::refused` for `imports.rs` to warn
+  from. That enforces the trust boundary MVP-08 had already drawn between `set` (seeding) and
+  `assign` (read out of a project file), rather than leaving it to a check each caller must remember.
+  The lock covers what MSBuild reserves plus what a solution build passes as global, while the
+  `Project*` family is seeded **overridable**, because MSBuild's own `.props` define it conditionally
+  and a project renaming itself with `<ProjectName>` is ordinary. `MSBuildThisFile*` is a property of
+  the file being read rather than of the project, so it follows the import walk: `Walk::enter`
+  brackets each file with `reserved::enter_file`/`restore` beside its existing depth bookkeeping,
+  which is what lets a shared property sheet locate its own siblings. See
+  [ADR 11](adr/11-reserved-property-seeding.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.
@@ -505,6 +529,11 @@ MSBuild-evaluation surface area bounded.
   is legal MSBuild and Visual Studio never writes it, so it has stayed out of scope by accident
   rather than by decision; MVP-12 does not mention globbing either. A project written that way
   currently produces no source files at all, silently, which is the worst available outcome.
+- Whether `$(SolutionDir)` and the rest of the `Solution*` family should be seeded at all when a
+  project is evaluated outside a solution. Not reachable today, since the CLI always takes a `.sln`,
+  but standalone-project support and the multi-solution work both arrive at it. The honest answer may
+  be that those properties should be *absent* — and so warn as undefined — rather than pointed at a
+  directory no solution occupies. See [ADR 11](adr/11-reserved-property-seeding.md).
 - Whether a property value containing element children should warn. MVP-07's reader keeps the text
   and drops the elements. It is not valid MSBuild, so the exposure is small, but it is the one
   place the reader drops something without saying so.

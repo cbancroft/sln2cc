@@ -61,7 +61,8 @@ msvclsp/
 │   │   ├── msbuild.rs            .vcxproj evaluation — the hardest part of the system.
 │   │   │   ├── project.rs        Lowers one .vcxproj/.props/.targets into a document-ordered IR.
 │   │   │   ├── imports.rs        .props/.targets import resolution, in evaluation order.
-│   │   │   └── eval.rs           $(Macro) expansion and Condition evaluation.
+│   │   │   ├── eval.rs           $(Macro) expansion and Condition evaluation.
+│   │   │   └── reserved.rs       Seeds the built-in properties project files never define.
 │   │   ├── toolchain.rs          ToolchainProvider trait + FakeToolchain for tests.
 │   │   │   └── vswhere.rs        Real discovery via vswhere. Windows-only at runtime.
 │   │   ├── compdb.rs             compile_commands.json construction and serialization.

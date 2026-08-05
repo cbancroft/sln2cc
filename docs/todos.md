@@ -391,7 +391,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   shadowing across the graph, an empty expanded path, the depth cap and the file at it, and an
   unsupported condition on an `<Import>` staying fatal.
 
-- [ ] **MVP-11 — Reserved and well-known MSBuild properties**
+- [x] **MVP-11 — Reserved and well-known MSBuild properties**
   `feat/msbuild-reserved-properties` · ~5h
 
   **Summary:** Seed the property bag with the built-in properties that project files assume
@@ -404,9 +404,53 @@ Goal: one solution, one manually selected configuration/platform, producing a
   import traversal. Directory-valued properties must carry MSBuild's trailing separator, since
   project files concatenate them directly.
 
+  **Outcome:** A new `cli/src/msbuild/reserved.rs` seeds **twenty-four** properties in five families —
+  `Solution*`, `Configuration`/`Platform`, `MSBuildProject*`, `MSBuildThisFile*`, `Project*` — all
+  derived from three inputs: the `.sln` path, the `.vcxproj` path, and per ADR 05 the **project**
+  pair rather than the solution-level one the user picked. The list is complete rather than the six
+  names above, because a property left out fails as an include path that quietly lost a directory,
+  which looks exactly like not having done the work; a test enumerates all twenty-four so a typo
+  cannot hide. Toolchain-derived properties are deliberately absent — **MVP-15 extends this seed**
+  with `$(VCTargetsPath)` and `$(VSInstallDir)` rather than adding a second mechanism, and
+  `ProjectScope` is where they will arrive. The detail worth internalizing is that **MSBuild's two
+  trailing-separator conventions are both load-bearing**: `$(ProjectDir)` and
+  `$(MSBuildThisFileDirectory)` carry one and `$(MSBuildProjectDirectory)` does not, which is why
+  `Microsoft.Common.props` writes `<ProjectDir>$(MSBuildProjectDirectory)\</ProjectDir>`, and
+  normalising either way turns `$(ProjectDir)inc` into a path that does not exist. Separators are
+  spelled with `MAIN_SEPARATOR`, since a seeded `/tmp/x\` on the Linux CI runner mixes them inside one
+  path. Immutability is enforced **in `Properties`** rather than by a check at the one call site:
+  `set_reserved` writes and locks, `assign` refuses and sets a new `Expansion::refused` for
+  `imports.rs` to warn from, and `set` still writes through — which formalises the trust boundary
+  MVP-08 had already drawn between the two functions. The lock is **two-tier**: what MSBuild reserves
+  plus what a solution build passes as global, while `Project*` stays **overridable**, because
+  `Microsoft.Cpp.Default.props` defines it conditionally and warning on `<ProjectName>` would be a
+  false positive on ordinary files. A refused assignment is still *expanded* so its findings reach
+  the reporter, on ADR 09's non-short-circuit reasoning. `MSBuildThisFile*` follows the walk, so
+  **this issue changed `imports.rs`** as ADR 10 predicted: `Walk::enter` brackets each file with
+  `reserved::enter_file`/`restore` beside its depth bookkeeping, and `FileScope` carries only the
+  displaced *path* since all six values are a pure function of it — which is also why `Properties`
+  needs no removal API and the root file needs no special case. **Nothing calls `seed` yet**:
+  `msbuild::evaluate` is still `todo!()`, so **MVP-12 owns wiring it up** and needs a solution path
+  added to that signature. See [ADR 11](adr/11-reserved-property-seeding.md) and "CLI Binary —
+  Internal Modules" in `engineering_spec.md`.
+
   **Tests:** Unit tests asserting each property resolves to the expected absolute path,
   trailing separators are present, and `MSBuildThisFileDirectory` differs correctly between a
   project and an imported property sheet.
+
+  All three were written as specified. Expectations are built from `MAIN_SEPARATOR` and an
+  `absolute()` helper rather than hard-coded `D:\…`, so they assert the same thing on the Linux CI
+  runner — where `NoRoot` stripping also has different work to do, which a `#[cfg(windows)]` UNC case
+  covers on the other side. Also covered: the trailing-separator asymmetry as its own case, the
+  `Project*` family staying fixed on the root project while `MSBuildThisFile*` moves, a two-level
+  nested import unwinding one level at a time, every seeded name holding something, a non-ASCII path,
+  the lock refusing each reserved family and case-insensitively, `set` still overwriting a locked key,
+  nothing being reserved in an unseeded bag, a seeded `$(SolutionDir)` resolving an import path that
+  MVP-10 could only assert was skipped, `Exists()` finally having a real directory to test, the
+  seeded pair deciding which `PropertyGroup` applies, the idiomatic
+  `<Configuration Condition="'$(Configuration)'==''">` default drawing no warning, an unconditional
+  reserved assignment drawing one sited at its line, and an empty bag remaining a valid starting
+  point.
 
 - [ ] **MVP-12 — Extract compiler settings into flags**
   `feat/clcompile-flags` · ~1d
@@ -420,6 +464,16 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `%(Inherited)` semantics so project-level settings compose with item-level overrides, and
   resolve include paths to absolute form. Settings that only affect codegen or linking can be
   skipped — clangd only needs what changes how the file parses.
+
+  **Narrowed by MVP-10**, which makes this pass 2/3: the `Deferred` elements it hands over carry
+  their conditions **unevaluated**, to be settled against `ProjectTree::properties` — the values the
+  whole graph ended with — rather than the ones in scope where each element was written.
+
+  **Also owns wiring up MVP-11's seed.** `reserved::seed(&ProjectScope)` exists and nothing calls it,
+  because `msbuild::evaluate` is still `todo!()`; its signature (`&Path, &ConfigPlatform`) has no
+  solution path to build a `ProjectScope` from and needs one. Without that call the include paths this
+  issue resolves to absolute form have no `$(ProjectDir)` to resolve against. See
+  [ADR 11](adr/11-reserved-property-seeding.md).
 
   **Tests:** Unit tests per setting mapping, a file-level override beating the project-level
   default, `%(Inherited)` composition, and semicolon-delimited lists splitting correctly.
@@ -535,6 +589,14 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `shared` include directories along with their versioned subdirectory. These paths are what
   make `#include <windows.h>` resolve, so getting them wrong shows up immediately as clangd
   reporting missing includes. Return them ordered as `cl` would search them.
+
+  **Also extends MVP-11's seed.** `$(VCTargetsPath)`, `$(VSInstallDir)` and
+  `$(MSBuildExtensionsPath)` are the properties `msbuild/reserved.rs` deliberately left out, because
+  they need a real installation and guessing them is the silent-wrong-answer failure this project
+  refuses. They belong in that module behind `ToolchainProvider`, arriving through `ProjectScope`,
+  rather than in a second seeding mechanism. Every import that depends on them is skipped with an
+  empty-path warning until this lands, which is also what unblocks **MVP-36**. See
+  [ADR 11](adr/11-reserved-property-seeding.md).
 
   **Tests:** Unit tests against a fake directory tree mimicking a VS layout, asserting
   correct version selection when several toolsets are installed and a clear error when the

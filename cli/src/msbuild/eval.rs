@@ -11,7 +11,7 @@
 //! Unsupported constructs must be surfaced as warnings rather than silently producing
 //! incorrect flags — see the engineering requirements in docs/engineering_spec.md.
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, collections::HashSet, path::Path};
 
 use crate::{Error, Result};
 
@@ -28,6 +28,8 @@ const MAX_CONDITION_DEPTH: usize = 32;
 #[derive(Debug, Default, Clone)]
 pub struct Properties {
     values: HashMap<String, String>,
+    /// Keys that cannot be overwritten by project configuration data.
+    locked: HashSet<String>,
 }
 
 impl Properties {
@@ -47,12 +49,32 @@ impl Properties {
             .map(String::as_str)
     }
 
-    /// Store `value` as given, shadowing any earlier assignment.
+    /// Store `value` as given, shadowing any earlier assignment — **including a reserved one**.
     ///
-    /// Raw, because MVP-11 will seed reserved properties whose values are literal paths with
-    /// nothing to expand. Anything read out a project file goes through [`Properties::assign`].
+    /// Raw, because `msbuild/reserved.rs` seeds reserved properties whose values are literal paths
+    /// with nothing to expand. Anything read out a project file goes through
+    /// [`Properties::assign`], which is where the lock is enforced: the trust boundary is which
+    /// function the caller reaches for, not which key it names. That asymmetry is load-bearing
+    /// rather than an oversight — `MSBuildThisFile*` is reserved against project files and still has
+    /// to be rewritten on every file the import walk enters, and restored on the way back out.
     pub fn set(&mut self, name: &str, value: impl Into<String>) {
         self.values.insert(name.to_ascii_lowercase(), value.into());
+    }
+
+    /// Store `value` and refuse any later [`Properties::assign`] to `name`.
+    ///
+    /// MSBuild reserves its own `MSBuild*` properties outright and treats the ones a solution
+    /// provides (`Configuration`, `Platform`, `Solution*`) as global, which a project file also
+    /// cannot override.
+    pub fn set_reserved(&mut self, name: &str, value: impl Into<String>) {
+        let key = name.to_ascii_lowercase();
+        self.values.insert(key.clone(), value.into());
+        self.locked.insert(key);
+    }
+
+    /// Whether `name` is considered reserved and cannot be assigned to
+    pub fn is_reserved(&self, name: &str) -> bool {
+        self.locked.contains(&name.to_ascii_lowercase())
     }
 
     /// Expand `value` against the contents of the bag at this moment, then store the result.
@@ -60,7 +82,12 @@ impl Properties {
     /// The returned [`Expansion`] carries what could not be resolved, for the caller to report
     /// warnings with.
     pub fn assign(&mut self, name: &str, value: &str) -> Result<Expansion> {
-        let expansion = expand(value, self)?;
+        let mut expansion = expand(value, self)?;
+
+        if self.is_reserved(name) {
+            expansion.refused = true;
+            return Ok(expansion);
+        }
         self.set(name, expansion.value.clone());
         Ok(expansion)
     }
@@ -80,6 +107,9 @@ pub struct Expansion {
     /// References outside the supported subset -- property functions, registry reads, nested
     /// references, an unterminated `$(`. Stored exactly as seen in `value`, sigil (`$()`) included.
     pub unsupported: Vec<String>,
+    /// Set when the assignment target was reserved. `value` is the expansion that would have been
+    /// assigned.
+    pub refused: bool,
 }
 
 impl Expansion {
@@ -602,7 +632,7 @@ mod tests {
     use super::*;
     use crate::ErrorKind;
 
-    /// A bag seeded verbatim — the shape MVP-11 will hand over.
+    /// A bag seeded verbatim — the shape `msbuild/reserved.rs` hands over, minus the lock.
     fn bag(pairs: &[(&str, &str)]) -> Properties {
         let mut props = Properties::new();
         for (name, value) in pairs {
@@ -1002,6 +1032,117 @@ mod tests {
             "must not reprint the value: {} bytes",
             message.len()
         );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-11 — reserved keys
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_reserved_key_refuses_an_assignment_and_keeps_its_value() {
+        // The mechanism half of MVP-11. `msbuild/reserved.rs` decides *which* names are reserved;
+        // this decides what being reserved does. Enforcing it here rather than at the one call site
+        // in `imports.rs` is what makes it a guarantee instead of a convention — the bag cannot be
+        // talked out of it by a later caller that forgets to ask.
+        let mut props = Properties::new();
+        props.set_reserved("MSBuildProjectDirectory", r"C:\proj\app");
+
+        let expansion = props
+            .assign("MSBuildProjectDirectory", "hijacked")
+            .expect("expands");
+
+        assert!(expansion.refused);
+        assert_eq!(props.get("MSBuildProjectDirectory"), Some(r"C:\proj\app"));
+    }
+
+    #[test]
+    fn a_refused_assignment_still_reports_what_it_could_not_resolve() {
+        // The value is expanded even though it is thrown away, for the reason `And`/`Or` do not
+        // short-circuit: a construct nobody ends up using is still a construct this tool does not
+        // understand, and a user tracing a bad include path needs to hear about it.
+        let mut props = Properties::new();
+        props.set_reserved("Configuration", "Debug");
+
+        let expansion = props
+            .assign(
+                "Configuration",
+                "$(Missing)$([System.IO.Path]::Combine('a'))",
+            )
+            .expect("expands");
+
+        assert!(expansion.refused);
+        assert_eq!(expansion.undefined, ["Missing"]);
+        assert_eq!(expansion.unsupported, ["$([System.IO.Path]::Combine('a'))"]);
+        assert_eq!(
+            props.get("Configuration"),
+            Some("Debug"),
+            "the expansion is reported, not stored"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_assignment_is_not_refused() {
+        // The negative case, so `refused` cannot be satisfied by always setting it.
+        let mut props = Properties::new();
+        props.set_reserved("ProjectDir", r"C:\proj\app\");
+
+        let expansion = props
+            .assign("IncludePath", "$(ProjectDir)inc")
+            .expect("expands");
+
+        assert!(!expansion.refused);
+        assert_eq!(props.get("IncludePath"), Some(r"C:\proj\app\inc"));
+    }
+
+    #[test]
+    fn set_can_still_overwrite_a_reserved_key() {
+        // What the import walk depends on: `MSBuildThisFile*` is reserved against project files and
+        // rewritten by the walk on every file it enters. The trust boundary is which *function* is
+        // called — `set` is seeding, `assign` is a project file talking — not which key it names.
+        let mut props = Properties::new();
+        props.set_reserved("MSBuildThisFile", "Lib.vcxproj");
+
+        props.set("MSBuildThisFile", "Common.props");
+        assert_eq!(props.get("MSBuildThisFile"), Some("Common.props"));
+
+        props.set_reserved("MSBuildThisFile", "Lib.vcxproj");
+        assert_eq!(props.get("MSBuildThisFile"), Some("Lib.vcxproj"));
+    }
+
+    #[test]
+    fn the_reserved_lock_is_matched_case_insensitively() {
+        // Anything less would make the lock trivially avoidable by a project file writing
+        // `<solutiondir>`, which MSBuild resolves to the same property.
+        let mut props = Properties::new();
+        props.set_reserved("SolutionDir", r"C:\sln\");
+
+        assert!(props.is_reserved("solutiondir"));
+        assert!(props.is_reserved("SOLUTIONDIR"));
+
+        let expansion = props.assign("solutiondir", "hijacked").expect("expands");
+
+        assert!(expansion.refused);
+        assert_eq!(props.get("SolutionDir"), Some(r"C:\sln\"));
+    }
+
+    #[test]
+    fn nothing_is_reserved_in_a_bag_that_was_never_seeded() {
+        // Seeding must not lock the bag itself. An empty bag is still a valid starting point for
+        // `imports::resolve`, and everything a project file defines for its own use is ordinary.
+        let mut props = bag(&[("PreprocessorDefinitions", "WIN32")]);
+
+        assert!(!props.is_reserved("PreprocessorDefinitions"));
+        assert!(!props.is_reserved("Configuration"));
+
+        let expansion = props
+            .assign(
+                "PreprocessorDefinitions",
+                "$(PreprocessorDefinitions);_DEBUG",
+            )
+            .expect("expands");
+
+        assert!(!expansion.refused);
+        assert_eq!(props.get("PreprocessorDefinitions"), Some("WIN32;_DEBUG"));
     }
 
     // ---------------------------------------------------------------------------------------

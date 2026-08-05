@@ -32,3 +32,19 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   takes real time, and this is how you tell it is doing something. It also switches warning paths to
   their full absolute form for when the shortened version is the confusing part. stdout is untouched
   either way, so `-v` is safe to add to a piped or scripted invocation.
+
+- The built-in properties your project files assume exist now do exist. `$(SolutionDir)`,
+  `$(ProjectDir)`, `$(ProjectName)`, `$(Configuration)`, `$(Platform)`,
+  `$(MSBuildThisFileDirectory)` and the rest of that family are filled in from the solution, the
+  project, and the configuration you asked for — so an include directory written as
+  `$(ProjectDir)include` resolves to a real absolute path instead of losing its prefix, a property
+  sheet pulled in through `$(SolutionDir)shared\common.props` is actually found, and the
+  `PropertyGroup` guarded by `'$(Configuration)|$(Platform)'=='Debug|x64'` applies to the
+  configuration you picked rather than to none of them. `$(MSBuildThisFileDirectory)` tracks the file
+  being read, so a shared property sheet still finds paths relative to itself rather than to the
+  project that imported it. Properties MSBuild reserves for itself are protected: a project file
+  trying to redefine one gets a warning naming the file and line, and the real value is kept.
+
+  Properties that come from your Visual Studio installation — `$(VCTargetsPath)` above all — are
+  still empty, so imports depending on them continue to be skipped with a warning until toolchain
+  discovery lands.

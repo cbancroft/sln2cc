@@ -14,6 +14,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::msbuild::eval::{self, Properties};
 use crate::msbuild::project::{self, Element, Import, PropertyGroup};
+use crate::msbuild::reserved;
 use crate::{Error, Reporter, Result, progress};
 
 /// How deep an import chain may go before it is refused.
@@ -49,9 +50,13 @@ pub struct Deferred {
 
 /// Walk `root` and everything it imports, in evaluation order.
 ///
-/// `properties` is passed in, rather than built here so that MVP-11 can seed the reserved
-/// properties without this function having to know what they are. An empty bag is also a valid
-/// starting point. `$(VCTargetsPath)` and such would just expand to nothing until MVP-11 lands.
+/// `properties` is passed in, rather than built here, so that [`crate::msbuild::reserved::seed`]
+/// can supply the reserved properties without this function having to know what they are. An empty
+/// bag is also a valid starting point — a reference nothing seeded expands to nothing, which is
+/// still what `$(VCTargetsPath)` does until MVP-15 supplies the Visual Studio paths.
+///
+/// The one property family this function does own is `MSBuildThisFile*`, which is a function of the
+/// file being read rather than of the project, and so has to follow the walk.
 pub fn resolve(
     root: &Path,
     properties: Properties,
@@ -89,7 +94,11 @@ impl Walk<'_> {
     /// Evaluate one file, following its imports inline. `path` must already be normalized.
     fn enter(&mut self, path: &Path, referrer: Option<&Path>) -> Result<()> {
         self.depth += 1;
+        let outer = reserved::enter_file(&mut self.properties, path);
+
         let result = self.evaluate(path, referrer);
+
+        reserved::restore(&mut self.properties, outer);
         self.depth -= 1;
         result
     }
@@ -172,6 +181,17 @@ impl Walk<'_> {
                 file,
                 property.line,
             );
+
+            if expansion.refused {
+                self.reporter.warn_at(
+                    file,
+                    Some(property.line),
+                    format!(
+                        "`{}` is a reserved MSBuild property; assignment ignored",
+                        property.name
+                    ),
+                );
+            }
         }
 
         Ok(())
@@ -277,7 +297,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::ErrorKind;
+    use crate::msbuild::reserved;
+    use crate::{ConfigPlatform, ErrorKind};
 
     /// A throwaway directory tree, removed when the test that made it ends.
     ///
@@ -344,6 +365,51 @@ mod tests {
         let mut reporter = Reporter::new(false);
         let result = resolve(root, Properties::new(), &mut reporter);
         (result, reporter)
+    }
+
+    /// A bag seeded the way the generation pipeline will seed it, for the MVP-11 cases.
+    ///
+    /// The `.sln` is named but never written: seeding reads the path and nothing else, and a
+    /// solution file that exists would only invite an `Exists()` case to pass for the wrong reason.
+    fn seeded(dir: &TempTree, root: &Path) -> Properties {
+        reserved::seed(&reserved::ProjectScope {
+            solution: dir.path("App.sln"),
+            project: root.to_path_buf(),
+            config: ConfigPlatform::new("Debug", "x64"),
+        })
+    }
+
+    /// Resolve from a seeded bag, for the cases about the reserved properties.
+    fn tree_seeded(dir: &TempTree, root: &Path) -> ProjectTree {
+        let properties = seeded(dir, root);
+        resolve(root, properties, &mut Reporter::new(false)).expect("resolves")
+    }
+
+    /// Resolve from a seeded bag and hand back the reporter.
+    fn tree_seeded_reporting(dir: &TempTree, root: &Path) -> (Result<ProjectTree>, Reporter) {
+        let properties = seeded(dir, root);
+        let mut reporter = Reporter::new(false);
+        let result = resolve(root, properties, &mut reporter);
+        (result, reporter)
+    }
+
+    /// The value the walk left in `name`, for the properties each case has a file record into.
+    fn value<'a>(resolved: &'a ProjectTree, name: &str) -> &'a str {
+        resolved
+            .properties
+            .get(name)
+            .unwrap_or_else(|| panic!("$({name}) was never assigned"))
+    }
+
+    /// The directory `file` sits in, spelled with a trailing separator as MSBuild spells it.
+    ///
+    /// Built through `normalize` so the expectation is spelled exactly the way the walk spells the
+    /// path it derived its value from — `TempTree` writes relative paths with `/`, which Windows
+    /// accepts on the way in and does not preserve on the way out.
+    fn this_file_directory(file: &Path) -> String {
+        let normalized = normalize(file);
+        let parent = normalized.parent().expect("a file has a directory");
+        format!("{}{}", parent.display(), std::path::MAIN_SEPARATOR)
     }
 
     fn refuse(root: &Path) -> Error {
@@ -751,8 +817,9 @@ mod tests {
 
     #[test]
     fn an_import_resolving_to_an_empty_path_is_skipped_with_a_warning() {
-        // What every real `.vcxproj` does today, until MVP-11 and MVP-15 supply
-        // `$(VCTargetsPath)`. Skipping beats resolving to the filesystem root.
+        // What every real `.vcxproj` does today, until MVP-15 supplies `$(VCTargetsPath)` — the one
+        // family MVP-11's seed deliberately left out. Skipping beats resolving to the filesystem
+        // root.
         let dir = TempTree::new("empty-path");
         let root = dir.project("root.vcxproj", r#"  <Import Project="$(VCTargetsPath)" />"#);
 
@@ -903,6 +970,303 @@ mod tests {
                 .any(|warning| warning.message.contains("Choose")),
             "{:?}",
             reporter.warnings()
+        );
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-11 — the seeded bag, and `MSBuildThisFile*` following the walk
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn this_file_directory_differs_between_the_project_and_an_imported_sheet() {
+        // The property that makes a shared sheet able to locate its own siblings, and the reason
+        // seeding cannot be a single up-front call: it has to follow the walk. A sheet one directory
+        // down that saw the root project's directory would send every relative path it builds to a
+        // place with none of its headers in it.
+        let dir = TempTree::new("this-file-differs");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup>
+    <FromRoot>$(MSBuildThisFileDirectory)</FromRoot>
+  </PropertyGroup>
+  <Import Project="sheets/common.props" />"#,
+        );
+        let sheet = dir.project(
+            "sheets/common.props",
+            r#"  <PropertyGroup>
+    <FromSheet>$(MSBuildThisFileDirectory)</FromSheet>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(value(&resolved, "FromRoot"), this_file_directory(&root));
+        assert_eq!(value(&resolved, "FromSheet"), this_file_directory(&sheet));
+        assert_ne!(
+            value(&resolved, "FromRoot"),
+            value(&resolved, "FromSheet"),
+            "the two files sit in different directories"
+        );
+    }
+
+    #[test]
+    fn this_file_reverts_to_the_importing_file_when_an_import_returns() {
+        // The other half of following the walk, and the one an up-front seed would get wrong in the
+        // direction nobody notices: everything after the `<Import>` in the root file would silently
+        // resolve against the last sheet the walk happened to enter.
+        let dir = TempTree::new("this-file-reverts");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <Import Project="sheets/common.props" />
+  <PropertyGroup>
+    <AfterImport>$(MSBuildThisFileDirectory)</AfterImport>
+    <AfterImportFile>$(MSBuildThisFile)</AfterImportFile>
+  </PropertyGroup>"#,
+        );
+        dir.project("sheets/common.props", "  <PropertyGroup />");
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(value(&resolved, "AfterImport"), this_file_directory(&root));
+        assert_eq!(value(&resolved, "AfterImportFile"), "root.vcxproj");
+    }
+
+    #[test]
+    fn this_file_unwinds_correctly_through_a_nested_import() {
+        // Restoring to the root rather than to the immediate parent would break the middle file's
+        // siblings on the way back out, which a two-level chain is the shortest way to catch.
+        let dir = TempTree::new("this-file-nested");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <Import Project="sheets/outer.props" />"#,
+        );
+        let outer = dir.project(
+            "sheets/outer.props",
+            r#"  <Import Project="strict/inner.props" />
+  <PropertyGroup>
+    <BackInOuter>$(MSBuildThisFileDirectory)</BackInOuter>
+  </PropertyGroup>"#,
+        );
+        let inner = dir.project(
+            "sheets/strict/inner.props",
+            r#"  <PropertyGroup>
+    <InInner>$(MSBuildThisFileDirectory)</InInner>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(value(&resolved, "InInner"), this_file_directory(&inner));
+        assert_eq!(value(&resolved, "BackInOuter"), this_file_directory(&outer));
+    }
+
+    #[test]
+    fn the_project_family_stays_fixed_on_the_root_project_throughout_the_walk() {
+        // `$(ProjectDir)` in a sheet means the `.vcxproj` that pulled the sheet in, never the sheet
+        // itself. It is the property nearly every `AdditionalIncludeDirectories` is built from, so
+        // having it drift with the walk would misplace most of a real database's include paths.
+        let dir = TempTree::new("project-family-fixed");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <Import Project="sheets/common.props" />"#,
+        );
+        dir.project(
+            "sheets/common.props",
+            r#"  <PropertyGroup>
+    <SheetSawProjectDir>$(ProjectDir)</SheetSawProjectDir>
+    <SheetSawProjectName>$(MSBuildProjectName)</SheetSawProjectName>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(
+            value(&resolved, "SheetSawProjectDir"),
+            this_file_directory(&root)
+        );
+        assert_eq!(value(&resolved, "SheetSawProjectName"), "root");
+    }
+
+    #[test]
+    fn a_seeded_solution_dir_resolves_an_import_path() {
+        // What MVP-10 could only assert was skipped. A sheet held at the solution root and pulled in
+        // through `$(SolutionDir)` is how a multi-project solution shares settings, and against an
+        // empty bag the path collapsed to a bare relative one.
+        let dir = TempTree::new("seeded-solution-dir");
+        let root = dir.project(
+            "projects/app/app.vcxproj",
+            r#"  <Import Project="$(SolutionDir)shared/common.props" />"#,
+        );
+        dir.project(
+            "shared/common.props",
+            r#"  <PropertyGroup>
+    <Reached>yes</Reached>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(resolved.files.len(), 2, "{:?}", resolved.files);
+        assert_eq!(value(&resolved, "Reached"), "yes");
+    }
+
+    #[test]
+    fn a_condition_can_test_a_seeded_directory_with_exists() {
+        // `Exists()` had nothing real to test against an empty bag. This is the idiom every Visual
+        // Studio project guards `Microsoft.Cpp.$(Platform).user.props` with, and the seeded value is
+        // what finally makes the true branch reachable.
+        let dir = TempTree::new("seeded-exists");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup Condition="Exists('$(SolutionDir)shared')">
+    <SharedExists>yes</SharedExists>
+  </PropertyGroup>
+  <PropertyGroup Condition="Exists('$(SolutionDir)absent')">
+    <AbsentExists>yes</AbsentExists>
+  </PropertyGroup>"#,
+        );
+        dir.project("shared/common.props", "  <PropertyGroup />");
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(value(&resolved, "SharedExists"), "yes");
+        assert_eq!(
+            resolved.properties.get("AbsentExists"),
+            None,
+            "a directory that is not there must not test true"
+        );
+    }
+
+    #[test]
+    fn a_seeded_configuration_pair_decides_which_property_group_applies() {
+        // The whole point of the exercise, end to end: the pair the user picked reaches the
+        // condition every real `.vcxproj` is organised around. Against an empty bag both sides read
+        // `'|'` and the wrong group could win.
+        let dir = TempTree::new("seeded-config");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Defines>_DEBUG</Defines>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Defines>NDEBUG</Defines>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(value(&resolved, "Defines"), "_DEBUG");
+    }
+
+    #[test]
+    fn a_conditional_default_for_a_seeded_property_is_skipped_without_a_warning() {
+        // `<Configuration Condition="'$(Configuration)'==''">Debug</Configuration>` opens a large
+        // share of real `.vcxproj` files. The condition is false once the property is seeded, so the
+        // assignment is never attempted and the lock is never consulted — which is what keeps the
+        // refusal warning off ordinary files.
+        let dir = TempTree::new("conditional-default");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
+  </PropertyGroup>"#,
+        );
+
+        let (result, reporter) = tree_seeded_reporting(&dir, &root);
+        let resolved = result.expect("resolves");
+
+        assert_eq!(value(&resolved, "Configuration"), "Debug");
+        assert!(
+            reporter.warnings().is_empty(),
+            "an idiomatic conditional default is not worth a warning: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn an_unconditional_assignment_to_a_reserved_property_is_ignored_and_warned_about() {
+        // MSBuild refuses this outright. Warning and carrying on keeps the database generatable
+        // while naming the file that tried, which is the split ADR 11 settles: honouring it would
+        // rewrite the paths every include directory in the project is built from.
+        let dir = TempTree::new("reserved-assignment");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup>
+    <MSBuildProjectDirectory>C:\hijacked</MSBuildProjectDirectory>
+  </PropertyGroup>"#,
+        );
+
+        let (result, reporter) = tree_seeded_reporting(&dir, &root);
+        let resolved = result.expect("resolves");
+
+        assert_ne!(
+            resolved.properties.get("MSBuildProjectDirectory"),
+            Some(r"C:\hijacked"),
+            "the seeded value must survive"
+        );
+
+        let warning = reporter
+            .warnings()
+            .iter()
+            .find(|warning| warning.message.contains("MSBuildProjectDirectory"))
+            .unwrap_or_else(|| panic!("no warning named the property: {:?}", reporter.warnings()));
+        assert!(
+            warning.message.contains("reserved"),
+            "the warning says why: {}",
+            warning.message
+        );
+        assert_eq!(warning.line, Some(3), "sited where it was written");
+        let expected = normalize(&root);
+        assert_eq!(warning.file.as_deref(), Some(expected.as_path()));
+    }
+
+    #[test]
+    fn a_project_can_still_override_the_overridable_seeds() {
+        // `ProjectName` is seeded but not locked, because MSBuild's own `.props` define it
+        // conditionally and a project renaming itself is ordinary. Warning about it would train
+        // users to ignore the warning that matters.
+        let dir = TempTree::new("overridable-seed");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup>
+    <ProjectName>Renamed</ProjectName>
+  </PropertyGroup>"#,
+        );
+
+        let (result, reporter) = tree_seeded_reporting(&dir, &root);
+        let resolved = result.expect("resolves");
+
+        assert_eq!(value(&resolved, "ProjectName"), "Renamed");
+        assert_eq!(
+            value(&resolved, "MSBuildProjectName"),
+            "root",
+            "the reserved spelling is unaffected"
+        );
+        assert!(
+            reporter.warnings().is_empty(),
+            "overriding an overridable seed is not a finding: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn an_empty_bag_is_still_a_valid_starting_point() {
+        // Seeding is the caller's to do, not this module's, and every case above this section
+        // resolves from an empty bag. Nothing about MVP-11 may make one mandatory.
+        let dir = TempTree::new("unseeded-still-works");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup>
+    <FromRoot>$(MSBuildThisFile)</FromRoot>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree(&root);
+
+        assert_eq!(
+            value(&resolved, "FromRoot"),
+            "root.vcxproj",
+            "the walk points `MSBuildThisFile*` at the file it enters whether or not it was seeded"
         );
     }
 }
