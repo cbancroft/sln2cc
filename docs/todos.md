@@ -176,7 +176,8 @@ Goal: one solution, one manually selected configuration/platform, producing a
   locations are made absolute with `std::path::absolute` and normalized lexically, never
   `fs::canonicalize` (it requires the file to exist and yields `\\?\` paths on Windows). `..` is
   resolved rather than refused, so **path-escape validation stays with MVP-10** and
-  `Error::PathEscape` remains unused until then. See
+  `Error::PathEscape` remains unused until then — which turned out to be never: MVP-10 found there
+  was no root to escape from and removed the type. See
   [ADR 04](adr/04-sln-project-enumeration.md) and "CLI Binary — Internal Modules" in
   `engineering_spec.md`.
 
@@ -343,7 +344,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `CARGO_MANIFEST_DIR` — no fake, because unlike a Visual Studio path, `Cargo.toml` exists on every
   machine that can run the suite.
 
-- [ ] **MVP-10 — Resolve `.props`/`.targets` imports**
+- [x] **MVP-10 — Resolve `.props`/`.targets` imports**
   `feat/msbuild-imports` · ~1d
 
   **Summary:** Recursively follow `<Import>` elements and return the full file list in
@@ -356,9 +357,39 @@ Goal: one solution, one manually selected configuration/platform, producing a
   (into the Visual Studio installation) are expected and legitimate, but paths that escape via
   `..` traversal from untrusted input should be validated.
 
+  **Outcome:** `msbuild/imports.rs` walks the graph in document order, splicing each imported file
+  in where its `<Import>` sits. Because import paths are macro-expanded and condition-gated, this is
+  not a pre-pass over the graph — it **is MSBuild's first evaluation pass**, and `resolve` returns
+  `ProjectTree { files, deferred, properties }` rather than the bare path list this item asked for:
+  the bag falls out of the walk regardless, and **MVP-12 becomes pass 2/3**, settling each
+  `Deferred` item group against the properties the whole graph ended with. The deferred elements are
+  *spliced* rather than grouped by file, because a `.vcxproj` writes its `ItemDefinitionGroup`s
+  between `Microsoft.Cpp.props` and `Microsoft.Cpp.targets` and grouping would order the root's
+  ahead of the imported sheet's. A file already imported is skipped and warned about — MSBuild's
+  MSB4011 rule, which covers diamonds *and* cycles with one mechanism; `..` is normalised and
+  followed rather than refused, since a shared sheet one directory up is ordinary. Neither
+  `Error::ImportCycle` nor `Error::PathEscape` was ever going to be raised as a result, so **both
+  are removed** along with their wire strings, and exit code `8` is retired rather than reassigned.
+  A condition is evaluated
+  before its import path is expanded, so a guarded optional import never reports a missing file the
+  project allows for. This is also where **MVP-08 and MVP-09 findings finally become warnings** —
+  the first code holding both a finding and the file and line it came from — which will be noisy,
+  and which **MVP-13 inherits**. `properties` is a parameter so **MVP-11 can seed it**. Depth capped
+  at 64. See [ADR 10](adr/10-import-resolution.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests for a linear import chain, a diamond import, a cycle producing an
   error, a conditional import that evaluates false being skipped, and a missing required
   import erroring with the referencing file named.
+
+  The cycle test **could not be written as specified**: under MSBuild's duplicate rule a cycle is
+  just a repeat import, so it asserts termination rather than an error — see ADR 10. Tests build
+  throwaway trees under the system temp directory rather than using `fixtures/`, which MVP-23 and
+  MVP-24 own and which is no place for an adversarial cycle case. Also covered: a relative import
+  resolving against its own file's directory, `..` normalising so two spellings count as one file,
+  `\` on Windows, the deferred stream's interleaving, deferred conditions surviving unevaluated,
+  shadowing across the graph, an empty expanded path, the depth cap and the file at it, and an
+  unsupported condition on an `<Import>` staying fatal.
 
 - [ ] **MVP-11 — Reserved and well-known MSBuild properties**
   `feat/msbuild-reserved-properties` · ~5h
@@ -446,6 +477,34 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `msbuild/project.rs`, which already asserts `ErrorKind::RecursionLimit`. Add a unit test that a
   file at the limit still parses, and one that `<` inside a comment or CDATA does not count
   toward depth.
+
+- [ ] **MVP-36 — Unsupported-condition policy for toolchain files**
+  `fix/unsupported-condition-policy` · ~5h
+
+  **Summary:** Decide whether an unsupported `Condition` stays fatal once the Visual Studio
+  installation's own `.props`/`.targets` start being imported.
+
+  **Description:** MVP-09 made a condition outside the supported subset an
+  `Error::UnsupportedConstruct`, on the grounds that inventing a boolean either drops a
+  `PropertyGroup` carrying every include path or applies flags the file never asked for. That is
+  right for a *user's* project file. It is likely untenable for Microsoft's, which use
+  `$([MSBuild]::VersionGreaterThanOrEquals(...))`, `HasTrailingSlash`, and numeric comparison
+  freely — taken literally, the policy fails on every real solution.
+
+  [ADR 09](adr/09-condition-evaluation-subset.md) handed the question to MVP-10, and
+  [ADR 10](adr/10-import-resolution.md) could not answer it: the signal it needs — whether a file
+  came from the user's tree or from the toolchain — does not exist until MVP-15 supplies the
+  Visual Studio paths, and `$(VCTargetsPath)` is undefined until then so those imports are never
+  reached. `Error::kind()` survives propagation (ADR 02), so catching and downgrading at the
+  import boundary is mechanical once provenance exists; what needs deciding is whether downgrading
+  is right, and whether a downgraded condition should be treated as true or false.
+
+  Blocked on MVP-15. Numbered 36 rather than slotted into sequence because numbers are assigned in
+  order and never reused.
+
+  **Tests:** Unit tests that an unsupported condition in a user-tree file still fails, that one in
+  a toolchain-provided file produces the chosen behaviour plus a warning naming the file, and an
+  integration test that a real-shaped project importing a stub `Microsoft.Cpp.props` generates.
 
 ## Toolchain discovery
 

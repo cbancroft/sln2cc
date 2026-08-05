@@ -237,6 +237,26 @@ Rough module breakdown implied by the parsing pipeline:
   nesting is capped at 32 to keep recursive descent off a stack-overflow path. MVP-10 inherits the
   fatal-error policy and owns whether to downgrade it for the Visual Studio installation's own
   `.targets`. See [ADR 09](adr/09-condition-evaluation-subset.md).
+
+  Import resolution is settled by MVP-10 and lives in `msbuild/imports.rs`. Because an import's path
+  is macro-expanded and its `Condition` gates whether the path is resolved at all, resolution cannot
+  be a pre-pass over the graph — it **is** property evaluation, which makes this module MSBuild's
+  first evaluation pass. It walks one file's elements in document order and splices each imported
+  file in where its `<Import>` sits, returning the files entered, the property bag the whole graph
+  ended with, and the `ItemGroup`/`ItemDefinitionGroup` elements flattened into one stream with
+  their conditions **unevaluated** — MSBuild settles those in a later pass against the final
+  property values, which is what makes MVP-12 pass 2/3. The stream is spliced rather than grouped
+  by file because a `.vcxproj` writes its item definitions between `Microsoft.Cpp.props` and
+  `Microsoft.Cpp.targets`, so grouping would order the root's ahead of the imported sheet's. A file
+  already imported is skipped and warned about, which is MSBuild's own MSB4011 rule and covers
+  diamonds and cycles with one mechanism; `..` is normalised lexically and followed rather than
+  refused, since a shared sheet one directory up is how multi-project solutions are laid out, and
+  there is consequently no root left to escape from. A condition is evaluated before its path is
+  expanded, so a guarded optional import never reports a missing file the project allows for; one
+  whose condition holds and whose file is absent is `Error::MissingImport`, naming the referrer.
+  This is also where MVP-08's and MVP-09's recorded findings finally become `Reporter` warnings,
+  this being the first code that holds both a finding and the file and line it came from. See
+  [ADR 10](adr/10-import-resolution.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.
@@ -356,14 +376,12 @@ variant names, so a refactor cannot silently change them:
 | `project-parse` | A `.vcxproj`/`.props` is not well-formed XML. |
 | `unsupported-construct` | An MSBuild construct outside the supported subset. |
 | `missing-import` | A required `<Import>` target does not exist. |
-| `import-cycle` | Imports form a cycle. |
-| `recursion-limit` | A macro-expansion or import depth cap was hit. |
+| `recursion-limit` | A macro-expansion, condition-nesting or import depth cap was hit, or an expanded property value grew past its size cap. |
 | `toolchain-not-found` | No `vswhere`, or no VS instance with the C++ workload. |
 | `toolchain-incomplete` | VS is present but the toolset/Windows SDK layout is not. |
 | `invalid-configuration` | The requested configuration/platform isn't one the solution declares. |
 | `state-parse` | The state file is malformed or truncated. |
 | `state-version` | The state file's schema version is unsupported. |
-| `path-escape` | A path from an untrusted project file resolved outside its permitted root. |
 | `unimplemented` | A subcommand's argument surface exists but its pipeline does not. **Temporary** — removed by MVP-22. |
 
 `ErrorKind::exit_code()` maps kinds onto coarse classes rather than one code per kind — the plugin
@@ -375,12 +393,15 @@ indistinguishable from a real failure.
 | ---- | ----- | ----- |
 | 1 | generic failure | `io` |
 | 3 | input not found | `solution-not-found` |
-| 4 | malformed input | `solution-parse`, `project-parse`, `state-parse`, `state-version` |
-| 5 | unsupported construct | `unsupported-construct`, `missing-import`, `import-cycle`, `recursion-limit` |
+| 4 | malformed input | `solution-parse`, `project-parse`, `project-schema`, `state-parse`, `state-version` |
+| 5 | unsupported construct | `unsupported-construct`, `missing-import`, `recursion-limit` |
 | 6 | toolchain unavailable | `toolchain-not-found`, `toolchain-incomplete` |
 | 7 | bad selection | `invalid-configuration` |
-| 8 | rejected path | `path-escape` |
 | 9 | not implemented | `unimplemented` (temporary) |
+
+`8` is absent rather than reassigned. It belonged to `path-escape`, which ADR 10 removed, and
+reusing it would silently change what a shell script's `exit 8` means for failures that did not
+change. It stays reserved.
 
 `ErrorKind` intentionally derives no `serde` traits. The JSON error payload's shape belongs to the
 subcommand output types in `cli.rs` — see the envelope's `error` object under "CLI Surface" above,

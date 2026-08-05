@@ -112,7 +112,8 @@ Visual Studio paths only exist on Windows and differ per machine; `Cargo.toml` u
 indirection to test nothing. `Exists()` also reads nothing and executes nothing, which keeps it
 inside CLAUDE.md §5's "parse them, don't evaluate them as commands".
 
-`..` traversal is resolved rather than refused. `Error::PathEscape` exists, but ADR 04 already
+`..` traversal is resolved rather than refused. `Error::PathEscape` existed at the time of writing
+and [ADR 10](10-import-resolution.md) has since removed it for this same reason, but ADR 04 already
 established that projects outside the solution tree are ordinary, and
 `Exists('..\shared\common.props')` is a legitimate and common thing for a property sheet to ask.
 

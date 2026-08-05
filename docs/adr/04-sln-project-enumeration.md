@@ -117,6 +117,11 @@ what schema the `GlobalSection`s follow.
   validate the format-version header.
 - **MVP-10 owns path-escape validation.** `Error::PathEscape` and `ErrorKind::PathEscape` stay
   unused until then; that is deliberate, not an oversight.
+
+  **Superseded by [ADR 10](10-import-resolution.md).** MVP-10 found there is no root to escape
+  from — a legitimate import is either absolute, into the Visual Studio installation, or
+  `..`-relative, into a shared sheets directory — so the validation was never written and both
+  types were removed. This bullet is left in place as the record of what was expected.
 - **MVP-21 and MVP-22 get absolute, normalized `.vcxproj` paths** to walk, and the same path
   spelling MVP-22's staleness cache will store.
 - **MVP-23's fixtures must include** a solution folder and a non-C++ member, since the filter is

@@ -72,9 +72,6 @@ pub enum Error {
         referenced_by: PathBuf,
     },
 
-    #[error("import cycle: {}", join_paths(chain, " -> "))]
-    ImportCycle { chain: Vec<PathBuf> },
-
     /// A cap was hit — an import chain too deep to be plausible, or a property value that grew
     /// past its size limit. Failing here is what keeps hostile project files from hanging the tool.
     ///
@@ -126,12 +123,6 @@ pub enum Error {
         supported: u32,
     },
 
-    /// A path derived from a project file resolved outside the tree it is allowed to reach.
-    /// Solution and project files are untrusted input; `..` traversal is rejected, not
-    /// followed.
-    #[error("{}: path escapes {}", path.display(), root.display())]
-    PathEscape { path: PathBuf, root: PathBuf },
-
     /// A subcommand whose argument surface is settled but whose pipeline is not built yet.
     ///
     /// Deliberately temporary. `todo!()` would panic on a path reachable from the CLI, which
@@ -172,14 +163,12 @@ impl Error {
             Error::ProjectParse { .. } => ErrorKind::ProjectParse,
             Error::UnsupportedConstruct { .. } => ErrorKind::UnsupportedConstruct,
             Error::MissingImport { .. } => ErrorKind::MissingImport,
-            Error::ImportCycle { .. } => ErrorKind::ImportCycle,
             Error::RecursionLimit { .. } => ErrorKind::RecursionLimit,
             Error::ToolchainNotFound { .. } => ErrorKind::ToolchainNotFound,
             Error::ToolchainIncomplete { .. } => ErrorKind::ToolchainIncomplete,
             Error::InvalidConfiguration { .. } => ErrorKind::InvalidConfiguration,
             Error::StateParse { .. } => ErrorKind::StateParse,
             Error::StateVersion { .. } => ErrorKind::StateVersion,
-            Error::PathEscape { .. } => ErrorKind::PathEscape,
             Error::Unimplemented { .. } => ErrorKind::Unimplemented,
             Error::ProjectSchema { .. } => ErrorKind::ProjectSchema,
             Error::Context { source, .. } => source.kind(),
@@ -237,14 +226,12 @@ pub enum ErrorKind {
     ProjectParse,
     UnsupportedConstruct,
     MissingImport,
-    ImportCycle,
     RecursionLimit,
     ToolchainNotFound,
     ToolchainIncomplete,
     InvalidConfiguration,
     StateParse,
     StateVersion,
-    PathEscape,
     Unimplemented,
     ProjectSchema,
 }
@@ -252,21 +239,19 @@ pub enum ErrorKind {
 impl ErrorKind {
     /// Every kind, in declaration order. Exists so tests can assert the wire strings stay
     /// unique and unchanged without listing them twice.
-    pub const ALL: [ErrorKind; 16] = [
+    pub const ALL: [ErrorKind; 14] = [
         ErrorKind::Io,
         ErrorKind::SolutionNotFound,
         ErrorKind::SolutionParse,
         ErrorKind::ProjectParse,
         ErrorKind::UnsupportedConstruct,
         ErrorKind::MissingImport,
-        ErrorKind::ImportCycle,
         ErrorKind::RecursionLimit,
         ErrorKind::ToolchainNotFound,
         ErrorKind::ToolchainIncomplete,
         ErrorKind::InvalidConfiguration,
         ErrorKind::StateParse,
         ErrorKind::StateVersion,
-        ErrorKind::PathEscape,
         ErrorKind::Unimplemented,
         ErrorKind::ProjectSchema,
     ];
@@ -281,14 +266,12 @@ impl ErrorKind {
             ErrorKind::ProjectParse => "project-parse",
             ErrorKind::UnsupportedConstruct => "unsupported-construct",
             ErrorKind::MissingImport => "missing-import",
-            ErrorKind::ImportCycle => "import-cycle",
             ErrorKind::RecursionLimit => "recursion-limit",
             ErrorKind::ToolchainNotFound => "toolchain-not-found",
             ErrorKind::ToolchainIncomplete => "toolchain-incomplete",
             ErrorKind::InvalidConfiguration => "invalid-configuration",
             ErrorKind::StateParse => "state-parse",
             ErrorKind::StateVersion => "state-version",
-            ErrorKind::PathEscape => "path-escape",
             ErrorKind::Unimplemented => "unimplemented",
             ErrorKind::ProjectSchema => "project-schema",
         }
@@ -300,6 +283,11 @@ impl ErrorKind {
     /// JSON, so exit codes only need to be useful from a shell. `2` is never returned — it
     /// is what `clap` uses for usage errors, and overloading it would make "you typed the
     /// command wrong" indistinguishable from a real failure.
+    ///
+    /// `8` is also unreturned, and stays reserved rather than being reused: it belonged to
+    /// `path-escape`, which ADR 10 removed once import resolution settled on following `..`
+    /// rather than refusing it. Renumbering the codes above it would change what a shell script
+    /// sees for failures that did not change.
     pub fn exit_code(self) -> i32 {
         match self {
             ErrorKind::Io => 1,
@@ -311,11 +299,9 @@ impl ErrorKind {
             | ErrorKind::StateVersion => 4,
             ErrorKind::UnsupportedConstruct
             | ErrorKind::MissingImport
-            | ErrorKind::ImportCycle
             | ErrorKind::RecursionLimit => 5,
             ErrorKind::ToolchainNotFound | ErrorKind::ToolchainIncomplete => 6,
             ErrorKind::InvalidConfiguration => 7,
-            ErrorKind::PathEscape => 8,
             ErrorKind::Unimplemented => 9,
         }
     }
@@ -333,14 +319,6 @@ fn format_site(file: &Path, line: Option<usize>) -> String {
         Some(line) => format!("{}:{line}", file.display()),
         None => file.display().to_string(),
     }
-}
-
-fn join_paths(paths: &[PathBuf], separator: &str) -> String {
-    paths
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(separator)
 }
 
 fn join_configs(configs: &[ConfigPlatform]) -> String {
@@ -414,16 +392,6 @@ mod tests {
                 ErrorKind::MissingImport,
             ),
             (
-                Error::ImportCycle {
-                    chain: vec![
-                        PathBuf::from(r"C:\proj\a.props"),
-                        PathBuf::from(r"C:\proj\b.props"),
-                        PathBuf::from(r"C:\proj\a.props"),
-                    ],
-                },
-                ErrorKind::ImportCycle,
-            ),
-            (
                 Error::RecursionLimit {
                     limit: 64,
                     context: "expanding $(Outer)".to_string(),
@@ -464,13 +432,6 @@ mod tests {
                     supported: 1,
                 },
                 ErrorKind::StateVersion,
-            ),
-            (
-                Error::PathEscape {
-                    path: PathBuf::from(r"C:\Windows\System32"),
-                    root: PathBuf::from(r"C:\proj"),
-                },
-                ErrorKind::PathEscape,
             ),
             (
                 Error::Unimplemented {
@@ -527,34 +488,29 @@ mod tests {
         );
         assert_eq!(
             rendered[6],
-            r"import cycle: C:\proj\a.props -> C:\proj\b.props -> C:\proj\a.props"
-        );
-        assert_eq!(
-            rendered[7],
             "recursion limit of 64 exceeded while expanding $(Outer)"
         );
         assert_eq!(
-            rendered[8],
+            rendered[7],
             "no usable Visual Studio installation found: vswhere.exe not present"
         );
         assert_eq!(
-            rendered[9],
+            rendered[8],
             r"C:\VS\2022\Community: incomplete toolchain: no Windows SDK include directory"
         );
         assert_eq!(
-            rendered[10],
+            rendered[9],
             "Profile|ARM64 is not a configuration of this solution; \
              valid values are: Debug|x64, Release|x64"
         );
-        assert!(rendered[11].starts_with(r"C:\proj\.msvclsp\state.json: malformed state file: "));
+        assert!(rendered[10].starts_with(r"C:\proj\.msvclsp\state.json: malformed state file: "));
         assert_eq!(
-            rendered[12],
+            rendered[11],
             r"C:\proj\.msvclsp\state.json: state file version 9 is not supported (expected 1)"
         );
-        assert_eq!(rendered[13], r"C:\Windows\System32: path escapes C:\proj");
-        assert_eq!(rendered[14], "test_function is not implemented yet");
+        assert_eq!(rendered[12], "test_function is not implemented yet");
         assert_eq!(
-            rendered[15],
+            rendered[13],
             r"C:\proj\app.vcxproj:1: invalid project file: root element is <Filters>"
         );
     }
@@ -583,14 +539,12 @@ mod tests {
             "project-parse",
             "unsupported-construct",
             "missing-import",
-            "import-cycle",
             "recursion-limit",
             "toolchain-not-found",
             "toolchain-incomplete",
             "invalid-configuration",
             "state-parse",
             "state-version",
-            "path-escape",
             "unimplemented",
             "project-schema",
         ];
@@ -623,10 +577,9 @@ mod tests {
         assert_eq!(ErrorKind::ProjectSchema.exit_code(), 4);
         assert_eq!(ErrorKind::ProjectParse.exit_code(), 4);
         assert_eq!(ErrorKind::UnsupportedConstruct.exit_code(), 5);
-        assert_eq!(ErrorKind::ImportCycle.exit_code(), 5);
+        assert_eq!(ErrorKind::MissingImport.exit_code(), 5);
         assert_eq!(ErrorKind::ToolchainIncomplete.exit_code(), 6);
         assert_eq!(ErrorKind::InvalidConfiguration.exit_code(), 7);
-        assert_eq!(ErrorKind::PathEscape.exit_code(), 8);
         assert_eq!(ErrorKind::Unimplemented.exit_code(), 9);
 
         for kind in ErrorKind::ALL {
@@ -635,6 +588,12 @@ mod tests {
             assert_ne!(
                 code, 2,
                 "{kind} must not collide with clap's usage-error code"
+            );
+            // `8` belonged to `path-escape` and stays reserved rather than being reused, so that
+            // a shell script's meaning for a code does not change under it. See ADR 10.
+            assert_ne!(
+                code, 8,
+                "{kind} must not reuse the retired path-escape code"
             );
         }
     }
