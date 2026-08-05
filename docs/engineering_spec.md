@@ -220,6 +220,23 @@ Rough module breakdown implied by the parsing pipeline:
   names its own cause; `%(Metadata)` and `@(Item)` are left untouched for MVP-12. Expansion returns
   what it could not resolve rather than warning about it, since it knows neither the file nor the
   line and MVP-13 owns the wording. See [ADR 08](adr/08-eager-macro-expansion.md).
+
+  `Condition` evaluation is settled by MVP-09 and sits beside expansion in `msbuild/eval.rs`: a
+  tokenizer and recursive-descent evaluator over quoted and unquoted operand comparison (`==`,
+  `!=`), `And`/`Or`/`!`, parentheses, `Exists()`, and a lone operand as a boolean literal. Anything
+  else in MSBuild's much larger grammar is out of scope. The shape of the design is that
+  "unsupported" means two different things: an expression that cannot reduce to a boolean is a fatal
+  `Error::UnsupportedConstruct`, because inventing one would either drop a `PropertyGroup` carrying
+  every include path or apply flags the file never asked for; whereas an unsupported `$(...)` inside
+  an operand is merely recorded, since expansion left it verbatim and there are still two strings to
+  compare. Conditions are **parsed before any operand is expanded** — project files are untrusted
+  input, and expanding first would let a property value containing `' Or '` rewrite the expression
+  around it. `And`/`Or` deliberately do not short-circuit, so a construct on the dead side is still
+  reported. Comparison is case-insensitive as MSBuild's is, an empty condition holds as an absent
+  one does, `Exists()` resolves against the directory of the file the condition is written in, and
+  nesting is capped at 32 to keep recursive descent off a stack-overflow path. MVP-10 inherits the
+  fatal-error policy and owns whether to downgrade it for the Visual Studio installation's own
+  `.targets`. See [ADR 09](adr/09-condition-evaluation-subset.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.

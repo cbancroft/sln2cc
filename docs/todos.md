@@ -299,7 +299,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   bare `$` staying literal, case-insensitive lookup, empty-versus-undefined, dedup order, a property
   function keeping its own parentheses, and a non-ASCII value surviving the byte-offset scan.
 
-- [ ] **MVP-09 — `Condition` expression evaluation**
+- [x] **MVP-09 — `Condition` expression evaluation**
   `feat/msbuild-conditions` · ~1d
 
   **Summary:** Evaluate the subset of MSBuild condition syntax that real `.vcxproj` and
@@ -312,9 +312,36 @@ Goal: one solution, one manually selected configuration/platform, producing a
   unsupported rather than silently evaluating false, because a silently-skipped
   `PropertyGroup` produces a plausible but wrong compilation database.
 
+  **Outcome:** A tokenizer and recursive-descent evaluator in `msbuild/eval.rs`, over exactly the
+  subset above plus a lone operand as a boolean literal. `condition_holds` returns
+  `Evaluation { holds, undefined, unsupported }`, mirroring MVP-08's `Expansion`, and takes the
+  condition's **file and line** — needed both to site an error and because `Exists()` resolves
+  relative paths against the directory of the file the condition is written in, as MSBuild does. The
+  decision worth internalizing is that "unsupported" splits two ways: an expression that cannot
+  reduce to a boolean (`'1' < '2'`, `HasTrailingSlash(...)`) is a fatal
+  `Error::UnsupportedConstruct` — **MVP-09 is that variant's first producer** — while an unsupported
+  `$(...)` *inside* an operand is merely recorded, because MVP-08 left it verbatim and there are
+  still two strings to compare. Conditions are **parsed before any operand is expanded**, so a
+  property value containing `' Or '` cannot rewrite the expression around it; this is untrusted
+  input and there is a test named for the injection. `And`/`Or` do not short-circuit, so a construct
+  on the dead side is still reported. Comparison is case-insensitive; an empty condition holds;
+  depth is capped at 32 as `Error::RecursionLimit`. **MVP-10 inherits the fatal-error policy** and
+  owns whether to downgrade it for files imported from the Visual Studio installation, whose own
+  `.targets` use constructs well outside this subset. See
+  [ADR 09](adr/09-condition-evaluation-subset.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests per operator, a compound `And`/`Or` expression, `Exists()` against a
   real and missing path, case-insensitive comparison behavior, and an unsupported construct
   producing an error.
+
+  All present, plus: `And` binding tighter than `Or` (asserted with an expression that reads
+  differently under flat precedence), parentheses overriding it, an unquoted `$(Platform)` operand
+  surviving tokenization, an empty condition holding, a lone operand as a boolean, operand
+  injection being impossible, an unsupported macro inside an operand being recorded rather than
+  fatal, and nesting refused at the depth cap. `Exists()` runs against the real filesystem under
+  `CARGO_MANIFEST_DIR` — no fake, because unlike a Visual Studio path, `Cargo.toml` exists on every
+  machine that can run the suite.
 
 - [ ] **MVP-10 — Resolve `.props`/`.targets` imports**
   `feat/msbuild-imports` · ~1d

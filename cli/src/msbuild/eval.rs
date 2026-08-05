@@ -11,7 +11,7 @@
 //! Unsupported constructs must be surfaced as warnings rather than silently producing
 //! incorrect flags — see the engineering requirements in docs/engineering_spec.md.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use crate::{Error, Result};
 
@@ -19,6 +19,10 @@ use crate::{Error, Result};
 ///
 /// Eager expansion makes cycles impossible, but not runaway growth.
 const MAX_VALUE_BYTES: usize = 1 << 20;
+
+/// How deeply a condition may nest before it is refused. Real conditions rarely nest more than 3 or
+/// 4 deep, so this is very generous
+const MAX_CONDITION_DEPTH: usize = 32;
 
 /// The property bag built up during evaluation. Later assignments shadow earlier ones.
 #[derive(Debug, Default, Clone)]
@@ -153,11 +157,6 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
     Ok(out)
 }
 
-/// Evaluate an MSBuild `Condition` expression to a boolean.
-pub fn condition_holds(_condition: &str, _props: &Properties) -> Result<bool> {
-    todo!("evaluate MSBuild condition")
-}
-
 /// The offset of the `)` closing a reference that starts immediately before `data`.
 ///
 /// Tracks depth of the closing `)`. `(` and `)` are ASCII, so byte offsets are char boundaries.
@@ -211,8 +210,395 @@ fn truncate(input: &str, max_chars: usize) -> String {
     }
 }
 
+/// One evaluated `Condition`, and what could not be resolved while evaluating it.
+///
+/// Mirrors [`Expansion`] and for the same reason. A *syntax* this evaluator doesn't support is an
+/// error rather than a finding -- there is no truth value to hand back. Whereas an unsupported
+/// `$(..)` inside an operand lands in `unsupported` and still yields an answer because MVP-08 left
+/// it verbatim and there are two strings to compare.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[must_use]
+pub struct Evaluation {
+    pub holds: bool,
+    /// Merged across every operand, expanded, deduped and in first-reference order.
+    pub undefined: Vec<String>,
+    pub unsupported: Vec<String>,
+}
+
+impl Evaluation {
+    /// Take one operand's findings and hand back its expanded text.
+    fn absorb(&mut self, expansion: Expansion) -> String {
+        for name in expansion.undefined {
+            if !self
+                .undefined
+                .iter()
+                .any(|seen| seen.eq_ignore_ascii_case(&name))
+            {
+                self.undefined.push(name);
+            }
+        }
+
+        for reference in expansion.unsupported {
+            if !self.unsupported.contains(&reference) {
+                self.unsupported.push(reference);
+            }
+        }
+
+        expansion.value
+    }
+}
+
+/// Evaluate an MSBuild `Condition` expression as a boolean.
+///
+/// `file` names the file the condition came from.
+///
+/// An empty condition holds, so does an absent one
+pub fn condition_holds(
+    condition: &str,
+    props: &Properties,
+    file: &Path,
+    line: usize,
+) -> Result<Evaluation> {
+    if condition.trim().is_empty() {
+        return Ok(Evaluation {
+            holds: true,
+            ..Evaluation::default()
+        });
+    }
+
+    let tokens = tokenize(condition, file, line)?;
+
+    let mut parser = Parser {
+        tokens: &tokens,
+        pos: 0,
+        depth: 0,
+        props,
+        file,
+        line,
+        condition,
+        found: Evaluation::default(),
+    };
+
+    let holds = parser.expression()?;
+    if parser.pos != tokens.len() {
+        // Trailing tokens: `'a' =='b' 'c'`. Well-formed to a point and then not.
+        return Err(parser.unsupported());
+    }
+
+    let mut evaluation = parser.found;
+    evaluation.holds = holds;
+    Ok(evaluation)
+}
+
+/// One lexical unit of a condition.
+///
+/// `Quoted` and `Bare` both hold text that is still unexpanded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Token {
+    Open,
+    Close,
+    Not,
+    Eq,
+    Ne,
+    And,
+    Or,
+    Quoted(String),
+    Bare(String),
+}
+
+fn tokenize(condition: &str, file: &Path, line: usize) -> Result<Vec<Token>> {
+    let unsupported = || Error::UnsupportedConstruct {
+        file: file.to_path_buf(),
+        line: Some(line),
+        construct: truncate(condition, 80),
+    };
+
+    let mut tokens = Vec::new();
+    let bytes = condition.as_bytes();
+    let mut at = 0;
+
+    while at < condition.len() {
+        let rest = &condition[at..];
+
+        if bytes[at].is_ascii_whitespace() {
+            at += 1;
+            continue;
+        }
+
+        // Prevent `!=` and `==` from being confused as 2 single-byte entities
+        if let Some(token) = rest
+            .strip_prefix("==")
+            .map(|_| Token::Eq)
+            .or_else(|| rest.strip_prefix("!=").map(|_| Token::Ne))
+        {
+            tokens.push(token);
+            at += 2;
+            continue;
+        }
+
+        match bytes[at] {
+            b'(' => {
+                tokens.push(Token::Open);
+                at += 1;
+                continue;
+            }
+            b')' => {
+                tokens.push(Token::Close);
+                at += 1;
+                continue;
+            }
+            b'!' => {
+                tokens.push(Token::Not);
+                at += 1;
+                continue;
+            }
+            b'\'' => {
+                let Some(end) = rest[1..].find('\'') else {
+                    return Err(unsupported());
+                };
+                tokens.push(Token::Quoted(rest[1..1 + end].to_string()));
+                at += end + 2;
+                continue;
+            }
+            _ => {}
+        }
+
+        let len = bare_token_len(rest);
+        if len == 0 {
+            // Some character we don't model: '<', '>', ',', '%'.
+            return Err(unsupported());
+        }
+
+        let text = &rest[..len];
+        tokens.push(if text.eq_ignore_ascii_case("and") {
+            Token::And
+        } else if text.eq_ignore_ascii_case("or") {
+            Token::Or
+        } else {
+            Token::Bare(text.to_string())
+        });
+        at += len;
+    }
+
+    Ok(tokens)
+}
+
+/// How many bytes of `rest` form one bare token.
+///
+/// A `$(...)` group is skipped whole, so the `)` inside `$(Configuration)` does not end the token.
+/// Without that the reference would tokenize as three things and every unquoted operand would be
+/// unparseable.
+fn bare_token_len(rest: &str) -> usize {
+    let mut at = 0;
+
+    while at < rest.len() {
+        if rest[at..].starts_with("$(") {
+            match closing_paren(&rest[at + 2..]) {
+                Some(offset) => {
+                    at += 2 + offset + 1;
+                    continue;
+                }
+                // Unterminated. Taken whole so MVP-08 records it when the operand is expanded.
+                None => return rest.len(),
+            }
+        }
+
+        let Some(c) = rest[at..].chars().next() else {
+            break;
+        };
+        if c.is_whitespace() || matches!(c, '(' | ')' | '\'' | '!' | '=') {
+            break;
+        }
+
+        at += c.len_utf8();
+    }
+
+    at
+}
+
+/// Recursively descends through the token stream, evaluating as it goes.
+///
+/// Doesn't bother with an AST, as it's a simple grammar.
+///
+/// The grammar for conditional expressions from MSBuild is:
+/// condition := or
+/// or        := and ( 'Or' and )*
+/// and       := unary ( 'And' unary )*
+/// unary     := '!' unary | primary
+/// primary   := '(' condition ')'
+///            | 'Exists' '(' operand ')'
+///            | operand ( ('==' | '!=') operand )?     -- a lone operand is a boolean literal
+/// operand   := "'" text "'" | bare-token
+struct Parser<'a> {
+    tokens: &'a [Token],
+    pos: usize,
+    depth: usize,
+    props: &'a Properties,
+    file: &'a Path,
+    line: usize,
+    condition: &'a str,
+    found: Evaluation,
+}
+
+impl Parser<'_> {
+    /// `or := and ( 'Or' and )*`
+    fn expression(&mut self) -> Result<bool> {
+        let mut value = self.conjunction()?;
+        while self.take(&Token::Or) {
+            // Deliberately not short-circuiting. Evaluating the right side no matter what allows for
+            // bad constructs to get reported
+            let right = self.conjunction()?;
+            value = value || right;
+        }
+        Ok(value)
+    }
+
+    /// `and := unary ( 'And' unary )*` -- Binds tighter than 'Or'
+    fn conjunction(&mut self) -> Result<bool> {
+        let mut value = self.unary()?;
+        while self.take(&Token::And) {
+            let right = self.unary()?;
+            value = value && right;
+        }
+        Ok(value)
+    }
+
+    /// `unary := '!' unary | primary`
+    fn unary(&mut self) -> Result<bool> {
+        if self.take(&Token::Not) {
+            return Ok(!self.deeper(Self::unary)?);
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Result<bool> {
+        match self.bump()? {
+            Token::Open => {
+                let value = self.deeper(Self::expression)?;
+                if !self.take(&Token::Close) {
+                    return Err(self.unsupported());
+                }
+                Ok(value)
+            }
+            Token::Bare(name) if name.eq_ignore_ascii_case("Exists") => self.exists(),
+            token @ (Token::Quoted(_) | Token::Bare(_)) => self.comparison(token),
+            _ => Err(self.unsupported()),
+        }
+    }
+
+    /// `operand ( ('==' | '!=') operand )?`
+    fn comparison(&mut self, left: Token) -> Result<bool> {
+        let left = self.operand(left)?;
+
+        let equals = if self.take(&Token::Eq) {
+            true
+        } else if self.take(&Token::Ne) {
+            false
+        } else {
+            // A lone operand is a boolean: `Condition="$(BuildProjectReferences)"`.
+            return self.boolean(&left);
+        };
+
+        let token = self.bump()?;
+        let right = self.operand(token)?;
+
+        // MSBuild compares conditional strings case-insensitively.
+        Ok(left.eq_ignore_ascii_case(&right) == equals)
+    }
+
+    /// `Exists ( operand )`
+    fn exists(&mut self) -> Result<bool> {
+        if !self.take(&Token::Open) {
+            return Err(self.unsupported());
+        }
+        let token = self.bump()?;
+        let path = self.operand(token)?;
+        if !self.take(&Token::Close) {
+            return Err(self.unsupported());
+        }
+
+        let path = path.trim();
+        if path.is_empty() {
+            // `Exists('$(Undefined)')` is false, not an error. It is how property sheets ask
+            // whether an optional path was configured at all.
+            return Ok(false);
+        }
+
+        // Relative to the directory of the file the condition is written in, as MSBuild resolves
+        // it. Existence only check. No reading or executing.
+        let base = self.file.parent().unwrap_or(Path::new(""));
+        Ok(base.join(path).exists())
+    }
+
+    /// Expand an operand and take its findings.
+    fn operand(&mut self, token: Token) -> Result<String> {
+        let raw = match token {
+            Token::Quoted(text) | Token::Bare(text) => text,
+            _ => return Err(self.unsupported()),
+        };
+        let expansion = expand(&raw, self.props)?;
+        Ok(self.found.absorb(expansion))
+    }
+
+    fn boolean(&mut self, value: &str) -> Result<bool> {
+        if value.eq_ignore_ascii_case("true") {
+            return Ok(true);
+        }
+        if value.eq_ignore_ascii_case("false") {
+            return Ok(false);
+        }
+        Err(self.unsupported())
+    }
+
+    fn take(&mut self, expected: &Token) -> bool {
+        if self.tokens.get(self.pos) == Some(expected) {
+            self.pos += 1;
+            return true;
+        }
+        false
+    }
+
+    fn bump(&mut self) -> Result<Token> {
+        let token = self
+            .tokens
+            .get(self.pos)
+            .ok_or_else(|| self.unsupported())?;
+        self.pos += 1;
+        Ok(token.clone())
+    }
+
+    /// Recurse one lvel, refusing to go deeper than [`MAX_CONDITION_DEPTH`]
+    fn deeper<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.depth += 1;
+        if self.depth > MAX_CONDITION_DEPTH {
+            return Err(Error::RecursionLimit {
+                limit: MAX_CONDITION_DEPTH,
+                context: format!(
+                    "evaluating the condition `{}`",
+                    truncate(self.condition, 60)
+                ),
+            });
+        }
+
+        let value = parse(self);
+        self.depth -= 1;
+        value
+    }
+
+    /// The whole condition is named, rather than just the offending token. Otherwise it is hard for
+    /// a user to trace back where it originated.
+    fn unsupported(&self) -> Error {
+        Error::UnsupportedConstruct {
+            file: self.file.to_path_buf(),
+            line: Some(self.line),
+            construct: truncate(self.condition, 80),
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::ErrorKind;
 
@@ -616,5 +1002,357 @@ mod tests {
             "must not reprint the value: {} bytes",
             message.len()
         );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-09 — `Condition` evaluation
+    // ---------------------------------------------------------------------------------------
+
+    /// A condition site inside the crate directory.
+    ///
+    /// `Exists()` resolves against the directory of the file the condition is written in, so the
+    /// site has to be a real place for the `Exists()` cases to mean anything. The crate directory
+    /// is one that exists on every machine able to run this suite — which is why `Exists()` needs
+    /// no injected filesystem the way toolchain discovery needs `FakeToolchain`: real Visual
+    /// Studio paths differ per machine, and `Cargo.toml` does not.
+    fn site() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("app.vcxproj")
+    }
+
+    /// Evaluate against `props`, asserting nothing was recorded — what most cases want.
+    fn holds(condition: &str, props: &Properties) -> bool {
+        let evaluation = condition_holds(condition, props, &site(), 12).expect("evaluates");
+        assert!(
+            evaluation.undefined.is_empty(),
+            "unexpected undefined: {:?}",
+            evaluation.undefined
+        );
+        assert!(
+            evaluation.unsupported.is_empty(),
+            "unexpected unsupported: {:?}",
+            evaluation.unsupported
+        );
+        evaluation.holds
+    }
+
+    /// Evaluate against an empty bag, for the many cases with no property in them at all.
+    fn holds_bare(condition: &str) -> bool {
+        holds(condition, &Properties::new())
+    }
+
+    /// The error from a condition that must not evaluate.
+    fn refuse(condition: &str) -> Error {
+        condition_holds(condition, &Properties::new(), &site(), 12).expect_err("must not evaluate")
+    }
+
+    #[test]
+    fn an_empty_condition_holds() {
+        // MSBuild treats an empty `Condition` as an absent one. MVP-07 hands `Condition=""`
+        // through as `Some("")`, so this is reachable — and defaulting it to false would silently
+        // drop a `PropertyGroup` that applies unconditionally.
+        assert!(holds_bare(""));
+        assert!(holds_bare("   "));
+    }
+
+    #[test]
+    fn equality_compares_expanded_operands() {
+        // The condition on every configuration-gated group Visual Studio writes.
+        let props = bag(&[("Configuration", "Debug"), ("Platform", "x64")]);
+
+        assert!(holds("'$(Configuration)|$(Platform)'=='Debug|x64'", &props));
+        assert!(!holds(
+            "'$(Configuration)|$(Platform)'=='Release|x64'",
+            &props
+        ));
+    }
+
+    #[test]
+    fn inequality_is_the_negation_of_equality() {
+        let props = bag(&[("Configuration", "Debug")]);
+
+        assert!(holds("'$(Configuration)' != 'Release'", &props));
+        assert!(!holds("'$(Configuration)' != 'Debug'", &props));
+    }
+
+    #[test]
+    fn comparison_is_case_insensitive() {
+        // MSBuild compares condition strings without regard to case. Comparing exactly would make
+        // `'$(Configuration)'=='debug'` skip a group that MSBuild applies — a database missing
+        // flags, with nothing saying so.
+        let props = bag(&[("Configuration", "Debug")]);
+
+        assert!(holds_bare("'Debug'=='debug'"));
+        assert!(holds("'$(Configuration)'=='DEBUG'", &props));
+        assert!(!holds("'$(Configuration)' != 'dEbUg'", &props));
+    }
+
+    #[test]
+    fn an_unquoted_operand_is_compared_the_same_way() {
+        // Quotes are conventional, not required. This is also the case that pins the tokenizer:
+        // `$(Platform)` contains a `)`, and a scanner that ended a bare token there would split
+        // one operand into three tokens and fail to parse.
+        let props = bag(&[("Platform", "x64")]);
+
+        assert!(holds("$(Platform)==x64", &props));
+        assert!(!holds("$(Platform)==Win32", &props));
+    }
+
+    #[test]
+    fn an_undefined_operand_compares_as_empty_and_is_recorded() {
+        // `'$(X)' != ''` is how a property sheet tests for a property it expects to be absent, so
+        // this path is ordinary rather than exceptional — but a *typo* looks identical, which is
+        // why the name is recorded for MVP-13 rather than thrown away.
+        let evaluation =
+            condition_holds("'$(Typo)'==''", &Properties::new(), &site(), 12).expect("evaluates");
+
+        assert!(evaluation.holds);
+        assert_eq!(evaluation.undefined, ["Typo"]);
+        assert!(evaluation.unsupported.is_empty());
+    }
+
+    #[test]
+    fn and_requires_both_sides() {
+        assert!(holds_bare("'a'=='a' And 'b'=='b'"));
+        assert!(!holds_bare("'a'=='a' And 'b'=='c'"));
+        assert!(!holds_bare("'a'=='z' And 'b'=='b'"));
+        assert!(!holds_bare("'a'=='z' And 'b'=='c'"));
+    }
+
+    #[test]
+    fn or_requires_either_side() {
+        assert!(holds_bare("'a'=='a' Or 'b'=='b'"));
+        assert!(holds_bare("'a'=='a' Or 'b'=='c'"));
+        assert!(holds_bare("'a'=='z' Or 'b'=='b'"));
+        assert!(!holds_bare("'a'=='z' Or 'b'=='c'"));
+    }
+
+    #[test]
+    fn not_inverts_its_operand() {
+        assert!(holds_bare("!('a'=='b')"));
+        assert!(!holds_bare("!('a'=='a')"));
+        assert!(holds_bare("!!('a'=='a')"), "stacking is not special-cased");
+        assert!(!holds_bare("!'true'"), "a bare boolean can be negated too");
+    }
+
+    #[test]
+    fn and_binds_tighter_than_or() {
+        // Discriminating on purpose. Read as `a Or (b And c)` this is true; read left to right as
+        // `(a Or b) And c` it is false, so the assertion fails if precedence is flat.
+        assert!(holds_bare("'a'=='a' Or 'b'=='c' And 'd'=='e'"));
+    }
+
+    #[test]
+    fn parentheses_override_precedence() {
+        // The same expression as above, grouped the other way.
+        assert!(!holds_bare("('a'=='a' Or 'b'=='c') And 'd'=='e'"));
+        assert!(holds_bare("('a'=='a' Or 'b'=='c') And 'd'=='d'"));
+    }
+
+    #[test]
+    fn operator_keywords_are_case_insensitive() {
+        // MSBuild accepts any casing, and real property sheets are inconsistent about it.
+        for condition in [
+            "'a'=='a' and 'b'=='b'",
+            "'a'=='a' AND 'b'=='b'",
+            "'a'=='z' or 'b'=='b'",
+            "'a'=='z' OR 'b'=='b'",
+        ] {
+            assert!(holds_bare(condition), "for {condition}");
+        }
+    }
+
+    #[test]
+    fn a_lone_operand_is_a_boolean_literal() {
+        // `Condition="$(BuildProjectReferences)"` with no comparison at all.
+        let props = bag(&[("Yes", "true"), ("No", "FALSE")]);
+
+        assert!(holds("$(Yes)", &props));
+        assert!(!holds("$(No)", &props));
+        assert!(holds_bare("'true'"));
+        assert!(holds_bare("TRUE"), "matched without regard to case");
+        assert!(!holds_bare("false"));
+    }
+
+    #[test]
+    fn a_lone_operand_that_is_not_a_boolean_is_an_error() {
+        // `Condition="$(Configuration)"` where the value is `Debug`. There is no truth value here,
+        // and picking one would be a guess.
+        assert_eq!(refuse("'Debug'").kind(), ErrorKind::UnsupportedConstruct);
+    }
+
+    #[test]
+    fn exists_finds_a_file_beside_the_conditions_own_file() {
+        // Resolved against the directory of the file the condition is written in, which is what
+        // MSBuild does — not against the process working directory, which would make the answer
+        // depend on where the user ran the tool from.
+        assert!(holds_bare("Exists('Cargo.toml')"));
+        assert!(holds_bare("exists('Cargo.toml')"), "the name is a keyword");
+    }
+
+    #[test]
+    fn exists_resolves_a_subdirectory() {
+        // Built with the platform separator: a `\` would be one ordinary filename character on the
+        // Linux runner rather than a directory boundary.
+        let nested = ["src", "lib.rs"].join(std::path::MAIN_SEPARATOR_STR);
+
+        assert!(holds_bare(&format!("Exists('{nested}')")));
+    }
+
+    #[test]
+    fn exists_is_false_for_a_missing_path() {
+        // False, not an error. A property sheet asking whether an optional file is present is
+        // doing exactly what `Exists()` is for.
+        assert!(!holds_bare("Exists('no-such-file.props')"));
+    }
+
+    #[test]
+    fn exists_is_false_for_an_empty_path() {
+        // `Exists('$(UserRootDir)\...')` where the property was never set. Every Visual Studio
+        // project carries one of these against `Microsoft.Cpp.$(Platform).user.props`.
+        let evaluation = condition_holds("Exists('$(Undefined)')", &Properties::new(), &site(), 12)
+            .expect("evaluates");
+
+        assert!(!evaluation.holds);
+        assert_eq!(evaluation.undefined, ["Undefined"]);
+    }
+
+    #[test]
+    fn a_quoted_operand_cannot_inject_operators() {
+        // The reason the condition is parsed *before* any operand is expanded. Project files are
+        // untrusted input (CLAUDE.md §5): expanding first would splice this property's value into
+        // the expression, turning one comparison into `'literal' Or 'a'=='a'` and forcing the
+        // group to apply. Parsed first, the whole thing is one operand and simply does not match.
+        let props = bag(&[("Evil", "literal' Or 'a'=='a"), ("Keyword", "a Or b")]);
+
+        assert!(!holds("'$(Evil)'=='literal'", &props));
+        assert!(
+            holds("'$(Keyword)'=='a Or b'", &props),
+            "a keyword inside an operand's text is text, not an operator"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_operator_is_an_error() {
+        // Numeric comparison is outside the subset. Evaluating it as false would silently skip a
+        // `PropertyGroup` that applies — the plausible-but-wrong database CLAUDE.md §3 calls the
+        // worst outcome — so it fails loudly instead.
+        for condition in [
+            "'1' < '2'",
+            "'$(VisualStudioVersion)' >= '16.0'",
+            "'1' <= '2'",
+            "'1' > '2'",
+        ] {
+            assert_eq!(
+                refuse(condition).kind(),
+                ErrorKind::UnsupportedConstruct,
+                "for {condition}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsupported_function_is_an_error() {
+        // `Exists` is the only condition function in the subset. The rest are real MSBuild and
+        // will turn up the moment MVP-10 starts importing the Visual Studio installation's own
+        // `.targets` — which is that issue's problem to weigh, not this one's to guess at.
+        for condition in [
+            "HasTrailingSlash('$(OutDir)')",
+            "$([MSBuild]::VersionGreaterThanOrEquals('17.0', '16.0'))",
+        ] {
+            assert_eq!(
+                refuse(condition).kind(),
+                ErrorKind::UnsupportedConstruct,
+                "for {condition}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_condition_is_an_error() {
+        let cases = [
+            ("('a'=='a'", "unclosed parenthesis"),
+            ("'a'=='a')", "unopened parenthesis"),
+            ("'a'=='a", "unterminated quote"),
+            ("'a'=='b' 'c'", "trailing operand"),
+            ("()", "empty parentheses"),
+            ("'a' ==", "missing right operand"),
+            ("And 'a'=='a'", "leading operator"),
+            ("'a'=='a' And", "trailing operator"),
+        ];
+
+        for (condition, what) in cases {
+            assert_eq!(
+                refuse(condition).kind(),
+                ErrorKind::UnsupportedConstruct,
+                "for {what}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsupported_macro_in_an_operand_is_recorded_not_fatal() {
+        // The distinction the design turns on: an unevaluable *expression* has no truth value and
+        // errors, while an unevaluable *value* still leaves two strings to compare. MVP-08 left
+        // the construct verbatim, so the comparison runs and the finding says the answer may be
+        // wrong.
+        let evaluation = condition_holds(
+            "'$([System.IO.Path]::GetTempPath())'=='C:\\temp\\'",
+            &Properties::new(),
+            &site(),
+            12,
+        )
+        .expect("evaluates rather than failing");
+
+        assert!(!evaluation.holds);
+        assert_eq!(
+            evaluation.unsupported,
+            ["$([System.IO.Path]::GetTempPath())"]
+        );
+    }
+
+    #[test]
+    fn findings_are_merged_across_operands_and_deduped() {
+        // One finding per name, however many operands mentioned it.
+        let evaluation = condition_holds(
+            "'$(One)'=='$(Two)' Or '$(ONE)'=='x'",
+            &Properties::new(),
+            &site(),
+            12,
+        )
+        .expect("evaluates");
+
+        assert_eq!(evaluation.undefined, ["One", "Two"]);
+    }
+
+    #[test]
+    fn a_deeply_nested_condition_is_refused() {
+        // Recursive descent, so nesting is a stack-overflow vector on untrusted input — the same
+        // class of bug MVP-35 owns for XML. Unlike that one, this test can actually run.
+        let condition = format!("{}'a'=='a'{}", "(".repeat(100), ")".repeat(100));
+
+        assert_eq!(refuse(&condition).kind(), ErrorKind::RecursionLimit);
+    }
+
+    #[test]
+    fn a_condition_at_the_nesting_limit_still_evaluates() {
+        // The cap is a ceiling, not a limit below it.
+        let depth = MAX_CONDITION_DEPTH;
+        let condition = format!("{}'a'=='a'{}", "(".repeat(depth), ")".repeat(depth));
+
+        assert!(holds_bare(&condition));
+    }
+
+    #[test]
+    fn the_error_names_the_file_the_line_and_the_condition() {
+        // A warning or failure about a condition is only actionable if the user can find it.
+        let error = refuse("'1' < '2'");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("'1' < '2'"),
+            "names the condition: {message}"
+        );
+        assert!(message.contains(":12:"), "names the line: {message}");
+        assert!(message.contains("app.vcxproj"), "names the file: {message}");
     }
 }
