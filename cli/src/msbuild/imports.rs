@@ -114,7 +114,7 @@ impl Walk<'_> {
 
         // MSBuild imports a file once per project.
         if self.files.iter().any(|seen| same_file(seen, path)) {
-            self.reporter.warn_at(
+            self.reporter.note_at(
                 referrer.unwrap_or(path),
                 None,
                 format!(
@@ -176,14 +176,11 @@ impl Walk<'_> {
             }
 
             let expansion = self.properties.assign(&property.name, &property.value)?;
-            self.report(
-                expansion.undefined,
-                expansion.unsupported,
-                file,
-                property.line,
-            );
+            // Read before reporting as `report` consumes.
+            let refused = expansion.refused;
+            expansion.report(self.reporter, file, property.line);
 
-            if expansion.refused {
+            if refused {
                 self.reporter.warn_at(
                     file,
                     Some(property.line),
@@ -205,15 +202,13 @@ impl Walk<'_> {
             return Ok(());
         }
 
-        let expansion = eval::expand(&import.project, &self.properties)?;
-        self.report(
-            expansion.undefined.clone(),
-            expansion.unsupported.clone(),
+        let value = eval::expand(&import.project, &self.properties)?.report(
+            self.reporter,
             file,
             import.line,
         );
 
-        let target = expansion.value.trim();
+        let target = value.trim();
         if target.is_empty() {
             self.reporter.warn_at(
                 file,
@@ -234,34 +229,13 @@ impl Walk<'_> {
             return Ok(true);
         };
 
-        let evaluation = eval::condition_holds(condition, &self.properties, file, line)?;
-        self.report(evaluation.undefined, evaluation.unsupported, file, line);
-        Ok(evaluation.holds)
-    }
-
-    /// Turns findings into diagnostic messages.
-    fn report(
-        &mut self,
-        undefined: Vec<String>,
-        unsupported: Vec<String>,
-        file: &Path,
-        line: usize,
-    ) {
-        for name in undefined {
-            self.reporter.warn_at(
+        Ok(
+            eval::condition_holds(condition, &self.properties, file, line)?.report(
+                self.reporter,
                 file,
-                Some(line),
-                format!("`$({name})` is not defined and expanded to nothing"),
-            );
-        }
-
-        for reference in unsupported {
-            self.reporter.warn_at(
-                file,
-                Some(line),
-                format!("`{reference}` is not supported and was left as written"),
-            );
-        }
+                line,
+            ),
+        )
     }
 }
 
@@ -432,14 +406,18 @@ mod tests {
             ["root.vcxproj", "b.props", "d.props", "c.props"]
         );
 
-        let [warning] = reporter.warnings() else {
-            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
         };
         assert!(
-            warning.message.contains("already imported"),
+            finding.message.contains("already imported"),
             "says why it was skipped: {}",
-            warning.message
+            finding.message
         );
+        // A *note*, per MVP-13: MSBuild's MSB4011 rule says to import a file once per project,
+        // and that is exactly what happened. Nothing was lost, so nothing about the flags is in
+        // question — and a diamond is common enough that warning would swamp the channel.
+        assert_eq!(finding.severity, crate::Severity::Note);
     }
 
     #[test]
@@ -852,6 +830,17 @@ mod tests {
                 .iter()
                 .all(|warning| warning.line == Some(3) && warning.file.as_deref() == Some(&root)),
             "each finding is sited where it was written: {:?}",
+            reporter.warnings()
+        );
+        // Both are warnings, not notes. An unresolved reference is how an include path quietly
+        // loses a directory, and MVP-08 copies an unsupported construct through verbatim so it
+        // reaches a flag as written — either way the flags may now be wrong. See ADR 13.
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .all(|warning| warning.severity == crate::Severity::Warning),
+            "{:?}",
             reporter.warnings()
         );
     }

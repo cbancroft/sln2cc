@@ -364,8 +364,9 @@ mod tests {
             reporter
                 .warnings()
                 .iter()
-                .any(|warning| warning.message.contains("Debug|ARM64")),
-            "names the pair that is missing: {:?}",
+                .any(|warning| warning.message.contains("Debug|ARM64")
+                    && warning.severity == crate::Severity::Warning),
+            "names the pair that is missing, as a warning: {:?}",
             reporter.warnings()
         );
     }
@@ -394,8 +395,29 @@ mod tests {
             reporter
                 .warnings()
                 .iter()
-                .any(|warning| warning.message.contains("ClCompile")),
-            "says what was missing: {:?}",
+                .any(|warning| warning.message.contains("ClCompile")
+                    && warning.severity == crate::Severity::Warning),
+            "says what was missing, as a warning: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    /// The volume check MVP-13 is really about, asserted rather than eyeballed.
+    ///
+    /// `evaluated` already refuses any finding at all on the clean path, which is the strongest
+    /// form of this. What that cannot say is that the *severity* split has not quietly
+    /// reclassified an ordinary project's evaluation into a wall of warnings — so the same
+    /// realistic project is run once more with the findings inspected directly.
+    #[test]
+    fn an_ordinary_project_produces_no_findings_at_either_level() {
+        let dir = TempTree::new("evaluate-quiet");
+        let scope = app(&dir, "Debug", "x64");
+
+        let (_, reporter) = evaluated_reporting(&scope);
+
+        assert!(
+            reporter.warnings().is_empty(),
+            "a project Visual Studio would write must evaluate in silence: {:?}",
             reporter.warnings()
         );
     }

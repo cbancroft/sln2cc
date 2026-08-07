@@ -517,7 +517,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `imports.rs`'s test module to `cli/src/testing.rs` for it. No `cli/tests/` work: fixture-driven
   integration is MVP-23 and MVP-24's, and `fixtures/` is still empty.
 
-- [ ] **MVP-13 — Warn on unsupported MSBuild constructs**
+- [x] **MVP-13 — Warn on unsupported MSBuild constructs**
   `feat/unsupported-warnings` · ~4h
 
   **Summary:** Collect and report constructs the evaluator doesn't understand instead of
@@ -537,9 +537,62 @@ Goal: one solution, one manually selected configuration/platform, producing a
   whether `Severity` needs a second level to separate "your flags may be wrong" from "this is
   merely unusual".
 
+  **Outcome:** It does, and that is the decision the rest follows from. `Severity` gains **`Note`**,
+  split by one question — *could msvclsp's failure to model this have changed the compiler flags?* —
+  with `Reporter::note_at` beside `warn_at` so only the four sites that change severity change at
+  all. The argument is volume: **MVP-15 is what makes this urgent**, because importing the Visual
+  Studio installation's own sheets puts hundreds of `$(X) is not defined` findings in the same
+  undifferentiated list as the one that means a file lost an include directory, and a channel that
+  gets skimmed is worse than none. Notes are **not** suppressed by default or held behind `-v` —
+  filtering is the consumer's call and the CLI has no UI to make it with; the split is what lets
+  **MVP-28** decide, and that decoder **must not branch exhaustively** on the severity string.
+  `schema_version` is not bumped: a new enum *value* is additive. Four sites became notes — an
+  unexpected-but-present `.sln` version, an item declaring no `Include`/`Remove`/`Update`, a repeat
+  import (MSBuild's own MSB4011 behaviour), and a wildcard in a `Remove`/`Exclude` **with nothing in
+  reach**, which was a false positive: an `Include` wildcard is not expanded either, so nothing was
+  there to remove. That last one needed a **third** reading rather than a second — an `Exclude`
+  paired with a *literal* `Include` does have files to subtract from, and not expanding it leaves
+  them in the database, which is the opposite direction from the `Include` case and so cannot share
+  its sentence. `include_item` picks between `Harmless` and the new `Keeps` because it is the only
+  place that knows both halves. `settle`'s `Remove` arm keeps the unconditional `Harmless` and its
+  latent hole, deliberately — see the ADR.
+  A *duplicate source declaration* went the other way and stays a warning, because the dropped
+  declaration may carry metadata — the line is "did anything get lost", not "does output still
+  exist". The two wordings that existed in three copies collapse into `eval::report`, with
+  consuming `Expansion::report`/`Evaluation::report` wrappers that also delete two `.clone()`s;
+  `expand` and `condition_holds` stay reporter-free per ADR 08, and the other fourteen messages stay
+  at their sites beside the comments that justify them, with the read-it-in-one-place requirement met
+  by a **catalogue in the engineering spec** instead. `Reporter` now drops a diagnostic identical in
+  all four fields to one already recorded, keeping the first — which matters for **MVP-22**, where a
+  `Directory.Build.props` shared by thirty projects would otherwise repeat every finding thirty
+  times. Two dangling comments are settled: `AdditionalOptions` holding a `"` now warns rather than
+  corrupting silently, with the real splitter deferred to **MVP-38** because the quoting rules of
+  MSBuild, `cl` and the Windows command line disagree; and `%XX` escapes stay undecoded *and*
+  unwarned, recorded as a position rather than left implied. Also closes the spec's open question on
+  property values with **element children**, which now warn — the last place the reader dropped
+  content in silence. See [ADR 13](adr/13-diagnostic-severity-and-wording.md) and "Diagnostics" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests asserting a warning is recorded for an unsupported condition function
   and an undefined property; integration test asserting warnings appear in both stderr and
   the JSON output.
+
+  The undefined-property test is covered (`eval.rs`, `imports.rs`). The first **could not be written
+  as specified**: ADR 09 made an unsupported condition *function* a fatal
+  `Error::UnsupportedConstruct`, because an expression that cannot reduce to a boolean has no truth
+  value to hand back — there is no such warning to assert. The two nearest true statements are
+  covered instead: an unsupported `$(...)` *inside* an operand is recorded rather than fatal, and an
+  unsupported *element* warns. Same treatment MVP-08's cyclic-property test got. The integration test
+  **stays blocked**: `list-configs` and `generate` both still return `Error::Unimplemented` without
+  reaching `sln::parse_sln`, so `warnings_ride_in_the_envelope` remains `#[ignore]`d naming
+  **MVP-21** — its `todo!` now also owes an assertion that the severity reaches the wire, since a
+  level that never leaves the library is indistinguishable from not having split it. Also covered:
+  every classification in the catalogue asserted at its own site; suppression comparing all four
+  fields and keeping the first occurrence, so the ordering contract survives it; the stderr label
+  and the serde rename pinned to each other; `Note` rendering as `note:` rather than `warning:`; the
+  two `eval::report` wordings and their siting; an ordinary Visual Studio-shaped project evaluating
+  in total silence; and negative cases for the two new checks — an unquoted `AdditionalOptions` and
+  the ordinary two-level XML shapes — so neither can be satisfied by always warning.
 
 - [ ] **MVP-35 — Bound XML nesting depth before parsing**
   `fix/xml-depth-guard` · ~3h
@@ -628,6 +681,45 @@ Goal: one solution, one manually selected configuration/platform, producing a
   rather than erroring, a spec whose directory does not exist, and sorted output across two runs.
   Replace MVP-12's `a_wildcard_warns_and_contributes_nothing` and `a_question_mark_is_a_wildcard_too`
   in `msbuild/items.rs` rather than leaving them contradicting the new behaviour.
+
+  MVP-13 added a severity to those cases, which is what the three-variant `Wildcard` enum in
+  `msbuild/items.rs` carries: an `Include`/`Update` wildcard warns that files are missing, an
+  `Exclude` with a literal `Include` warns that they were *not removed*, and an `Exclude`/`Remove`
+  with nothing in reach is a note. All three collapse when expansion lands — an expanded `Exclude`
+  does real work — so **delete the enum rather than keeping branches nothing takes**, and with it
+  `include_item`'s `exclusion` decision. Also revisit `settle`'s `Remove` arm, which MVP-13 left
+  unconditionally `Harmless` with a latent hole the ADR records. See
+  [ADR 13](adr/13-diagnostic-severity-and-wording.md).
+
+- [ ] **MVP-38 — Shell-style `AdditionalOptions` splitting**
+  `fix/additional-options-splitting` · ~4h
+
+  **Summary:** Split `AdditionalOptions` on quoting rules rather than on whitespace, so a switch
+  carrying a path or a define with a space in it survives.
+
+  **Description:** MVP-12 split on whitespace, which is right for every switch a project realistically
+  carries and wrong for exactly one shape: `/DBANNER="hello world"` becomes two flags the project
+  never wrote, and `/I"C:\Program Files\x\include"` points clangd at two directories that do not
+  exist. MVP-13 declined to fix it and made it **visible** instead — a value containing a `"` now
+  warns that it will reach clangd as separate flags — because the fix is not the twenty lines of
+  splitter but the decision underneath it.
+
+  That decision is *whose* quoting rules to implement. MSBuild's, `cl`'s response-file rules, and the
+  Windows command-line parser (`CommandLineToArgvW`) disagree, most visibly about backslashes
+  preceding a quote — `"a\\"` is one thing to one and another to the next — and `.vcxproj` files are
+  written by people who tested against `cl` rather than against a spec. Pick one, say why in an ADR,
+  and note what the other two would have done differently. clangd consumes the result in clang-cl
+  mode, which is the tiebreaker worth weighing.
+
+  Remove the warning MVP-13 added once this lands, and close the `AdditionalOptions` open question
+  in `engineering_spec.md`. Numbered 38 rather than slotted into sequence because numbers are
+  assigned in order and never reused. See [ADR 13](adr/13-diagnostic-severity-and-wording.md).
+
+  **Tests:** Unit tests for a quoted argument containing a space, a quoted path in a `/I`, an
+  unquoted value splitting exactly as it does today, an unterminated quote (which must not hang or
+  drop the rest of the line), an embedded escaped quote, and an empty value. Replace MVP-13's
+  `additional_options_with_a_quoted_argument_warns` in `msbuild/flags.rs` rather than leaving it
+  asserting the corruption this removes.
 
 ## Toolchain discovery
 

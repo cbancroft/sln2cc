@@ -388,6 +388,63 @@ Settled alongside diagnostic collection by MVP-04; see [ADR 06](adr/06-diagnosti
   stdout stays empty and no envelope is produced, regardless of `--json`. This is why no
   `ErrorKind` may return `2`.
 
+### Diagnostics
+
+Settled by MVP-13; see [ADR 13](adr/13-diagnostic-severity-and-wording.md) for the reasoning. ADR 06
+above owns the *channel*; this owns what travels on it.
+
+A `Diagnostic` carries a severity, a message, and the file and line it is attributable to. There are
+two severities, and which one a finding gets is decided by a single question:
+
+> **Could msvclsp's failure to model this have changed the compiler flags?**
+
+| Severity | Wire string | Meaning |
+| -------- | ----------- | ------- |
+| `Warning` | `"warning"` | Yes. Something was skipped, dropped, or left unresolved, and clangd may now be told something the build never says. |
+| `Note` | `"note"` | No. The construct is unusual, or msvclsp did exactly what MSBuild would have. Worth mentioning only because silence is how a real problem gets missed. |
+
+Anything *fatal* is an [`Error`](#error-handling) rather than a third level. Both severities reach
+stderr and both ride in the envelope: notes are not suppressed by default and not held behind `-v`,
+because filtering is the consumer's decision and the CLI has no UI to make it with. `Reporter::warn_at`
+and `Reporter::note_at` are the two producers; a diagnostic identical in severity, message, file
+*and* line to one already recorded is dropped, keeping the first.
+
+The catalogue below is the whole of it. A new call site is expected to add a row.
+
+| Construct | Severity | Emitted by |
+| --------- | -------- | ---------- |
+| No `Format Version` header — this may not be a solution file | Warning | `sln.rs` |
+| Solution format version is not the supported one; read anyway | Note | `sln.rs` |
+| An element the reader models nothing for (`<Choose>` above all) | Warning | `msbuild/project.rs` |
+| A non-`Import` child of an `ImportGroup`, skipped | Warning | `msbuild/project.rs` |
+| A property value with element children; only its text was read | Warning | `msbuild/project.rs` |
+| An item declaring no `Include`, `Remove` or `Update` | Note | `msbuild/project.rs` |
+| A file already imported, not imported again (MSB4011) | Note | `msbuild/imports.rs` |
+| An assignment to a reserved property, ignored | Warning | `msbuild/imports.rs` |
+| An `<Import>` whose path expanded to nothing, skipped | Warning | `msbuild/imports.rs` |
+| `$(X)` is not defined and expanded to nothing | Warning | `msbuild/eval.rs` |
+| A construct outside the supported subset, left as written | Warning | `msbuild/eval.rs` |
+| A source file declared twice; the second is dropped | Warning | `msbuild/items.rs` |
+| An `Update` naming a file the project does not compile | Warning | `msbuild/items.rs` |
+| A wildcard in an `Include` or `Update`, not expanded — what it names is missing | Warning | `msbuild/items.rs` |
+| A wildcard in an `Exclude` with a literal `Include`, not expanded — what it names was not removed | Warning | `msbuild/items.rs` |
+| A wildcard in an `Exclude`/`Remove` with nothing in reach, not expanded | Note | `msbuild/items.rs` |
+| A settled value still holding `$(` or `%(` | Warning | `msbuild/flags.rs` |
+| An enumerated setting whose value is not recognized | Warning | `msbuild/flags.rs` |
+| `AdditionalOptions` holding a quoted argument (see MVP-38) | Warning | `msbuild/flags.rs` |
+| A configuration/platform pair the project never declares | Warning | `msbuild.rs` |
+| A project with no `ClCompile` sources at all | Warning | `msbuild.rs` |
+
+Two things are deliberately **not** reported. An unset `%(Name)` expands to nothing in silence, per
+[ADR 12](adr/12-clcompile-flag-extraction.md) — `WIN32;%(PreprocessorDefinitions)` is what every real
+project writes. And `%XX` character escapes are neither decoded nor warned about: a stray `%3B`
+reaching a flag is self-explaining in the generated database, where a `%`-scanning check would fire
+on ordinary paths.
+
+The two `msbuild/eval.rs` wordings have one definition, `eval::report`, because they are produced
+mechanically at three unrelated call sites. Every other message lives at its own site, beside the
+comment explaining the construct.
+
 ### JSON envelope
 
 One shape for every response, with all five keys always present. No field is conditionally
@@ -412,7 +469,7 @@ omitted, so the plugin decodes one documented structure rather than branching on
 | `has_error` | The discriminator. **Not** redundant with `error == null`: `vim.json.decode` maps JSON `null` to `vim.NIL`, which is truthy in Lua, so `if result.error then` would take the error branch on every success. |
 | `result` | The subcommand's own result object, serialized bare. `null` on failure. |
 | `error` | `kind` is [`ErrorKind::as_str()`](#error-handling); `message` is the outermost `Display`; `causes` is the `source()` chain, outermost-inward. `null` on success. |
-| `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. Accumulated by a `Reporter` and attached to the envelope by `main.rs` — including on failure, so a run that warned and *then* failed still reports both. `file` is absolute. |
+| `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. `severity` is `"warning"` or `"note"` — see [Diagnostics](#diagnostics) — and a decoder must treat an unrecognized value as a warning rather than branching exhaustively, since a new level is additive and does not bump `schema_version`. Accumulated by a `Reporter` and attached to the envelope by `main.rs` — including on failure, so a run that warned and *then* failed still reports both. `file` is absolute. |
 
 `result` is `SolutionConfigs` (`solution`, `available`, `active`) for `list-configs` and
 `GenerateResult` (`database`, `regenerated`) for `generate`.
@@ -555,9 +612,6 @@ MSBuild-evaluation surface area bounded.
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only
   for a human reading a captured payload. Nothing enforces it today.
-- Whether `Severity` needs a second level. One variant covers everything so far — anything fatal is an
-  `Error` instead — but MVP-13 may want to separate "this construct was skipped, so your flags may be
-  wrong" from "this is merely unusual", which are different things for a user to act on.
 - Which channel warnings should actually reach the user through in Neovim: rendered from the
   envelope's `warnings` array, or folded in with stderr the way MVP-28 handles errors. V2-04 owns
   error surfacing; nothing yet says who owns warnings.
@@ -572,15 +626,16 @@ MSBuild-evaluation surface area bounded.
   [ADR 12](adr/12-clcompile-flag-extraction.md).
 - Whether `AdditionalOptions` needs real shell-style argument splitting. MVP-12 splits on whitespace,
   which is correct for every switch a project is likely to carry there and wrong for a quoted path
-  containing a space.
+  containing a space. MVP-13 declined to fix it here and made it *visible* instead — a value holding
+  a `"` now warns that it will reach clangd as separate flags — because getting it right means
+  choosing between MSBuild's quoting rules, `cl`'s response-file rules and the Windows command-line
+  parser's, which disagree about backslashes before quotes. **MVP-38 holds the work.** See
+  [ADR 13](adr/13-diagnostic-severity-and-wording.md).
 - Whether `$(SolutionDir)` and the rest of the `Solution*` family should be seeded at all when a
   project is evaluated outside a solution. Not reachable today, since the CLI always takes a `.sln`,
   but standalone-project support and the multi-solution work both arrive at it. The honest answer may
   be that those properties should be *absent* — and so warn as undefined — rather than pointed at a
   directory no solution occupies. See [ADR 11](adr/11-reserved-property-seeding.md).
-- Whether a property value containing element children should warn. MVP-07's reader keeps the text
-  and drops the elements. It is not valid MSBuild, so the exposure is small, but it is the one
-  place the reader drops something without saying so.
 - Source and scope of the fixture corpus for integration tests — hand-authored minimal solutions,
   sanitized real-world examples, or both.
 - Release/distribution strategy: how the CLI binary is distributed to the Neovim plugin (built from

@@ -219,11 +219,14 @@ pub fn compile(
 
     // Last, so a hand-written switch overrides anything the table produced. Split on whitespace,
     // may need to revisit later if we find that we lose a quoted argument (MVP-13).
-    flags.extend(
-        get("AdditionalOptions")
-            .split_whitespace()
-            .map(str::to_string),
-    );
+    let options = get("AdditionalOptions");
+    if options.contains('"') {
+        reporter.warn_at(
+            &source.declared_in,
+            Some(source.line),
+            "`AdditionalOptions` contains a quoted argument, which is split on whitespace and will reach clangd as separate flags");
+    }
+    flags.extend(options.split_whitespace().map(str::to_string));
 
     FileCompilation {
         file: source.path.clone(),
@@ -302,9 +305,9 @@ fn dedup<T: PartialEq>(entries: Vec<T>) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Reporter;
     use crate::msbuild::eval::Metadata;
     use crate::msbuild::items::SourceItem;
+    use crate::{Reporter, Severity};
     use std::path::PathBuf;
 
     fn absolute(parts: &[&str]) -> PathBuf {
@@ -651,6 +654,47 @@ mod tests {
         ]);
 
         assert_eq!(flags, ["/std:c++17", "/std:c++20", "/Zc:__cplusplus"]);
+    }
+
+    /// MVP-13 settling what `flags.rs`'s own comment left open.
+    ///
+    /// The split is on whitespace, which is right for every switch a project realistically puts
+    /// here and wrong for exactly one shape: a quoted argument containing a space becomes two
+    /// flags the project never wrote. Saying so is cheap. MVP-38 owns the real shell-style split.
+    #[test]
+    fn additional_options_with_a_quoted_argument_warns() {
+        let (compilation, reporter) =
+            compiled_reporting(&[("AdditionalOptions", r#"/DBANNER="hello world""#)]);
+
+        assert_eq!(
+            compilation.flags,
+            [r#"/DBANNER="hello"#, r#"world""#],
+            "the corruption is real, which is why it is worth a warning"
+        );
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(
+            warning.file.as_deref(),
+            Some(source(&[]).declared_in.as_path())
+        );
+        assert_eq!(warning.line, Some(11));
+        assert!(
+            warning.message.contains("AdditionalOptions"),
+            "names the setting: {}",
+            warning.message
+        );
+    }
+
+    /// The negative case, so the check cannot be satisfied by always warning. Nearly every real
+    /// `AdditionalOptions` looks like this one.
+    #[test]
+    fn additional_options_without_quotes_is_silent() {
+        let flags = flags_of(&[("AdditionalOptions", "/Zc:__cplusplus /bigobj")]);
+
+        assert_eq!(flags, ["/Zc:__cplusplus", "/bigobj"]);
     }
 
     #[test]

@@ -146,10 +146,11 @@ one object — across every `--json` invocation, so the next one fails a test in
 - **`-v` is no longer inert**, so the engineering spec's CLI Surface table no longer says it is.
 - **The `Reporter` must not become a field of evaluator state**, or `&mut` borrows will collide.
 - **A stray stdout write is now a test failure**, which is what this issue was for.
-- **New open question:** whether `Severity` needs a second level. One variant covers everything
+- ~~**New open question:** whether `Severity` needs a second level. One variant covers everything
   today — anything fatal is an `Error` — but MVP-13 may want to distinguish "this construct was
   skipped, your flags may be wrong" from "this is merely unusual", which are different things for a
-  user to act on.
+  user to act on.~~ **Resolved by [ADR 13](13-diagnostic-severity-and-wording.md):** it does.
+  `Severity::Note` covers the second case, split by asking whether the flags could have changed.
 - **New open question:** whether the plugin should render warnings itself from the envelope, or
   whether MVP-28 folding stderr into its error output is enough. V2-04 owns error surfacing; nothing
   currently says which channel warnings reach the user through.

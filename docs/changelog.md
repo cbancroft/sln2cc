@@ -72,3 +72,35 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   toolset's default include directories among them — because those imports need a discovered Visual
   Studio installation. What is generated is accurate about what your project files say and incomplete
   about what MSBuild would add on top, until toolchain discovery lands.
+
+- Warnings now come at two levels, so a long list is worth reading. A **warning** means msvclsp could
+  not make sense of something and your flags may be wrong because of it — an unresolved `$(...)`, a
+  `<Choose>` block, a wildcard whose source files are therefore missing, a setting whose value it does
+  not recognize. A **note** means it is unusual but harmless: a solution saved by a newer Visual
+  Studio that read fine anyway, an `<ItemGroup>` entry that configures nothing, a property sheet
+  reached twice through a diamond and imported once, exactly as MSBuild would. Both appear on stderr,
+  labelled `warning:` or `note:`, and both ride in the `warnings` array under `--json` with a
+  `severity` of `"warning"` or `"note"`.
+
+  Everything msvclsp reports now says what it means for you rather than just what it saw, and there
+  is a full list of what it can report in the engineering spec.
+
+### Fixed
+
+- The same problem is no longer reported over and over. One mistake in a property sheet shared by
+  several projects used to produce one identical message per project that imported it; now it is
+  reported once.
+
+- A wildcard in an `Exclude` no longer warns when it could not have cost you anything. Paired with a
+  wildcard `Include` — the usual way it is written — there was nothing for it to remove in the first
+  place, so it is a note now. Paired with a *literal* `Include` it still warns, because there the
+  files it names really do stay in the database when the build would have dropped them, and the
+  message now says so rather than claiming they are missing. A wildcard in an `Include` or `Update`
+  still warns; that one does cost you files or settings.
+
+- `AdditionalOptions` containing a quoted argument, such as `/DBANNER="hello world"`, now warns. It
+  is still split on spaces and still reaches clangd as two flags, which is wrong — but it no longer
+  does so silently.
+
+- A property value with XML elements inside it no longer loses them without saying so. It is not
+  valid MSBuild and msvclsp still keeps just the text, but it now names the value and the line.

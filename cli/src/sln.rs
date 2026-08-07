@@ -569,22 +569,19 @@ fn attach_rows(projects: &mut [SolutionProject], rows: Vec<ConfigRow>) {
 /// These are warnings rather than errors as we assume that we are being handed a solution that VS
 /// otherwise opens normally.
 fn report_version(path: &Path, version: Option<(String, usize)>, reporter: &mut Reporter) {
-    let (message, line) = match version {
-        Some((version, _)) if version == SUPPORTED_FORMAT_VERSION => return,
-        Some((version, line)) => (
-            format!(
-                "solution format version {version} is not {SUPPORTED_FORMAT_VERSION}; \
-                reading it as though it were"
-            ),
+    match version {
+        Some((version, _)) if version == SUPPORTED_FORMAT_VERSION => {}
+        Some((version, line)) => reporter.note_at(
+            path,
             Some(line),
-        ),
-        None => (
-            "no `Format Version` header. This may not be a solution file".to_string(),
+            format!("solution format version {version} is not {SUPPORTED_FORMAT_VERSION}; reading it as though it were")
+            ),
+        None => reporter.warn_at(
+            path,
             None,
-        ),
-    };
-
-    reporter.warn_at(path, line, message);
+            "no `Format Version` header. This may not be a solution file."
+            ),
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1329,8 +1326,11 @@ EndProject
         );
     }
 
+    /// A *note*, per MVP-13: the header named a schema this parser was not written against, the
+    /// file was read as though it were the supported one, and it worked. Nothing about the
+    /// resulting flags is in question, which is the whole test ADR 13 applies.
     #[test]
-    fn an_unexpected_format_version_warns_and_still_parses() {
+    fn an_unexpected_format_version_notes_and_still_parses() {
         let text = format!(
             r#"{FORMAT_VERSION_PREFIX}11.00
             Project("{CPP}") = "app", "app\app.vcxproj", "{A1}"
@@ -1341,25 +1341,26 @@ EndProject
         let (result, reporter) = parse_reporting(&text);
         let solution = result.expect("parses anyway");
 
-        assert_eq!(solution.projects.len(), 1, "the warning is not a refusal");
+        assert_eq!(solution.projects.len(), 1, "the note is not a refusal");
 
-        let [warning] = reporter.warnings() else {
-            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
         };
-        assert_eq!(warning.severity, Severity::Warning);
-        assert_eq!(warning.line, Some(1));
-        assert_eq!(warning.file.as_ref(), Some(&solution.path));
+        assert_eq!(finding.severity, Severity::Note);
+        assert_eq!(finding.line, Some(1));
+        assert_eq!(finding.file.as_ref(), Some(&solution.path));
         assert!(
-            warning.message.contains("11.00"),
+            finding.message.contains("11.00"),
             "names the version: {}",
-            warning.message
+            finding.message
         );
     }
 
+    /// The other arm stays a *warning*. An arbitrary text file otherwise parses as a solution
+    /// with zero projects, reporting nothing — this is the only signal that the input may not be
+    /// a solution at all, which is the reason ADR 06 gave for the warning existing.
     #[test]
     fn a_missing_format_version_header_warns() {
-        // An arbitrary text file otherwise parses as a solution with zero projects, reporting
-        // nothing — this is the only signal that the input may not be a solution at all.
         let text = format!(
             r#"Project("{CPP}") = "app", "app\app.vcxproj", "{A1}"
             EndProject

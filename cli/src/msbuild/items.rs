@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::msbuild::eval::{self, Expansion, Metadata, Properties};
+use crate::msbuild::eval::{self, Metadata, Properties};
 use crate::msbuild::imports::ProjectTree;
 use crate::msbuild::paths;
 use crate::msbuild::project::{Element, Item, Setting};
@@ -117,7 +117,8 @@ pub fn settle(
                         } else if let Some(update) = &item.update {
                             update_item(&mut sources, item, update, &scope, reporter)?;
                         } else if let Some(remove) = &item.remove {
-                            let dropped = specs(remove, &scope, item.line, reporter)?;
+                            let dropped =
+                                specs(remove, &scope, item.line, Wildcard::Harmless, reporter)?;
                             sources.retain(|source| !dropped.contains(&source.path));
                         }
                     }
@@ -146,7 +147,19 @@ fn include_item(
     scope: &Scope,
     reporter: &mut Reporter,
 ) -> Result<()> {
-    for path in specs(include, scope, item.line, reporter)? {
+    let included = specs(include, scope, item.line, Wildcard::Loses, reporter)?;
+
+    // What an unexpanded `Exclude` wildcard costs depends on what the `Include` put within its
+    // reach, so the reading has to be decided here rather than at the `Exclude` itself. Paired with
+    // a wildcard `Include` — the usual case — nothing was added and there was nothing to subtract.
+    // Paired with a literal one there are real files it would have removed and did not.
+    let exclusion = if included.is_empty() {
+        Wildcard::Harmless
+    } else {
+        Wildcard::Keeps
+    };
+
+    for path in included {
         if sources.iter().any(|seen| seen.path == path) {
             // MSBuild would compile it twice. The compilation database can't really deal with that
             // and would just drop the second entry anyway
@@ -171,10 +184,10 @@ fn include_item(
         sources.push(source);
     }
 
-    // `Exclude` only means anything against a wildcard, which is not expanded. In practice this
-    // subtracts nothing. Honoured anyway as a literal `Exclude` is cheap and easy to obey.
+    // `Exclude` mostly earns its keep against a wildcard, which is not expanded — so in practice it
+    // usually subtracts nothing. Honoured anyway as a literal `Exclude` is cheap and easy to obey.
     if let Some(exclude) = &item.exclude {
-        let dropped = specs(exclude, scope, item.line, reporter)?;
+        let dropped = specs(exclude, scope, item.line, exclusion, reporter)?;
         sources.retain(|source| !dropped.contains(&source.path));
     }
 
@@ -189,7 +202,7 @@ fn update_item(
     scope: &Scope,
     reporter: &mut Reporter,
 ) -> Result<()> {
-    for path in specs(update, scope, item.line, reporter)? {
+    for path in specs(update, scope, item.line, Wildcard::Loses, reporter)? {
         let mut matched = false;
 
         for source in sources.iter_mut().filter(|source| source.path == path) {
@@ -238,9 +251,11 @@ pub fn declared_configurations(
             let Some(include) = &item.include else {
                 continue;
             };
-            let expansion = eval::expand(include, &tree.properties)?;
-            let value = expansion.value.clone();
-            report(reporter, expansion, &deferred.file, item.line);
+            let value = eval::expand(include, &tree.properties)?.report(
+                reporter,
+                &deferred.file,
+                item.line,
+            );
 
             if let Some((configuration, platform)) = value.split_once('|') {
                 declared.push(ConfigPlatform::new(configuration.trim(), platform.trim()));
@@ -251,13 +266,35 @@ pub fn declared_configurations(
     Ok(declared)
 }
 
+/// What an unexpanded wildcard costs, which is what separates the three wordings.
+///
+/// The two costly cases point in opposite directions and cannot share a sentence: an `Include` that
+/// does not expand leaves files *out* of the database, while an `Exclude` that does not expand
+/// leaves them *in*. Which of the two an `Exclude` is depends on its `Include` — see
+/// [`include_item`].
+#[derive(Clone, Copy)]
+enum Wildcard {
+    /// In an `Include` or an `Update`: files, or their settings, are missing.
+    Loses,
+    /// In an `Exclude` or a `Remove` that had something to subtract from: files the build does not
+    /// compile stay in the database, so clangd indexes translation units the build never sees.
+    Keeps,
+    /// In an `Exclude` or a `Remove` with nothing in reach, which is the usual pairing — the
+    /// `Include` wildcard was not expanded either, so nothing was added to subtract from.
+    Harmless,
+}
+
 /// Expand an `Include`/`Update`/`Remove`/`Exclude` attribute into absolute paths.
 ///
 /// The attribute is a `;` delimited list. Wildcards are not expanded, but are warned.
-fn specs(raw: &str, scope: &Scope, line: usize, reporter: &mut Reporter) -> Result<Vec<PathBuf>> {
-    let expansion = eval::expand(raw, scope.props)?;
-    let value = expansion.value.clone();
-    report(reporter, expansion, scope.file, line);
+fn specs(
+    raw: &str,
+    scope: &Scope,
+    line: usize,
+    wildcard: Wildcard,
+    reporter: &mut Reporter,
+) -> Result<Vec<PathBuf>> {
+    let value = eval::expand(raw, scope.props)?.report(reporter, scope.file, line);
 
     let mut out = Vec::new();
 
@@ -267,14 +304,29 @@ fn specs(raw: &str, scope: &Scope, line: usize, reporter: &mut Reporter) -> Resu
         .filter(|spec| !spec.is_empty())
     {
         if spec.contains('*') || spec.contains('?') {
-            reporter.warn_at(
-                scope.file,
-                Some(line),
-                format!(
-                    "`{spec}` is a wildcard, which is not expanded. \
-                     The files it names will be missing from the compilation database."
+            match wildcard {
+                Wildcard::Loses => reporter.warn_at(
+                    scope.file,
+                    Some(line),
+                    format!(
+                        "`{spec}` is a wildcard, which is not expanded. \
+                         What it names will be missing from the compilation database."
+                    ),
                 ),
-            );
+                Wildcard::Keeps => reporter.warn_at(
+                    scope.file,
+                    Some(line),
+                    format!(
+                        "`{spec}` is a wildcard, which is not expanded. \
+                         What it names was not removed from the compilation database."
+                    ),
+                ),
+                Wildcard::Harmless => reporter.note_at(
+                    scope.file,
+                    Some(line),
+                    format!("`{spec}` is a wildcard, which is not expanded. Nothing was removed."),
+                ),
+            }
             continue;
         }
 
@@ -298,8 +350,9 @@ fn apply(
             continue;
         }
 
-        let expansion = metadata.assign(&setting.name, &setting.value, scope.props)?;
-        report(reporter, expansion, scope.file, setting.line);
+        metadata
+            .assign(&setting.name, &setting.value, scope.props)?
+            .report(reporter, scope.file, setting.line);
     }
 
     Ok(())
@@ -316,42 +369,10 @@ fn holds(
         return Ok(true);
     };
 
-    let evaluation = eval::condition_holds(condition, scope.props, scope.file, line)?;
-    for name in evaluation.undefined {
-        reporter.warn_at(
-            scope.file,
-            Some(line),
-            format!("`$({name})` is not defined and expanded to nothing"),
-        );
-    }
-
-    for reference in evaluation.unsupported {
-        reporter.warn_at(
-            scope.file,
-            Some(line),
-            format!("`{reference}` is not supported and was left as written"),
-        );
-    }
-
-    Ok(evaluation.holds)
-}
-
-/// Turn an expansion's findings into warnings
-fn report(reporter: &mut Reporter, expansion: Expansion, file: &Path, line: usize) {
-    for name in expansion.undefined {
-        reporter.warn_at(
-            file,
-            Some(line),
-            format!("`$({name})` is not defined and expanded to nothing"),
-        );
-    }
-    for reference in expansion.unsupported {
-        reporter.warn_at(
-            file,
-            Some(line),
-            format!("`{reference}` is not supported and was left as written"),
-        );
-    }
+    Ok(
+        eval::condition_holds(condition, scope.props, scope.file, line)?
+            .report(reporter, scope.file, line),
+    )
 }
 
 #[cfg(test)]
@@ -362,7 +383,7 @@ mod tests {
     use crate::msbuild::project::{
         Element, Item, ItemDefinition, ItemDefinitionGroup, ItemGroup, Setting,
     };
-    use crate::{ConfigPlatform, ErrorKind, Reporter};
+    use crate::{ConfigPlatform, ErrorKind, Reporter, Severity};
     use std::path::PathBuf;
 
     /// An absolute path spelled the way the host platform spells one.
@@ -849,6 +870,7 @@ mod tests {
         let [warning] = reporter.warnings() else {
             panic!("expected exactly one warning: {:?}", reporter.warnings());
         };
+        assert_eq!(warning.severity, Severity::Warning);
         assert!(
             warning.message.contains(r"src\*.cpp"),
             "names the spec that was skipped: {}",
@@ -866,6 +888,140 @@ mod tests {
 
         assert!(sources.is_empty());
         assert_eq!(reporter.warnings().len(), 1);
+    }
+
+    /// The same construct means two different things, which MVP-13 splits by severity.
+    ///
+    /// In an `Include` an unexpanded wildcard costs source files, so it is a warning. In a
+    /// `Remove` or an `Exclude` it subtracts from a list nothing was added to — because the
+    /// matching `Include` wildcard was not expanded either — so nothing is lost and warning about
+    /// it was a false positive. See ADR 13.
+    #[test]
+    fn a_wildcard_include_warns_but_a_wildcard_remove_only_notes() {
+        let tree = from_project(vec![
+            group(vec![include(r"src\*.cpp"), include("main.cpp")]),
+            group(vec![Item {
+                remove: Some(r"src\*_test.cpp".to_string()),
+                ..item("ClCompile")
+            }]),
+        ]);
+
+        let (sources, reporter) = settled_reporting(&tree);
+
+        assert_eq!(names(&sources), ["main.cpp"]);
+
+        let severities: Vec<Severity> = reporter
+            .warnings()
+            .iter()
+            .map(|finding| finding.severity)
+            .collect();
+        assert_eq!(
+            severities,
+            [Severity::Warning, Severity::Note],
+            "the `Include` loses files; the `Remove` loses nothing: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    /// The usual pairing, and the case the `Harmless` reading was written for: both halves are
+    /// wildcards, so the `Include` added nothing and the `Exclude` had nothing to subtract from.
+    /// Only the `Include` is worth a warning.
+    #[test]
+    fn a_wildcard_exclude_only_notes_when_the_include_added_nothing() {
+        let tree = from_project(vec![group(vec![Item {
+            exclude: Some(r"*.generated.cpp".to_string()),
+            ..include(r"src\*.cpp")
+        }])]);
+
+        let (sources, reporter) = settled_reporting(&tree);
+
+        assert!(sources.is_empty());
+
+        let severities: Vec<Severity> = reporter
+            .warnings()
+            .iter()
+            .map(|finding| finding.severity)
+            .collect();
+        assert_eq!(
+            severities,
+            [Severity::Warning, Severity::Note],
+            "{:?}",
+            reporter.warnings()
+        );
+    }
+
+    /// The case the unconditional `Harmless` reading got wrong. A literal `Include` puts real files
+    /// within the `Exclude`'s reach, and not expanding it leaves them in the database — so clangd
+    /// is handed a translation unit the build does not compile. Nothing is *missing*, which is why
+    /// this needs a wording of its own rather than the `Include` one pointed backwards.
+    #[test]
+    fn a_wildcard_exclude_warns_when_the_include_was_literal() {
+        let tree = from_project(vec![group(vec![Item {
+            exclude: Some(r"*.generated.cpp".to_string()),
+            ..include("main.cpp;foo.generated.cpp")
+        }])]);
+
+        let (sources, reporter) = settled_reporting(&tree);
+
+        assert_eq!(
+            names(&sources),
+            ["main.cpp", "foo.generated.cpp"],
+            "the file the `Exclude` names is still there, which is the problem being reported"
+        );
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert!(
+            warning.message.contains("not removed"),
+            "says which direction it went wrong in: {}",
+            warning.message
+        );
+    }
+
+    /// The boundary between the two readings is whether the `Include` produced anything, not
+    /// whether it was *written* as a wildcard — a literal spec that expands to nothing through
+    /// `$(Undefined)` leaves the `Exclude` with nothing in reach just the same.
+    #[test]
+    fn an_include_that_expands_to_nothing_leaves_the_exclude_harmless() {
+        let tree = from_project(vec![group(vec![Item {
+            exclude: Some(r"*.generated.cpp".to_string()),
+            ..include("$(Missing)")
+        }])]);
+
+        let (sources, reporter) = settled_reporting(&tree);
+
+        assert!(sources.is_empty());
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|finding| finding.severity == Severity::Note),
+            "the exclude is harmless: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    /// A wildcard in an `Update` loses per-file settings rather than files, which is still the
+    /// flags being wrong — so it stays a warning alongside `Include`.
+    #[test]
+    fn a_wildcard_update_warns() {
+        let tree = from_project(vec![
+            group(vec![include("main.cpp")]),
+            group(vec![Item {
+                update: Some(r"src\*.cpp".to_string()),
+                metadata: vec![setting("PreprocessorDefinitions", "UPDATED")],
+                ..item("ClCompile")
+            }]),
+        ]);
+
+        let (_, reporter) = settled_reporting(&tree);
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
     }
 
     #[test]
@@ -894,6 +1050,9 @@ mod tests {
             "names the file: {}",
             reporter.warnings()[0].message
         );
+        // A warning rather than a note: the dropped declaration carried `SECOND`, and settings
+        // that were asked for and did not arrive are the case this channel exists for.
+        assert_eq!(reporter.warnings()[0].severity, Severity::Warning);
     }
 
     #[test]

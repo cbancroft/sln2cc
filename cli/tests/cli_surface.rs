@@ -218,12 +218,18 @@ fn verbose_does_not_write_progress_to_stdout_in_human_mode() {
 /// reaching `sln::parse_sln`, so no CLI path produces a warning yet. The plumbing either side of
 /// that gap is unit-tested in `diagnostics.rs` and `cli.rs`; this is the end-to-end assertion,
 /// left visible rather than absent.
+///
+/// MVP-13 added a second severity, so this owes an assertion on the wire string too — the
+/// classification is a contract with the plugin, and a level that never leaves the library is
+/// indistinguishable from not having split it.
 #[test]
 #[ignore = "no subcommand reaches sln::parse_sln until MVP-21"]
 fn warnings_ride_in_the_envelope() {
     todo!(
         "run list-configs against a .sln with no `Format Version` header; assert the envelope's \
-         warnings array carries the diagnostic and that the same message appears on stderr"
+         warnings array carries the diagnostic with severity \"warning\", that a .sln with an \
+         unexpected version instead carries severity \"note\", and that both messages appear on \
+         stderr prefixed with their own level"
     )
 }
 

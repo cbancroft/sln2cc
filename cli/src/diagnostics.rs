@@ -10,16 +10,42 @@
 //! into the CLI layer to do it. `cli.rs` still owns how they are *serialized*, as part of the
 //! envelope.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+/// How much a [`Diagnostic`] matters.
+///
+/// Warning -- Issued when our failure to model a particular operation changes the compiler flags.
+///     This means something was skipped, dropped or left unresolved and clangd may now be given
+///     flags that break things.
+/// Note -- Issued when something unusual is seen, but we treated it as MSBuild would and the final
+///     result is not important.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum Severity {
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "note")]
+    Note,
+}
+
+impl Severity {
+    /// How this reads out via stderr. Kept identical to the wire string.
+    fn label(self) -> &'static str {
+        match self {
+            Severity::Warning => "warning",
+            Severity::Note => "note",
+        }
+    }
+}
+
 /// A non-fatal problem found while evaluating a solution.
 ///
 /// Warnings are the data the plugin surfaces to the user. Not log lines.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Hash)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub message: String,
@@ -39,9 +65,10 @@ impl Diagnostic {
     /// what the tests pin. `root` and `verbose` decide how much of the path is shown — see
     /// [`display_path`].
     pub fn render_human(&self, w: &mut dyn Write, root: &Path, verbose: bool) -> io::Result<()> {
+        let level = self.severity.label();
         match self.site(root, verbose) {
-            Some(site) => writeln!(w, "msvclsp: warning: {site}: {}", self.message),
-            None => writeln!(w, "msvclsp: warning: {}", self.message),
+            Some(site) => writeln!(w, "msvclsp: {level}: {site}: {}", self.message),
+            None => writeln!(w, "msvclsp: {level}: {}", self.message),
         }
     }
 
@@ -53,17 +80,6 @@ impl Diagnostic {
             None => shown,
         })
     }
-}
-
-/// How much a [`Diagnostic`] matters.
-///
-/// Only one level so far. Anything fatal is an [`Error`](crate::Error) instead. The variant's
-/// wire string is written literally instead of derived from the identifier to avoid any issues
-/// with renaming causing incompatibilities with the plugin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum Severity {
-    #[serde(rename = "warning")]
-    Warning,
 }
 
 /// Collects diagnostics during a run, and carries the `-v` progress channel.
@@ -81,6 +97,9 @@ pub enum Severity {
 /// [`Envelope::with_warnings`]: crate::cli::Envelope::with_warnings
 pub struct Reporter {
     warnings: Vec<Diagnostic>,
+    /// Used to suppress diagnostics so as to not flood with issues in cases where there is
+    /// a problem in a shared `.props` included with every source file.
+    seen: HashSet<Diagnostic>,
     /// `None` means quiet. Boxed so a test can read back what was written; the alternative, a
     /// `verbose: bool` and a bare `eprintln!`, leaves suppression with nothing to assert against.
     sink: Option<Box<dyn Write>>,
@@ -101,19 +120,41 @@ impl Reporter {
     pub fn with_sink(sink: Option<Box<dyn Write>>) -> Self {
         Reporter {
             warnings: Vec::new(),
+            seen: HashSet::new(),
             sink,
         }
     }
 
-    /// Record a finding. Order is preserved, so warnings read back chronologically.
-    pub fn warn(&mut self, diagnostic: Diagnostic) {
-        self.warnings.push(diagnostic);
+    /// Record a finding.
+    ///
+    /// Order is preserved, so warnings read back chronologically. Identical findings are dropped
+    /// and the first occurrence is the only version kept.
+    fn record(&mut self, diagnostic: Diagnostic) {
+        if self.seen.insert(diagnostic.clone()) {
+            self.warnings.push(diagnostic);
+        }
     }
 
-    /// Record a warning against a file, which is what nearly every producer wants.
+    /// Record a [`Severity::Warning`] against a file: we could not model something and the flags
+    /// may be wrong because of that.
     pub fn warn_at(&mut self, file: &Path, line: Option<usize>, message: impl Into<String>) {
-        self.warn(Diagnostic {
-            severity: Severity::Warning,
+        self.at(Severity::Warning, file, line, message);
+    }
+
+    /// Record a [`Severity::Note`] against a file: something unusual was seen, but flags are unaffected.
+    pub fn note_at(&mut self, file: &Path, line: Option<usize>, message: impl Into<String>) {
+        self.at(Severity::Note, file, line, message);
+    }
+
+    fn at(
+        &mut self,
+        severity: Severity,
+        file: &Path,
+        line: Option<usize>,
+        message: impl Into<String>,
+    ) {
+        self.record(Diagnostic {
+            severity,
             message: message.into(),
             file: Some(file.to_path_buf()),
             line,
@@ -227,13 +268,17 @@ mod tests {
         path
     }
 
-    fn warning(file: Option<PathBuf>, line: Option<usize>) -> Diagnostic {
+    fn diagnostic(severity: Severity, file: Option<PathBuf>, line: Option<usize>) -> Diagnostic {
         Diagnostic {
-            severity: Severity::Warning,
+            severity,
             message: "no `Format Version` header".to_string(),
             file,
             line,
         }
+    }
+
+    fn warning(file: Option<PathBuf>, line: Option<usize>) -> Diagnostic {
+        diagnostic(Severity::Warning, file, line)
     }
 
     fn rendered(diagnostic: &Diagnostic, verbose: bool) -> String {
@@ -267,6 +312,23 @@ mod tests {
         assert_eq!(taken, ["first", "second", "third"]);
     }
 
+    /// The severity split is a decision about *volume*, so the two levels have to be reachable
+    /// separately from the call sites. `note_at` is what a producer reaches for when msvclsp did
+    /// not lose anything — see [ADR 13](../../docs/adr/13-diagnostic-severity-and-wording.md).
+    #[test]
+    fn note_at_records_the_lower_severity_and_renders_as_one() {
+        let mut reporter = Reporter::new(false);
+        reporter.note_at(&under_root(&["app.sln"]), Some(1), "unexpected version");
+
+        let recorded = &reporter.warnings()[0];
+        assert_eq!(recorded.severity, Severity::Note);
+        assert_eq!(
+            rendered(recorded, false),
+            "msvclsp: note: app.sln:1: unexpected version\n",
+            "a note must not read as a warning in a terminal"
+        );
+    }
+
     #[test]
     fn warn_at_records_the_file_and_line_it_is_given() {
         let mut reporter = Reporter::new(false);
@@ -281,6 +343,65 @@ mod tests {
                 line: Some(1),
             }]
         );
+    }
+
+    /// One shared `.props` with one undefined `$(Foo)` produces this finding once per project
+    /// that imports it, and MVP-22 evaluates every project in a solution against one reporter.
+    /// Two findings identical in severity, message, file *and* line are the same construct
+    /// reported twice; there is no reading under which the second one informs anybody.
+    #[test]
+    fn an_identical_diagnostic_is_recorded_once() {
+        let mut reporter = Reporter::new(false);
+        for _ in 0..3 {
+            reporter.warn_at(
+                &under_root(&["shared", "common.props"]),
+                Some(12),
+                "`$(Foo)` is not defined and expanded to nothing",
+            );
+        }
+
+        assert_eq!(reporter.warnings().len(), 1);
+    }
+
+    /// The other half of suppression: it must not swallow two genuinely different findings that
+    /// happen to share a sentence. Every field participates, which is why one differing field is
+    /// enough to keep both.
+    #[test]
+    fn suppression_compares_every_field() {
+        let mut reporter = Reporter::new(false);
+        let message = "`$(Foo)` is not defined and expanded to nothing";
+
+        reporter.warn_at(&under_root(&["a.props"]), Some(3), message);
+        reporter.warn_at(&under_root(&["a.props"]), Some(4), message);
+        reporter.warn_at(&under_root(&["b.props"]), Some(3), message);
+        reporter.note_at(&under_root(&["a.props"]), Some(3), message);
+
+        assert_eq!(
+            reporter.warnings().len(),
+            4,
+            "line, file and severity each distinguish a finding: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    /// Suppression keeps the *first* occurrence, so the chronological contract
+    /// `diagnostics_read_back_in_the_order_they_were_recorded` asserts survives it. Keeping the
+    /// last one instead would reorder the list every time a finding repeated.
+    #[test]
+    fn suppression_keeps_the_first_occurrence_in_order() {
+        let mut reporter = Reporter::new(false);
+        let file = under_root(&["app.vcxproj"]);
+
+        reporter.warn_at(&file, Some(1), "first");
+        reporter.warn_at(&file, Some(2), "second");
+        reporter.warn_at(&file, Some(1), "first");
+
+        let messages: Vec<&str> = reporter
+            .warnings()
+            .iter()
+            .map(|warning| warning.message.as_str())
+            .collect();
+        assert_eq!(messages, ["first", "second"]);
     }
 
     /// The suppression this asserts is structural: quiet means there is no sink to write to, so
@@ -389,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn severity_serializes_as_its_wire_string() {
+    fn both_severities_serialize_as_their_wire_strings() {
         assert_eq!(
             serde_json::to_value(warning(None, Some(4))).expect("serializes"),
             serde_json::json!({
@@ -399,5 +520,28 @@ mod tests {
                 "line": 4,
             })
         );
+        assert_eq!(
+            serde_json::to_value(diagnostic(Severity::Note, None, Some(4))).expect("serializes"),
+            serde_json::json!({
+                "severity": "note",
+                "message": "no `Format Version` header",
+                "file": null,
+                "line": 4,
+            })
+        );
+    }
+
+    /// Two literals describing one thing: the `serde` rename the plugin decodes, and the label a
+    /// terminal reads. They must name a finding the same way, and nothing but this stops them
+    /// drifting the next time a variant is reworded.
+    #[test]
+    fn the_rendered_label_matches_the_wire_string() {
+        for severity in [Severity::Warning, Severity::Note] {
+            assert_eq!(
+                serde_json::to_value(severity).expect("serializes"),
+                serde_json::json!(severity.label()),
+                "{severity:?}"
+            );
+        }
     }
 }

@@ -181,12 +181,12 @@ fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Resul
         let element = match child.tag_name().name() {
             "PropertyGroup" => Element::Properties(PropertyGroup {
                 condition,
-                properties: settings(&doc, child),
+                properties: settings(&doc, child, path, reporter),
                 line,
             }),
             "ItemDefinitionGroup" => Element::ItemDefinitions(ItemDefinitionGroup {
                 condition,
-                definitions: item_definitions(&doc, child),
+                definitions: item_definitions(&doc, child, path, reporter),
                 line,
             }),
             "ItemGroup" => Element::Items(ItemGroup {
@@ -233,27 +233,43 @@ fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Resul
 /// The `<Name>value</Name>` children of a group, in document order.
 ///
 /// Duplicates are retained. A `PropertyGroup` may assign the same name twice and the last one wins.
-fn settings(doc: &Document, parent: Node) -> Vec<Setting> {
+fn settings(doc: &Document, parent: Node, path: &Path, reporter: &mut Reporter) -> Vec<Setting> {
     parent
         .children()
         .filter(Node::is_element)
-        .map(|child| Setting {
-            name: child.tag_name().name().to_string(),
-            value: text_of(child),
-            condition: attribute(child, "Condition"),
-            line: line_of(doc, child),
+        .map(|child| {
+            if child.children().any(|nested| nested.is_element()) {
+                reporter.warn_at(
+                    path,
+                    Some(line_of(doc, child)),
+                    format!(
+                        "`<{}>` has element children, which are not valid in a value and were dropped. Only its text was read",
+                        child.tag_name().name()
+                        ));
+            }
+            Setting {
+                name: child.tag_name().name().to_string(),
+                value: text_of(child),
+                condition: attribute(child, "Condition"),
+                line: line_of(doc, child),
+            }
         })
         .collect()
 }
 
-fn item_definitions(doc: &Document, parent: Node) -> Vec<ItemDefinition> {
+fn item_definitions(
+    doc: &Document,
+    parent: Node,
+    path: &Path,
+    reporter: &mut Reporter,
+) -> Vec<ItemDefinition> {
     parent
         .children()
         .filter(Node::is_element)
         .map(|child| ItemDefinition {
             item_type: child.tag_name().name().to_string(),
             condition: attribute(child, "Condition"),
-            metadata: settings(doc, child),
+            metadata: settings(doc, child, path, reporter),
             line: line_of(doc, child),
         })
         .collect()
@@ -275,12 +291,12 @@ fn items(doc: &Document, parent: Node, path: &Path, reporter: &mut Reporter) -> 
                 remove: attribute(child, "Remove"),
                 update: attribute(child, "Update"),
                 condition: attribute(child, "Condition"),
-                metadata: settings(doc, child),
+                metadata: settings(doc, child, path, reporter),
                 line: line_of(doc, child),
             };
 
             if item.include.is_none() && item.remove.is_none() && item.update.is_none() {
-                reporter.warn_at(
+                reporter.note_at(
                     path,
                     Some(item.line),
                     format!(
@@ -918,10 +934,11 @@ mod tests {
         assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
     }
 
+    /// A *note*, per MVP-13: an item with no `Include`, `Remove` or `Update` configures nothing,
+    /// so nothing was lost by not modelling it. Worth saying, not worth reading as "your flags
+    /// may be wrong" — which is the line ADR 13 draws.
     #[test]
-    fn an_item_naming_nothing_warns_but_still_parses() {
-        // An item with no `Include`, `Remove` or `Update` configures nothing. Worth saying, not
-        // worth failing a parse that is otherwise fine.
+    fn an_item_naming_nothing_notes_but_still_parses() {
         let (result, reporter) = parse_reporting(&project_text(
             r#"  <ItemGroup>
     <ClCompile />
@@ -932,13 +949,14 @@ mod tests {
         assert_eq!(
             file.items_of_type("ClCompile").count(),
             1,
-            "the warning is not a refusal"
+            "the note is not a refusal"
         );
 
-        let [warning] = reporter.warnings() else {
-            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
         };
-        assert_eq!(warning.line, Some(4));
+        assert_eq!(finding.severity, Severity::Note);
+        assert_eq!(finding.line, Some(4));
     }
 
     #[test]
@@ -953,7 +971,67 @@ mod tests {
 
         assert_eq!(as_import_group(&file, 0).imports.len(), 1);
         assert_eq!(reporter.warnings().len(), 1);
+        // A warning rather than a note: an `ImportGroup` is the mechanism whole property sheets
+        // arrive through, and this is content inside one that was skipped.
+        assert_eq!(reporter.warnings()[0].severity, Severity::Warning);
         assert_eq!(reporter.warnings()[0].line, Some(4));
+    }
+
+    /// The one place this reader used to drop content without saying so, closed by MVP-13.
+    ///
+    /// `text_of` keeps a value's text and discards any element children. That is the right
+    /// recovery — the construct is not valid MSBuild and there is nothing else to do with them —
+    /// but silently losing part of a value that becomes a compiler flag is exactly what this
+    /// issue exists to stop.
+    #[test]
+    fn a_value_with_element_children_warns_and_keeps_its_text() {
+        let (result, reporter) = parse_reporting(&project_text(
+            r#"  <PropertyGroup>
+    <PreprocessorDefinitions>WIN32<Nested /></PreprocessorDefinitions>
+  </PropertyGroup>"#,
+        ));
+        let file = result.expect("parses anyway");
+
+        assert_eq!(
+            as_property_group(&file, 0).properties[0].value,
+            "WIN32",
+            "the text survives; only the elements are dropped"
+        );
+
+        let [warning] = reporter.warnings() else {
+            panic!("expected exactly one warning: {:?}", reporter.warnings());
+        };
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.line, Some(4));
+        assert!(
+            warning.message.contains("PreprocessorDefinitions"),
+            "names the value that lost content: {}",
+            warning.message
+        );
+    }
+
+    /// The negative case, so the check above cannot be satisfied by warning on every nesting.
+    /// Both shapes here are ordinary: a `ProjectConfiguration`'s `<Configuration>`/`<Platform>`
+    /// children and an `ItemDefinitionGroup`'s `<ClCompile>` metadata are both reached *through*
+    /// `settings` rather than seen by it, so only a genuine third level is a finding.
+    #[test]
+    fn the_ordinary_two_level_shapes_do_not_warn() {
+        let (result, reporter) = parse_reporting(&project_text(
+            r#"  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>WIN32</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>"#,
+        ));
+        result.expect("parses");
+
+        assert!(reporter.warnings().is_empty(), "{:?}", reporter.warnings());
     }
 
     #[test]

@@ -13,7 +13,7 @@
 
 use std::{collections::HashMap, collections::HashSet, path::Path};
 
-use crate::{Error, Result};
+use crate::{Error, Reporter, Result};
 
 /// How large one expanded value may grow before the expansion is refused.
 ///
@@ -173,6 +173,39 @@ impl Expansion {
         if !self.unsupported.iter().any(|seen| seen == name) {
             self.unsupported.push(name.to_string());
         }
+    }
+
+    /// Report what this expansion could not resolve, and hand back the value.
+    ///
+    /// Consuming, so the caller cannot report the same finding twice.
+    pub fn report(self, reporter: &mut Reporter, file: &Path, line: usize) -> String {
+        report(reporter, self.undefined, self.unsupported, file, line);
+        self.value
+    }
+}
+
+/// Turn the findings an expansion or condition produced into a warning diagnostic.
+fn report(
+    reporter: &mut Reporter,
+    undefined: Vec<String>,
+    unsupported: Vec<String>,
+    file: &Path,
+    line: usize,
+) {
+    for name in undefined {
+        reporter.warn_at(
+            file,
+            Some(line),
+            format!("`$({name})` is not defined and expanded to nothing"),
+        );
+    }
+
+    for reference in unsupported {
+        reporter.warn_at(
+            file,
+            Some(line),
+            format!("`{reference}` is not supported and was left as written"),
+        );
     }
 }
 
@@ -373,6 +406,14 @@ impl Evaluation {
         }
 
         expansion.value
+    }
+
+    /// Report what this condition could not resolve, and hand back whether it holds.
+    ///
+    /// Consuming, so the caller cannot report the same finding twice.
+    pub fn report(self, reporter: &mut Reporter, file: &Path, line: usize) -> bool {
+        report(reporter, self.undefined, self.unsupported, file, line);
+        self.holds
     }
 }
 
@@ -728,7 +769,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::ErrorKind;
+    use crate::{ErrorKind, Reporter, Severity};
 
     /// A bag seeded verbatim — the shape `msbuild/reserved.rs` hands over, minus the lock.
     fn bag(pairs: &[(&str, &str)]) -> Properties {
@@ -1795,12 +1836,103 @@ mod tests {
     fn a_bare_percent_or_at_is_left_alone() {
         // `%` without a `(` is an MSBuild character escape (`%3B` is a literal semicolon) and `@`
         // appears in real paths. Neither is a reference, and treating either as one would corrupt
-        // a value that is fine as it stands. The escapes are not *decoded* either — that would be
-        // MVP-13's call, and a `%3B` reaching a flag as written is at least visible.
+        // a value that is fine as it stands. The escapes are not *decoded* either: MVP-13 settled
+        // that they stay as written, because a `%3B` reaching a flag is visible in the database
+        // where a `%`-scanning warning would false-positive on every ordinary path. See ADR 13.
         let metadata = Metadata::new();
 
         assert_eq!(substitute("100%", &metadata), "100%");
         assert_eq!(substitute("a%3Bb", &metadata), "a%3Bb");
         assert_eq!(substitute("user@host", &metadata), "user@host");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-13 — the wording the findings above are turned into
+    // ---------------------------------------------------------------------------------------
+
+    /// The two sentences existed in three copies before MVP-13 — `imports.rs`, and twice in
+    /// `items.rs`. Pinning them here is what makes rewording one of them a single edit, and this
+    /// module the place to look for the words.
+    ///
+    /// Both are warnings rather than notes. MVP-08 copies an unsupported construct through
+    /// *verbatim* rather than emptying it, precisely so the bogus value names its own cause when it
+    /// reaches a flag — and an undefined `$(X)` is how an include path quietly loses a directory.
+    /// Neither is a curiosity; both mean the flags may be wrong. See ADR 13.
+    #[test]
+    fn the_two_finding_wordings_have_one_source() {
+        let mut reporter = Reporter::new(false);
+
+        report(
+            &mut reporter,
+            vec!["VCTargetsPath".to_string()],
+            vec!["$(Foo.Substring(0))".to_string()],
+            &site(),
+            12,
+        );
+
+        let rendered: Vec<(Severity, &str)> = reporter
+            .warnings()
+            .iter()
+            .map(|finding| (finding.severity, finding.message.as_str()))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                (
+                    Severity::Warning,
+                    "`$(VCTargetsPath)` is not defined and expanded to nothing"
+                ),
+                (
+                    Severity::Warning,
+                    "`$(Foo.Substring(0))` is not supported and was left as written"
+                ),
+            ]
+        );
+    }
+
+    /// A finding is only actionable if it names where to go and look. `expand` and
+    /// `condition_holds` do not know where their input was written, which is the whole reason the
+    /// site is a parameter here rather than something the finding carries out of them.
+    #[test]
+    fn every_finding_is_sited_at_the_line_that_produced_it() {
+        let mut reporter = Reporter::new(false);
+
+        report(
+            &mut reporter,
+            vec!["Typo".to_string()],
+            Vec::new(),
+            &site(),
+            40,
+        );
+
+        let finding = &reporter.warnings()[0];
+        assert_eq!(finding.file.as_deref(), Some(site().as_path()));
+        assert_eq!(finding.line, Some(40));
+    }
+
+    /// The consuming wrappers exist so a caller cannot report the same findings twice, and so
+    /// reading the answer no longer needs a `.clone()` of the value before handing the struct on.
+    #[test]
+    fn reporting_an_expansion_hands_back_its_value() {
+        let mut reporter = Reporter::new(false);
+
+        let value = expand("$(Missing)tail", &Properties::new())
+            .expect("expands")
+            .report(&mut reporter, &site(), 7);
+
+        assert_eq!(value, "tail");
+        assert_eq!(reporter.warnings().len(), 1);
+    }
+
+    #[test]
+    fn reporting_an_evaluation_hands_back_whether_it_holds() {
+        let mut reporter = Reporter::new(false);
+
+        let holds = condition_holds("'$(Missing)' == ''", &Properties::new(), &site(), 9)
+            .expect("evaluates")
+            .report(&mut reporter, &site(), 9);
+
+        assert!(holds, "an undefined operand compares as empty");
+        assert_eq!(reporter.warnings().len(), 1, "and is still reported");
     }
 }
