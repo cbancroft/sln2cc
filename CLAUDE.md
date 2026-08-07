@@ -46,8 +46,11 @@ See [docs/engineering_spec.md](docs/engineering_spec.md) for the full design, an
 msvclsp/
 ├── CLAUDE.md                     This file.
 ├── README.md                     User-facing intro, build and test instructions.
-├── .gitignore                    Ignores cli/target/ and generated .msvclsp/ dirs.
+├── .gitignore                    Ignores cli/target/, generated .msvclsp/ dirs, and .plans/.
 ├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), build (Windows), MSRV check, plugin tests.
+├── .claude/skills/               Claude Code skills for this repo's own workflow.
+│   ├── start-issue/              Branch, plan, and write tests+docs for a docs/todos.md issue.
+│   └── review-issue/             Review the implementation, reconcile the docs, commit.
 │
 ├── cli/                          Rust CLI binary. All cargo commands run from here.
 │   ├── Cargo.toml                Four deps (see section 5), MSRV 1.85. Cargo.lock is committed.
