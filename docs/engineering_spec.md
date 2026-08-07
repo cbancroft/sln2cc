@@ -203,6 +203,19 @@ Rough module breakdown implied by the parsing pipeline:
   thing to tell a user. One `Document` is parsed, lowered and dropped before the next import is
   read, per ADR 01's borrowing constraint. See [ADR 07](adr/07-vcxproj-reader-ir.md).
 
+  Nesting depth is bounded **before** the text reaches `roxmltree`, by MVP-35. `Document::parse`
+  recurses once per level and aborts the process rather than returning an error once the stack is
+  gone, so there is no failure to catch after the fact and no parser option that helps —
+  `nodes_limit` counts nodes and cannot tell 5,000 nested elements from an ordinary solution with
+  5,000 source files. A byte scan counts element nesting, skipping comments, CDATA, processing
+  instructions and declarations whole, and refuses anything past `MAX_XML_DEPTH = 32` as
+  `Error::RecursionLimit`. Real files reach four levels, so the headroom is eightfold and no more:
+  `imports.rs` may be 64 frames deep when a file is parsed. The scan tracks quoting to find where a
+  start tag ends — a literal `>` is legal in an attribute value where a `<` is not — because
+  failing to see a `/>` leaks a level per source file and would refuse real projects before hostile
+  ones. It is a guard rather than a validator: malformed markup is stepped over and still reported
+  by the parser as `project-parse`. See [ADR 14](adr/14-xml-nesting-depth-guard.md).
+
   Macro expansion is settled by MVP-08 and lives in `msbuild/eval.rs`. It is **eager**: a value is
   expanded at the point of *assignment*, against the property bag as it stood at that moment, so
   what is stored contains no `$(` at all. That is MSBuild's own rule, and it is load-bearing — it is
@@ -515,7 +528,7 @@ variant names, so a refactor cannot silently change them:
 | `project-parse` | A `.vcxproj`/`.props` is not well-formed XML. |
 | `unsupported-construct` | An MSBuild construct outside the supported subset. |
 | `missing-import` | A required `<Import>` target does not exist. |
-| `recursion-limit` | A macro-expansion, condition-nesting or import depth cap was hit, or an expanded property value grew past its size cap. |
+| `recursion-limit` | A macro-expansion, condition-nesting, XML-nesting or import depth cap was hit, or an expanded property value grew past its size cap. |
 | `toolchain-not-found` | No `vswhere`, or no VS instance with the C++ workload. |
 | `toolchain-incomplete` | VS is present but the toolset/Windows SDK layout is not. |
 | `invalid-configuration` | The requested configuration/platform isn't one the solution declares. |

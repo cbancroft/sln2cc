@@ -594,7 +594,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   in total silence; and negative cases for the two new checks — an unquoted `AdditionalOptions` and
   the ordinary two-level XML shapes — so neither can be satisfied by always warning.
 
-- [ ] **MVP-35 — Bound XML nesting depth before parsing**
+- [x] **MVP-35 — Bound XML nesting depth before parsing**
   `fix/xml-depth-guard` · ~3h
 
   **Summary:** Reject a project file nested deeper than a fixed limit, before its text reaches
@@ -619,10 +619,43 @@ Goal: one solution, one manually selected configuration/platform, producing a
   Numbered 35 rather than slotted into this section's sequence because numbers are assigned in
   order and never reused. See [ADR 07](adr/07-vcxproj-reader-ir.md).
 
+  **Outcome:** `parse_project_text` calls a private `check_nesting_depth` before `Document::parse`
+  sees the text, because the failure is an abort *inside* the parser and there is consequently no
+  "after" to catch it in. It is a byte scan rather than a parse: a start tag opens a level, a close
+  tag closes one, a self-closing tag does neither, and comments, CDATA, processing instructions and
+  declarations are skipped whole. Past `MAX_XML_DEPTH = 32` it raises the existing
+  `Error::RecursionLimit`, so **no new string enters the plugin contract** — the variant already
+  covers three other caps and ADR 08 already generalised it past literal depth. 32 rather than 64
+  because the caps *compose*: `imports.rs` may be `MAX_IMPORT_DEPTH` frames deep at the moment a
+  file is parsed, so the stack left for `roxmltree` is well short of the ~100 levels a fresh one
+  survived. Two decisions carry the weight. **Self-closing detection is load-bearing** — without it
+  depth grows with the number of `<ClCompile … />` items and the guard refuses every real solution
+  before it refuses a hostile one, which to a user is indistinguishable from the tool being broken;
+  and **finding where a tag ends needs quote tracking** while finding where one begins does not,
+  because XML permits a literal `>` in an attribute value and forbids a literal `<`. The scan is a
+  **guard, not a validator**: malformed markup is stepped over rather than diagnosed, so broken XML
+  keeps failing as `project-parse` with `roxmltree`'s own message and does not acquire a second,
+  worse one. What it approximates — a DTD internal subset, a non-ASCII name start — it approximates
+  by over-counting, on files the parser rejects anyway. See
+  [ADR 14](adr/14-xml-nesting-depth-guard.md).
+
   **Tests:** Un-`#[ignore]` `a_deeply_nested_document_is_rejected_rather_than_crashing` in
   `msbuild/project.rs`, which already asserts `ErrorKind::RecursionLimit`. Add a unit test that a
   file at the limit still parses, and one that `<` inside a comment or CDATA does not count
   toward depth.
+
+  All three were written as specified, plus four. The at-the-limit test is paired with
+  `a_document_one_level_past_the_limit_is_refused` so an off-by-one has to fail one of them rather
+  than hide between them, and it is built through `project_text` so it also pins that the
+  `<?xml … ?>` declaration is not counted as a level. Comment and CDATA got a test each, since the
+  terminators differ. The two additions worth having are `self_closing_siblings_do_not_accumulate_depth`
+  and `a_greater_than_inside_an_attribute_value_does_not_end_the_tag`: both parse an `ItemGroup` of
+  `MAX_XML_DEPTH * 4` sibling items and assert every one arrives, which is the false-positive case
+  the guard is most likely to fail on and the one a user would actually meet. No test asserts that
+  a close tag decrements — without that, depth would grow with element *count* and the whole
+  existing suite fails at once. `malformed_xml_is_an_error_not_a_panic` and `a_dtd_is_rejected`
+  serve unchanged as the guard's negative cases: both still expect `project-parse`, which is what
+  keeps the scan from becoming a validator.
 
 - [ ] **MVP-36 — Unsupported-condition policy for toolchain files**
   `fix/unsupported-condition-policy` · ~5h

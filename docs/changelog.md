@@ -109,3 +109,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 - A property value with XML elements inside it no longer loses them without saying so. It is not
   valid MSBuild and msvclsp still keeps just the text, but it now names the value and the line.
+
+### Security
+
+- A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB
+  of deeply nested elements used to crash the process outright — no message, no exit code, nothing
+  for the editor to report, just a tool that vanished. Such a file is now refused with an error that
+  names it and an exit code your shell can act on. The limit is 32 levels of nesting; real project
+  files use four, and nothing Visual Studio writes comes close.

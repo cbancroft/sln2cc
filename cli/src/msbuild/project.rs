@@ -13,6 +13,10 @@ use roxmltree::{Document, Node};
 
 use crate::{Error, Reporter, Result, progress};
 
+/// How deeply XML elements may nest before a project file is refused, counting `<Project>` as level
+/// 1.
+const MAX_XML_DEPTH: usize = 32;
+
 // One MSBuild project file, lowered into owned data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectFile {
@@ -154,6 +158,9 @@ pub fn parse_project(path: &Path, reporter: &mut Reporter) -> Result<ProjectFile
 ///
 /// `path` names the file in errors and diagnostics. Nothing is read from the disk here
 fn parse_project_text(text: &str, path: &Path, reporter: &mut Reporter) -> Result<ProjectFile> {
+    // Before parsing, ensure we don't have a hostile XML.
+    check_nesting_depth(text, path)?;
+
     let doc = Document::parse(text).map_err(|err| Error::ProjectParse {
         path: path.to_path_buf(),
         source: err,
@@ -381,6 +388,106 @@ fn text_of(node: Node) -> String {
         value.push_str(child.text().unwrap_or_default());
     }
     value.trim().to_string()
+}
+
+/// Check the nesting depth of document.
+///
+/// Returns an error if it exceeds `MAX_XML_DEPTH`. This is a byte scan rather than a parse as the
+/// crash induced by an depth overrun happens within `Document::parse`. This is a guard, and not
+/// a validator. Malformed XML is stepped over rather than reported, as that is the job of the
+/// parser to detect. This just checks that the maximum depth does not exceed `MAX_XML_DEPTH` and
+/// returns an [`Error::RecursionLimit`] if it does.
+fn check_nesting_depth(text: &str, path: &Path) -> Result<()> {
+    let bytes = text.as_bytes();
+    let mut depth: usize = 0;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+
+        if !rest.starts_with(b"<") {
+            index += 1;
+        } else if rest.starts_with(b"<!--") {
+            // A Comment or CDATA may hold anything at all, including unbalanced tags. Skip to the
+            // end of the comment
+            index = skip_past(bytes, index + 4, b"-->");
+        } else if rest.starts_with(b"<![CDATA[") {
+            index = skip_past(bytes, index + 9, b"]]>");
+        } else if rest.starts_with(b"<!") || rest.starts_with(b"<?") {
+            // A DTD or processing instruction. Neither nests an element and `allow_dtd` is false so
+            // a `<!DOCTYPE>` is rejected by the parser before it recurses.
+            index = skip_past(bytes, index + 2, b">");
+        } else if rest.starts_with(b"</") {
+            // Saturating rather than checked.
+            depth = depth.saturating_sub(1);
+            index = skip_past(bytes, index + 2, b">");
+        } else if rest.get(1).is_some_and(|&byte| is_name_start(byte)) {
+            depth += 1;
+            if depth > MAX_XML_DEPTH {
+                return Err(Error::RecursionLimit {
+                    limit: MAX_XML_DEPTH,
+                    context: format!("checking the XML nesting depth of {}", path.display()),
+                });
+            }
+
+            let (end, self_closing) = end_of_tag(bytes, index + 1);
+            if self_closing {
+                depth -= 1;
+            }
+            index = end;
+        } else {
+            // Stray '<'
+            index += 1
+        }
+    }
+
+    Ok(())
+}
+
+/// Where a start tag ends, and whether it closed itself.
+///
+/// `from` is the offset just past the  `<`. Quoting is tracked because an attribute value may hold
+/// a literal `>`, stopping at the first one would read `<X A="a>b" />` as a tag that opens a level
+/// and never closes it.
+///
+/// A tag left unterminated at the end of input reports the end of input.
+fn end_of_tag(bytes: &[u8], from: usize) -> (usize, bool) {
+    let mut quote: Option<u8> = None;
+
+    for index in from..bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(delimiter) if byte == delimiter => quote = None,
+            Some(_) => {}
+            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
+            // XML permits no whitespace between the `/` and the `>` of an empty element tag.
+            // The byte before is the entire test. `index > from` cannot underflow, as `from` is at
+            // least 1, being one past a `<`.
+            None if byte == b'>' => return (index + 1, bytes[index - 1] == b'/'),
+            None => {}
+        }
+    }
+    (bytes.len(), false)
+}
+
+/// The offset just past the next `needle` at or after `from`, or the end of input if `needle` is
+/// not found.
+fn skip_past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
+    match bytes[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+    {
+        Some(offset) => from + offset + needle.len(),
+        None => bytes.len(),
+    }
+}
+
+/// Whether `byte` can begin an XML element name.
+///
+/// Only approximate for the sake of speed. The real production is a long list of Unicode ranges,
+/// and every byte of a multi-byte UTF-8 sequence is `>= 0x80` so accepting all of them is fine.
+fn is_name_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b':' || byte > 0x80
 }
 
 #[cfg(test)]
@@ -1137,19 +1244,18 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::ProjectParse);
     }
 
-    /// CLAUDE.md §5: hostile input must fail gracefully rather than hang or panic. It does not.
+    /// CLAUDE.md §5: hostile input must fail gracefully rather than hang or panic.
     ///
     /// `roxmltree::Document::parse` recurses once per nesting level, and a debug build on a 2 MiB
     /// thread stack dies somewhere between 100 and 200 levels — around 1.5 KB of XML. The whole
-    /// process aborts, so there is no error, no exit code, and nothing for the plugin to report.
-    /// The lowering below the parse is iterative and not implicated.
+    /// process aborted, so there was no error, no exit code, and nothing for the plugin to report.
+    /// The lowering below the parse is iterative and was never implicated.
     ///
-    /// Left `#[ignore]`d rather than deleted so the gap stays visible, per CLAUDE.md §8: running
-    /// it aborts the test binary and takes every other test with it. **MVP-35 unblocks this** by
-    /// bounding depth before the text reaches `roxmltree`; `nodes_limit` is not that guard, since
-    /// it cannot tell 5,000 nested elements from a large but ordinary project file.
+    /// Written and `#[ignore]`d by MVP-07 because running it took the test binary with it, and
+    /// un-ignored by MVP-35, which bounds depth before the text reaches `roxmltree`. This is the
+    /// test the whole guard exists for: it must reach an `Err` at all, which is the part that used
+    /// to be impossible.
     #[test]
-    #[ignore = "MVP-35: no depth guard yet, and running this aborts the whole test binary"]
     fn a_deeply_nested_document_is_rejected_rather_than_crashing() {
         const DEPTH: usize = 5_000;
         let text = format!(
@@ -1161,6 +1267,113 @@ mod tests {
         let error = parse(&text).expect_err("must not parse");
 
         assert_eq!(error.kind(), ErrorKind::RecursionLimit);
+    }
+
+    #[test]
+    fn a_document_at_the_nesting_limit_still_parses() {
+        // The cap is a ceiling, not a limit below it — the same thing `imports.rs` and `eval.rs`
+        // assert about theirs. `<Project>` is level 1, so the body may nest one less than the cap.
+        //
+        // Built through `project_text`, so this doubles as the assertion that the `<?xml ... ?>`
+        // declaration is not counted as a level: if it were, this document would be one over.
+        let inner = MAX_XML_DEPTH - 1;
+        let text = project_text(&format!(
+            "  {}{}",
+            "<X>".repeat(inner),
+            "</X>".repeat(inner)
+        ));
+
+        parse(&text).expect("a document exactly at the cap is not over it");
+    }
+
+    #[test]
+    fn a_document_one_level_past_the_limit_is_refused() {
+        // The other side of the boundary, so an off-by-one in either direction has to fail one of
+        // this pair rather than hiding between them.
+        let inner = MAX_XML_DEPTH;
+        let text = project_text(&format!(
+            "  {}{}",
+            "<X>".repeat(inner),
+            "</X>".repeat(inner)
+        ));
+
+        let error = parse(&text).expect_err("must not parse");
+
+        assert_eq!(error.kind(), ErrorKind::RecursionLimit);
+        assert!(
+            error.to_string().contains("app.vcxproj"),
+            "names the file that was refused: {error}"
+        );
+    }
+
+    #[test]
+    fn markup_inside_a_comment_does_not_count_toward_depth() {
+        // The guard is a byte scan, so it sees a `<` without knowing what encloses it. A comment
+        // holding unbalanced tags is legal XML, and a commented-out `ItemGroup` is an ordinary
+        // thing to find in a real project file.
+        let text = project_text(&format!(
+            "  <!-- {} -->\n  <PropertyGroup />",
+            "<X>".repeat(MAX_XML_DEPTH * 2)
+        ));
+
+        let file = parse(&text).expect("a comment nests nothing");
+
+        assert_eq!(shape(&file), ["PropertyGroup"]);
+    }
+
+    #[test]
+    fn markup_inside_cdata_does_not_count_toward_depth() {
+        // Same hazard as the comment above, different terminator — and unlike a comment, a CDATA
+        // section is content the reader goes on to keep.
+        let text = project_text(&format!(
+            "  <PropertyGroup>\n    <Banner><![CDATA[{}]]></Banner>\n  </PropertyGroup>",
+            "<X>".repeat(MAX_XML_DEPTH * 2)
+        ));
+
+        let file = parse(&text).expect("CDATA is text, not nesting");
+
+        assert_eq!(
+            as_property_group(&file, 0).properties[0].name,
+            "Banner",
+            "the element around the CDATA is still read normally"
+        );
+    }
+
+    #[test]
+    fn self_closing_siblings_do_not_accumulate_depth() {
+        // The false-positive case, and the one that matters most: every real project lists its
+        // sources as self-closing `<ClCompile Include="..." />` items. A scan that counted `<`
+        // without noticing `/>` would leak a level each and refuse ordinary solutions long before
+        // it refused a hostile file.
+        let count = MAX_XML_DEPTH * 4;
+        let items: String = (0..count)
+            .map(|n| format!("    <ClCompile Include=\"src{n}.cpp\" />\n"))
+            .collect();
+        let text = project_text(&format!("  <ItemGroup>\n{items}  </ItemGroup>"));
+
+        let file = parse(&text).expect("siblings nest no deeper than one of them");
+
+        assert_eq!(file.items_of_type("ClCompile").count(), count);
+    }
+
+    #[test]
+    fn a_greater_than_inside_an_attribute_value_does_not_end_the_tag() {
+        // XML forbids a literal `<` in an attribute value but permits a literal `>`, which is why
+        // finding where a tag *ends* needs the quoting tracked even though finding where one
+        // begins does not. A scan that stopped at the first `>` would read each item below as an
+        // unclosed tag and leak a level per source file. Visual Studio writes `&gt;` — this is
+        // the spelling a hand-written sheet is allowed to use.
+        let count = MAX_XML_DEPTH * 4;
+        let items: String = (0..count)
+            .map(|n| {
+                format!("    <ClCompile Include=\"src{n}.cpp\" Condition=\"'$(N)' != 'a>b'\" />\n")
+            })
+            .collect();
+        let text = project_text(&format!("  <ItemGroup>\n{items}  </ItemGroup>"));
+
+        let file = parse(&text).expect("a `>` in an attribute value is not the end of the tag");
+
+        assert_eq!(file.items_of_type("ClCompile").count(), count);
     }
 
     #[test]
