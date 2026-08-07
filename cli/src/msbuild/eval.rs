@@ -93,6 +93,51 @@ impl Properties {
     }
 }
 
+/// Item metadata for one item, keyed case-insensitively.
+///
+/// The `%(Name)` counterpart to [`Properties`], and a separate type rather than a second bag within
+/// the same one. This is because Metadata is scoped to an *item* rather than to the evaluation, so
+/// an item takes a clone of the `ItemDefinitionGroup` defaults at the time of its declaration.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Metadata {
+    values: HashMap<String, String>,
+}
+
+impl Metadata {
+    pub fn new() -> Self {
+        Metadata::default()
+    }
+
+    /// `Some("")` and `None` stay distinct, as they do in [`Properties::get`].
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.values
+            .get(&name.to_ascii_lowercase())
+            .map(String::as_str)
+    }
+
+    pub fn set(&mut self, name: &str, value: impl Into<String>) {
+        self.values.insert(name.to_ascii_lowercase(), value.into());
+    }
+
+    /// Expand `value` -- `$()` against `props`, then `%()` against self and store the result in self.
+    ///
+    /// Eager, in the same way as [`Properties::assign`], so what is stored should contain no sigils
+    /// and no cycle can be constructed. `$` parses first because a property's value was already
+    /// expanded when it was assigned and so holds no `%(`.
+    pub fn assign(&mut self, name: &str, value: &str, props: &Properties) -> Result<Expansion> {
+        let mut expansion = expand(value, props)?;
+        let metadata = expand_metadata(&expansion.value, self)?;
+
+        expansion.value = metadata.value;
+        for reference in metadata.unsupported {
+            expansion.record_unsupported(&reference);
+        }
+
+        self.set(name, expansion.value.clone());
+        Ok(expansion)
+    }
+}
+
 /// One expanded value, along with anything that could not be resolved while expanding it.
 ///
 /// The unexpanded values are there for MVP-13 to use for building warning messages. Both unexpanded
@@ -185,6 +230,59 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
     out.value.push_str(rest);
     check_size(&out.value, input)?;
     Ok(out)
+}
+
+/// Substitute `%(Name)` references in `input` against `metadata` bag.
+///
+/// A name the bag has no value for expands to **nothing and is not recorded**. That is the base for
+/// the whole inheritance mechanism. The first `ItemDefinitionGroup` in a graph writes
+/// `WIN32;%(PreprocessorDefinitions)` against an empty bag, so recording it would warn on every
+/// idiomatic project file.
+///
+/// Qualified references (`%(ClCompile.Identity)`), item transforms (`@(...)`) and an unterminated
+/// `%(` are copied through verbatim and recorded, as [`expand`] does for the `$` equivalents.
+/// `%XX` character escapes are not decoded and not recorded.
+pub fn expand_metadata(input: &str, metadata: &Metadata) -> Result<Expansion> {
+    let mut out = Expansion::default();
+    let mut rest = input;
+
+    while let Some(open) = next_sigil(rest) {
+        out.value.push_str(&rest[..open]);
+        let body_start = open + 2;
+
+        let Some(offset) = closing_paren(&rest[body_start..]) else {
+            out.record_unsupported(&rest[open..]);
+            out.value.push_str(&rest[open..]);
+            rest = "";
+            break;
+        };
+
+        let close = body_start + offset;
+        let body = &rest[body_start..close];
+        let reference = &rest[open..close + 1];
+
+        if rest.as_bytes()[open] == b'@' || !is_property_name(body) {
+            out.record_unsupported(reference);
+            out.value.push_str(reference);
+        } else if let Some(value) = metadata.get(body) {
+            out.value.push_str(value);
+        }
+
+        check_size(&out.value, input)?;
+        rest = &rest[close + 1..];
+    }
+
+    out.value.push_str(rest);
+    check_size(&out.value, input)?;
+    Ok(out)
+}
+
+/// The offset of the next `%(` or `@(`, whichever comes first.
+fn next_sigil(text: &str) -> Option<usize> {
+    match (text.find("%("), text.find("@(")) {
+        (Some(metadata), Some(item)) => Some(metadata.min(item)),
+        (found, None) | (None, found) => found,
+    }
 }
 
 /// The offset of the `)` closing a reference that starts immediately before `data`.
@@ -1495,5 +1593,214 @@ mod tests {
         );
         assert!(message.contains(":12:"), "names the line: {message}");
         assert!(message.contains("app.vcxproj"), "names the file: {message}");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-12 — `%(Metadata)` expansion
+    // ---------------------------------------------------------------------------------------
+
+    /// A metadata bag holding `pairs`, the counterpart to `bag`.
+    fn meta(pairs: &[(&str, &str)]) -> Metadata {
+        let mut metadata = Metadata::new();
+        for (name, value) in pairs {
+            metadata.set(name, *value);
+        }
+        metadata
+    }
+
+    /// Expand against `metadata`, asserting nothing was recorded — what most cases want.
+    fn substitute(input: &str, metadata: &Metadata) -> String {
+        let expansion = expand_metadata(input, metadata).expect("expands");
+        assert!(
+            expansion.unsupported.is_empty(),
+            "unexpected unsupported: {:?}",
+            expansion.unsupported
+        );
+        expansion.value
+    }
+
+    #[test]
+    fn an_unset_metadata_reference_expands_to_nothing_and_is_not_recorded() {
+        // The entire inheritance mechanism, and the reason this is *silent* where `$(Undefined)` is
+        // recorded. The first `ItemDefinitionGroup` in a graph writes
+        // `WIN32;%(PreprocessorDefinitions)` against an empty bag, and every real project file does
+        // this — recording it would put a warning on output that is completely correct, which is
+        // exactly how a user learns to ignore the warning channel.
+        let expansion =
+            expand_metadata("WIN32;%(PreprocessorDefinitions)", &Metadata::new()).expect("expands");
+
+        assert_eq!(expansion.value, "WIN32;");
+        assert!(expansion.unsupported.is_empty());
+        assert!(
+            expansion.undefined.is_empty(),
+            "an unset metadata name is not a finding: {:?}",
+            expansion.undefined
+        );
+    }
+
+    #[test]
+    fn a_self_reference_composes_with_what_is_already_there() {
+        // What the Visual Studio property page's "inherit from parent" checkbox produces. There is
+        // no literal `%(Inherited)` token in MSBuild — this is what inheritance *is*.
+        let metadata = meta(&[("PreprocessorDefinitions", "WIN32;NDEBUG")]);
+
+        assert_eq!(
+            substitute("%(PreprocessorDefinitions);EXTRA", &metadata),
+            "WIN32;NDEBUG;EXTRA"
+        );
+        assert_eq!(
+            substitute("EXTRA;%(PreprocessorDefinitions)", &metadata),
+            "EXTRA;WIN32;NDEBUG",
+            "position decides where the inherited list lands, which is why order is preserved"
+        );
+    }
+
+    #[test]
+    fn assignment_is_eager_so_a_self_reference_cannot_cycle() {
+        // The same rule ADR 08 settled for properties: what is stored contains no sigil at all, so
+        // `%(A)` resolves against the value from the *previous* assignment and appending twice
+        // appends twice rather than looping.
+        let mut metadata = meta(&[("Defines", "WIN32")]);
+        let props = Properties::new();
+
+        metadata
+            .assign("Defines", "%(Defines);_DEBUG", &props)
+            .map(drop)
+            .expect("expands");
+        assert_eq!(metadata.get("Defines"), Some("WIN32;_DEBUG"));
+
+        metadata
+            .assign("Defines", "%(Defines);UNICODE", &props)
+            .map(drop)
+            .expect("expands");
+        assert_eq!(metadata.get("Defines"), Some("WIN32;_DEBUG;UNICODE"));
+    }
+
+    #[test]
+    fn properties_expand_before_metadata() {
+        // Order matters and only one order is right. A property's value was already expanded when
+        // it was assigned, so it can hold no `%(`; but `$(CommonDefines)` legitimately holds one,
+        // and doing `%` first would leave it as written.
+        let props = bag(&[("CommonDefines", "%(PreprocessorDefinitions);SHARED")]);
+        let mut metadata = meta(&[("PreprocessorDefinitions", "WIN32")]);
+
+        metadata
+            .assign("PreprocessorDefinitions", "$(CommonDefines)", &props)
+            .map(drop)
+            .expect("expands");
+
+        assert_eq!(
+            metadata.get("PreprocessorDefinitions"),
+            Some("WIN32;SHARED")
+        );
+    }
+
+    #[test]
+    fn a_metadata_name_is_matched_case_insensitively() {
+        // MSBuild matches metadata names the way it matches property names, and
+        // `%(additionalincludedirectories)` reaching a different slot would surface as an include
+        // path that quietly lost its inherited half.
+        let metadata = meta(&[("AdditionalIncludeDirectories", "inc")]);
+
+        assert_eq!(metadata.get("additionalincludedirectories"), Some("inc"));
+        assert_eq!(
+            substitute("%(ADDITIONALINCLUDEDIRECTORIES)", &metadata),
+            "inc"
+        );
+    }
+
+    #[test]
+    fn an_empty_metadata_value_is_defined_and_distinct_from_absent() {
+        // `<PreprocessorDefinitions></PreprocessorDefinitions>` clears the inherited list rather
+        // than leaving it alone, so the two cases cannot be conflated — the argument
+        // `Properties::get` makes, for the same reason.
+        let metadata = meta(&[("Defined", "")]);
+
+        assert_eq!(metadata.get("Defined"), Some(""));
+        assert_eq!(metadata.get("Absent"), None);
+    }
+
+    #[test]
+    fn a_qualified_reference_is_copied_through_and_recorded() {
+        // `%(ClCompile.Identity)` and the rest of the well-known metadata are not modelled. Left as
+        // written on purpose: a flag containing `%(ClCompile.Identity)` names its own cause, where
+        // an empty one leaves a user with an include path that is simply missing.
+        let expansion =
+            expand_metadata("%(ClCompile.Identity)", &Metadata::new()).expect("expands");
+
+        assert_eq!(expansion.value, "%(ClCompile.Identity)");
+        assert_eq!(expansion.unsupported, ["%(ClCompile.Identity)"]);
+    }
+
+    #[test]
+    fn an_item_transform_is_copied_through_and_recorded() {
+        // `@(ClCompile->'%(Filename)')` is a real MSBuild construct and well outside this subset.
+        let expansion = expand_metadata(
+            "@(ClCompile);%(PreprocessorDefinitions)",
+            &meta(&[("PreprocessorDefinitions", "WIN32")]),
+        )
+        .expect("expands");
+
+        assert_eq!(
+            expansion.value, "@(ClCompile);WIN32",
+            "the transform survives verbatim and the supported reference beside it still expands"
+        );
+        assert_eq!(expansion.unsupported, ["@(ClCompile)"]);
+    }
+
+    #[test]
+    fn an_unterminated_metadata_reference_is_copied_through_and_recorded() {
+        // MSBuild fails the build on this. Recorded and copied through instead, matching what
+        // `expand` does for `$(` — one stray sigil in metadata nothing reads should not fail a
+        // generation that has a warning channel to report it on.
+        let expansion = expand_metadata("inc;%(Unterminated", &Metadata::new()).expect("expands");
+
+        assert_eq!(expansion.value, "inc;%(Unterminated");
+        assert_eq!(expansion.unsupported, ["%(Unterminated"]);
+    }
+
+    #[test]
+    fn findings_from_both_passes_reach_one_expansion() {
+        // `Metadata::assign` runs two expansions and the caller reports once, so a value with a
+        // problem of each kind must not lose either half on the way through.
+        let mut metadata = Metadata::new();
+
+        let expansion = metadata
+            .assign(
+                "AdditionalIncludeDirectories",
+                "$(NoSuchProperty)inc;@(Headers)",
+                &Properties::new(),
+            )
+            .expect("expands");
+
+        assert_eq!(expansion.undefined, ["NoSuchProperty"]);
+        assert_eq!(expansion.unsupported, ["@(Headers)"]);
+    }
+
+    #[test]
+    fn a_runaway_metadata_self_reference_fails_at_the_size_cap() {
+        // The `%` counterpart to `a_runaway_self_reference_fails_at_the_size_cap`. Eagerness rules
+        // out a cycle but not doubling, and `assign` is again what has to stop it.
+        let mut metadata = meta(&[("A", "x")]);
+        let props = Properties::new();
+
+        let error = (0..40)
+            .try_for_each(|_| metadata.assign("A", "%(A)%(A)", &props).map(drop))
+            .expect_err("must not be allowed to double indefinitely");
+
+        assert_eq!(error.kind(), ErrorKind::RecursionLimit);
+    }
+
+    #[test]
+    fn a_bare_percent_or_at_is_left_alone() {
+        // `%` without a `(` is an MSBuild character escape (`%3B` is a literal semicolon) and `@`
+        // appears in real paths. Neither is a reference, and treating either as one would corrupt
+        // a value that is fine as it stands. The escapes are not *decoded* either — that would be
+        // MVP-13's call, and a `%3B` reaching a flag as written is at least visible.
+        let metadata = Metadata::new();
+
+        assert_eq!(substitute("100%", &metadata), "100%");
+        assert_eq!(substitute("a%3Bb", &metadata), "a%3Bb");
+        assert_eq!(substitute("user@host", &metadata), "user@host");
     }
 }

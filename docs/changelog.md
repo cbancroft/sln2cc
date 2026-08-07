@@ -48,3 +48,27 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   Properties that come from your Visual Studio installation — `$(VCTargetsPath)` above all — are
   still empty, so imports depending on them continue to be skipped with a warning until toolchain
   discovery lands.
+
+- Your project's compiler settings now turn into actual flags. Evaluating a `.vcxproj` produces the
+  list of source files it compiles and, for each one, its include directories as absolute paths, its
+  preprocessor defines, and the `cl` switches that change how the file is parsed — the language
+  standard, the runtime library, exception handling, RTTI, conformance mode, the instruction set, and
+  the warnings the project silences. Settings that only affect code generation or linking are left
+  out on purpose: clangd never links, and a flag it cannot act on is one more thing to get wrong.
+
+  Inheritance works the way the Visual Studio property pages imply. A property sheet's settings, the
+  project's own, and a per-file override compose in that order, so a single file can add one define
+  without losing the project's — and the "inherit from parent or project defaults" checkbox does what
+  it says. A configuration/platform-gated section applies only to the pair you asked for.
+
+  Things msvclsp cannot work out are said out loud rather than guessed at: a wildcard such as
+  `Include="src\*.cpp"` is not expanded yet, and now tells you which files are missing from the
+  database instead of quietly producing none; asking for a configuration the project does not declare
+  warns instead of handing you files with no flags on them; a setting whose value msvclsp does not
+  recognize is named and skipped; and a value that still contains an unresolved `$(...)` says so
+  before it reaches clangd.
+
+  Flags are still missing whatever Microsoft's own property sheets would add — `UNICODE` and the
+  toolset's default include directories among them — because those imports need a discovered Visual
+  Studio installation. What is generated is accurate about what your project files say and incomplete
+  about what MSBuild would add on top, until toolchain discovery lands.

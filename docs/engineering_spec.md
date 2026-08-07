@@ -281,6 +281,45 @@ Rough module breakdown implied by the parsing pipeline:
   brackets each file with `reserved::enter_file`/`restore` beside its existing depth bookkeeping,
   which is what lets a shared property sheet locate its own siblings. See
   [ADR 11](adr/11-reserved-property-seeding.md).
+
+  The remaining two passes are settled by MVP-12 and split three ways, because they change for
+  unrelated reasons. `msbuild/eval.rs` gains the `%()` sigil beside the `$()` one — a `Metadata` bag
+  that is the item-scoped counterpart to `Properties`, reusing the same tokenizing helpers and the
+  same 1 MiB cap. `msbuild/items.rs` is **pass 2**: it walks MVP-10's deferred stream in order,
+  evaluating each condition against the property values the graph *ended* with, and produces one
+  `SourceItem` per `ClCompile` source with the metadata that applies to it. `msbuild/flags.rs` is
+  **pass 3**: settled metadata translated into `cl` switches. `msbuild/paths.rs` holds the lexical
+  helpers both need, including `normalize` moved out of `imports.rs` and a converter for
+  MSBuild-spelled paths, since `PathBuf::from(r"inc\sub")` is a single component on Linux and CI would
+  otherwise compare a path Windows never produces. `msbuild::evaluate` becomes the orchestrator and
+  takes a `ProjectScope`, which is the signature ADR 11 said it needed: seeding requires the solution
+  path, and its `config` is the **project** pair per ADR 05.
+  Four rules carry the design. An unset `%(Name)` expands to nothing and is **not** recorded, because
+  `WIN32;%(PreprocessorDefinitions)` against an empty bag is what every real project file writes and
+  warning on it would devalue the whole channel — ADR 08's `Some("")`-versus-`None` argument applied to
+  the other sigil; genuinely unsupported forms (`%(ClCompile.Identity)`, `@(...)`, an unterminated
+  `%(`) are still recorded and copied through verbatim. `$` expands before `%`, since a property's
+  value cannot contain `%(` but a property reference can expand into one. An `ItemDefinitionGroup`
+  applies only to items declared **after** it, so defaults are snapshotted into each item as it is
+  declared rather than gathered up front — which is what ADR 10's ordered splice exists to make
+  possible, and per-file metadata assigned on top is what lets an override *extend* a project default
+  rather than only replace it. And relative item paths resolve against the **`.vcxproj`'s** directory
+  rather than the declaring file's, which is why a shared sheet meaning its own directory has to spell
+  `$(MSBuildThisFileDirectory)`; because pass 1 restores that family on the way out of each import,
+  pass 2 re-enters each deferred element's file against a clone of the bag, or a sheet's own include
+  directory silently becomes one beside the project. Wildcard `Include` specs warn and contribute
+  nothing, with expansion deferred to MVP-37 — chosen over refusing a legal construct and over
+  building a globber, and it replaces the previous behaviour of producing no source files in silence.
+  Only settings that change how a file *parses* are translated, so the include directories, defines,
+  language standard and the switches that move a predefined macro are all mapped, while codegen and
+  link settings are skipped along with `/WX` (clang's warning set is not MSVC's, so it would turn
+  diagnostics the build never emits into editor errors), `/Yu` (injects nothing, and points clangd at
+  a `.pch` that does not exist), `/Za` (clang-cl rejects it) and `CharacterSet` (arrives through
+  Microsoft's own `.props` once MVP-15 lands). An unrecognized *value* for a recognized setting warns
+  and emits nothing rather than guessing; an unrecognized setting *name* is silent, since a real
+  `ClCompile` carries dozens. Asking for a configuration/platform pair the project never declares
+  warns, because it evaluates cleanly, matches no gated group, and yields source files with no flags.
+  See [ADR 12](adr/12-clcompile-flag-extraction.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
   resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
   project files.
@@ -525,10 +564,15 @@ MSBuild-evaluation surface area bounded.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.
-- Whether wildcard `Include` attributes are expanded or refused. `<ClCompile Include="src\*.cpp"/>`
-  is legal MSBuild and Visual Studio never writes it, so it has stayed out of scope by accident
-  rather than by decision; MVP-12 does not mention globbing either. A project written that way
-  currently produces no source files at all, silently, which is the worst available outcome.
+- Whether wildcard `Include` attributes are ever *expanded*. MVP-12 settled that they are neither
+  refused nor silently dropped: a wildcard warns naming the spec it skipped and contributes nothing,
+  which closes the silent-no-sources hole without taking on MSBuild's globbing semantics. What is
+  still open is whether the expansion itself is worth building — MVP-37 holds the work, and a project
+  written this way gets an incomplete database until it lands. See
+  [ADR 12](adr/12-clcompile-flag-extraction.md).
+- Whether `AdditionalOptions` needs real shell-style argument splitting. MVP-12 splits on whitespace,
+  which is correct for every switch a project is likely to carry there and wrong for a quoted path
+  containing a space.
 - Whether `$(SolutionDir)` and the rest of the `Solution*` family should be seeded at all when a
   project is evaluated outside a solution. Not reachable today, since the CLI always takes a `.sln`,
   but standalone-project support and the multi-solution work both arrive at it. The honest answer may

@@ -11,6 +11,8 @@ pub mod diagnostics;
 pub mod error;
 pub mod msbuild;
 pub mod sln;
+#[cfg(test)]
+mod testing;
 pub mod toolchain;
 
 pub use diagnostics::{Diagnostic, Reporter, Severity};

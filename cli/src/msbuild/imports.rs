@@ -10,9 +10,10 @@
 //! Import order matters — later definitions override earlier ones — so the resolver must
 //! preserve the order in which files are pulled into the evaluation.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::msbuild::eval::{self, Properties};
+use crate::msbuild::paths::normalize;
 use crate::msbuild::project::{self, Element, Import, PropertyGroup};
 use crate::msbuild::reserved;
 use crate::{Error, Reporter, Result, progress};
@@ -264,25 +265,6 @@ impl Walk<'_> {
     }
 }
 
-/// Make `path` absolute and resolve `.` and `..` lexically.
-fn normalize(path: &Path) -> PathBuf {
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-
-    let mut out = PathBuf::new();
-
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-
-    out
-}
-
 /// Whether two normalized paths name the same file (case insensitive on Windows)
 fn same_file(left: &Path, right: &Path) -> bool {
     if cfg!(windows) {
@@ -294,66 +276,10 @@ fn same_file(left: &Path, right: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
     use crate::msbuild::reserved;
+    use crate::testing::TempTree;
     use crate::{ConfigPlatform, ErrorKind};
-
-    /// A throwaway directory tree, removed when the test that made it ends.
-    ///
-    /// Hand-rolled rather than added as a dev-dependency: `Cargo.toml` records the dependency list
-    /// as settled, and this is thirty lines of `std::fs`. Import resolution reads real files and
-    /// `fixtures/` is still empty — MVP-23 and MVP-24 own filling it, and an import cycle has no
-    /// business in a corpus meant for manual clangd verification anyway.
-    struct TempTree(PathBuf);
-
-    impl TempTree {
-        /// A fresh directory named for the calling test.
-        ///
-        /// The process id and a counter keep concurrent test binaries and parallel tests within
-        /// one from colliding; the name makes a leftover directory traceable if a run is killed.
-        fn new(name: &str) -> Self {
-            static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-            let path = std::env::temp_dir().join(format!(
-                "msvclsp-{}-{name}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("the temp directory is writable");
-            TempTree(path)
-        }
-
-        /// Write a project file at `relative`, wrapping `body` in a `<Project>` element.
-        ///
-        /// `<Project>` is line 1, so **the body starts at line 2** — which is what the line-number
-        /// assertions below count from. The namespace is omitted; MVP-07 made it optional.
-        fn project(&self, relative: &str, body: &str) -> PathBuf {
-            self.write(relative, &format!("<Project>\n{body}\n</Project>\n"))
-        }
-
-        fn write(&self, relative: &str, contents: &str) -> PathBuf {
-            let path = self.path(relative);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).expect("the temp directory is writable");
-            }
-            std::fs::write(&path, contents).expect("the temp directory is writable");
-            path
-        }
-
-        /// `relative` is spelled with `/`, which both platforms accept.
-        fn path(&self, relative: &str) -> PathBuf {
-            self.0.join(relative)
-        }
-    }
-
-    impl Drop for TempTree {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     /// Resolve from an empty bag with a quiet reporter, for the cases asserting on the walk.
     fn tree(root: &Path) -> ProjectTree {
@@ -423,7 +349,7 @@ mod tests {
             .files
             .iter()
             .map(|file| {
-                file.strip_prefix(&dir.0)
+                file.strip_prefix(dir.root())
                     .unwrap_or(file)
                     .to_string_lossy()
                     .replace('\\', "/")

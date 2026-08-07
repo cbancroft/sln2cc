@@ -61,12 +61,16 @@ msvclsp/
 │   │   ├── msbuild.rs            .vcxproj evaluation — the hardest part of the system.
 │   │   │   ├── project.rs        Lowers one .vcxproj/.props/.targets into a document-ordered IR.
 │   │   │   ├── imports.rs        .props/.targets import resolution, in evaluation order.
-│   │   │   ├── eval.rs           $(Macro) expansion and Condition evaluation.
-│   │   │   └── reserved.rs       Seeds the built-in properties project files never define.
+│   │   │   ├── eval.rs           $(Macro)/%(Metadata) expansion and Condition evaluation.
+│   │   │   ├── reserved.rs       Seeds the built-in properties project files never define.
+│   │   │   ├── items.rs          Settles deferred item groups into the ClCompile sources.
+│   │   │   ├── flags.rs          Translates settled metadata into MSVC (cl) switches.
+│   │   │   └── paths.rs          Lexical resolution of MSBuild-spelled paths.
 │   │   ├── toolchain.rs          ToolchainProvider trait + FakeToolchain for tests.
 │   │   │   └── vswhere.rs        Real discovery via vswhere. Windows-only at runtime.
 │   │   ├── compdb.rs             compile_commands.json construction and serialization.
-│   │   └── db.rs                 JSON state file: per-solution config/platform and mtimes.
+│   │   ├── db.rs                 JSON state file: per-solution config/platform and mtimes.
+│   │   └── testing.rs            Test-only: throwaway file trees for the tests that need real files.
 │   └── tests/
 │       ├── cli_surface.rs        Argument surface, exit codes, stdout/stderr discipline.
 │       ├── generate.rs           Fixture-driven integration tests.
@@ -267,6 +271,7 @@ The product is not functional yet, so calibrate expectations:
 | [docs/milestones.md](docs/milestones.md) | Feature groupings for MVP / V1 / V2 / future. No timelines. |
 | [docs/todos.md](docs/todos.md) | Issue tracker: per-release checklist of scoped work items, each with a branch name and required tests. **Stands in for GitHub issues** until the project has a repo host. |
 | [docs/changelog.md](docs/changelog.md) | Running log of features and bugfixes. **Updated as work lands, not at release time** — it's the source material for release notes. |
+| [docs/glossary.md](docs/glossary.md) | MSBuild and Visual Studio vocabulary as every other doc uses it, plus msvclsp's own terms. **Reference, not a decision record** — if a definition and a spec disagree, the spec wins and the glossary is wrong. |
 | [docs/brainstorm.md](docs/brainstorm.md) | Original thinking. **Historical — partly superseded.** It describes an LSP-proxy architecture that was abandoned. Read for context, don't treat as current. |
 | [README.md](README.md) | User-facing intro, prerequisites, build and test instructions. |
 

@@ -452,7 +452,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   reserved assignment drawing one sited at its line, and an empty bag remaining a valid starting
   point.
 
-- [ ] **MVP-12 — Extract compiler settings into flags**
+- [x] **MVP-12 — Extract compiler settings into flags**
   `feat/clcompile-flags` · ~1d
 
   **Summary:** Turn evaluated `ClCompile` settings into per-file include paths, defines, and
@@ -475,8 +475,47 @@ Goal: one solution, one manually selected configuration/platform, producing a
   issue resolves to absolute form have no `$(ProjectDir)` to resolve against. See
   [ADR 11](adr/11-reserved-property-seeding.md).
 
+  **Outcome:** Split three ways, one per pass and one per reason to change. `msbuild/eval.rs` gains
+  `Metadata` and `expand_metadata` — the `%()` counterpart to `Properties`, reusing that module's
+  existing `closing_paren`/`is_property_name`/size-cap machinery; `msbuild/items.rs` is pass 2, settling
+  the deferred stream into `SourceItem`s; `msbuild/flags.rs` is pass 3, the MSVC switch table; and
+  `msbuild/paths.rs` holds `normalize` (moved out of `imports.rs`, which gained a second caller)
+  alongside `from_msbuild`, because `PathBuf::from(r"inc\sub")` is a *single component* on Linux and CI
+  would otherwise compare a path Windows never produces. `evaluate` now takes `&ProjectScope` — the
+  signature change this item owed MVP-11, since seeding needs the solution path and that struct already
+  is the three inputs. Four decisions carry the weight: **an unset `%(Name)` expands to nothing and is
+  not recorded**, because `WIN32;%(PreprocessorDefinitions)` against an empty bag is what every real
+  project file writes and warning on it would train users to ignore the channel (ADR 08's `Some("")`
+  argument, other sigil); **`$` expands before `%`**; **an `ItemDefinitionGroup` applies only to items
+  declared after it**, so defaults are snapshotted per item rather than gathered up front, which is
+  what ADR 10's ordered splice was for; and **relative item paths resolve against the `.vcxproj`'s
+  directory, not the declaring file's** — MSBuild's rule, and the reason a shared sheet has to spell
+  `$(MSBuildThisFileDirectory)`. `Deferred::file`'s doc comment claimed the opposite and is corrected.
+  Writing the tests surfaced a defect in the deferred design: the walk *restores* `MSBuildThisFile*` on
+  the way out of each import, so settling a sheet's item definitions against the final bag resolves
+  `$(MSBuildThisFileDirectory)include` to the project's directory — pass 2 therefore keeps a mutable
+  clone of the bag and brackets each deferred element with `reserved::enter_file`/`restore`. Wildcards
+  **warn and contribute nothing** rather than expanding or failing, which closes the silent-no-sources
+  hole and hands expansion to **MVP-37**. Only parse-affecting settings are translated; `/WX`, `/Yu`,
+  `/Za` and `CharacterSet` are skipped with reasons in the source. An unrecognized *value* warns, an
+  unrecognized *setting name* does not. `declared_configurations` warns when the requested pair is one
+  the project never declares, which otherwise surfaces as files with no flags. **MVP-13 inherits six
+  more wordings** and **MVP-16 finally has input**. `FileCompilation` and `EvaluatedProject` were not
+  changed. See [ADR 12](adr/12-clcompile-flag-extraction.md) and "CLI Binary — Internal Modules" in
+  `engineering_spec.md`.
+
   **Tests:** Unit tests per setting mapping, a file-level override beating the project-level
   default, `%(Inherited)` composition, and semicolon-delimited lists splitting correctly.
+
+  All four written, plus: definition groups applying forward only; conditions settling against the
+  properties the graph *ended* with; `Update`/`Remove`/`Exclude`; a duplicate declaration; a wildcard;
+  path resolution against the project rather than the declaring sheet; `%()` order, dedup and the size
+  cap; unrecognized and `Default` values; the skip list asserted rather than described; flag order
+  stable across runs, since `Metadata` is a `HashMap` inside. `msbuild.rs` gained an end-to-end test
+  over a temp tree — a `.vcxproj` importing a sheet, three layers of define composition, Debug and
+  Release — which is what caught the `MSBuildThisFile*` defect above. `TempTree` moved from
+  `imports.rs`'s test module to `cli/src/testing.rs` for it. No `cli/tests/` work: fixture-driven
+  integration is MVP-23 and MVP-24's, and `fixtures/` is still empty.
 
 - [ ] **MVP-13 — Warn on unsupported MSBuild constructs**
   `feat/unsupported-warnings` · ~4h
@@ -560,6 +599,36 @@ Goal: one solution, one manually selected configuration/platform, producing a
   a toolchain-provided file produces the chosen behaviour plus a warning naming the file, and an
   integration test that a real-shaped project importing a stub `Microsoft.Cpp.props` generates.
 
+- [ ] **MVP-37 — Expand wildcard `ClCompile` includes**
+  `feat/item-globbing` · ~6h
+
+  **Summary:** Turn `<ClCompile Include="src\*.cpp" />` into the source files it names, instead of
+  warning that it was skipped.
+
+  **Description:** Deferred out of MVP-12, which settled the *policy* — a wildcard warns naming the
+  spec and contributes nothing — precisely so the silent version could not survive. That closed the
+  worst outcome (a project coming out with no source files and no explanation) without taking on
+  globbing, but a project written this way still gets an incomplete database.
+
+  Visual Studio never writes a wildcard, so this is for hand-maintained `.vcxproj` files and for the
+  shared-item `.props` pattern. Scope: `*` and `?` within a single directory segment via `read_dir`,
+  and MSBuild's `**` recursive form. `Exclude` becomes meaningful for the first time — it is
+  evaluated against the expanded set, which is the only case where it does real work. Two things to
+  be careful about: results must be **sorted**, since `read_dir` order is filesystem order and a
+  golden file cannot depend on it; and this is the first item resolution that touches the
+  filesystem, so a spec naming a directory that does not exist has to expand to nothing rather than
+  erroring, matching MSBuild.
+
+  Numbered 37 rather than slotted into this section's sequence because numbers are assigned in order
+  and never reused. Closes the wildcard open question in `engineering_spec.md`. See
+  [ADR 12](adr/12-clcompile-flag-extraction.md).
+
+  **Tests:** Unit tests over a temp tree for a single-directory `*`, a `?`, a `**` recursive match,
+  `Exclude` subtracting from an expanded set, a wildcard matching nothing expanding to nothing
+  rather than erroring, a spec whose directory does not exist, and sorted output across two runs.
+  Replace MVP-12's `a_wildcard_warns_and_contributes_nothing` and `a_question_mark_is_a_wildcard_too`
+  in `msbuild/items.rs` rather than leaving them contradicting the new behaviour.
+
 ## Toolchain discovery
 
 - [ ] **MVP-14 — Locate Visual Studio via `vswhere`**
@@ -616,6 +685,14 @@ Goal: one solution, one manually selected configuration/platform, producing a
   includes, matching search order. Use the `arguments` array rather than a `command` string to
   sidestep quoting problems entirely, and ensure the same file appearing in two projects
   produces deterministic output.
+
+  **Unblocked by MVP-12**, which filled in `EvaluatedProject`: each `FileCompilation` arrives with an
+  absolute `file`, absolute `include_paths`, `defines` without their `/D`, and `flags` already in
+  MSVC form and already deterministically ordered — so this item adds the driver invocation, formats
+  `/I` and `/D`, and appends the toolchain's system includes. It does **not** need to re-resolve or
+  re-sort anything. Note that a file appearing in two projects arrives twice with possibly different
+  flags, which MVP-12 deduplicates only *within* one project. See
+  [ADR 12](adr/12-clcompile-flag-extraction.md).
 
   **Tests:** Unit tests asserting absolute paths, argument ordering (project includes before
   system includes), driver-mode presence, and deterministic ordering across runs.

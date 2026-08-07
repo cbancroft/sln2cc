@@ -15,13 +15,18 @@ projects without hand-converting them to CMake.
 | `cli/`      | Rust binary: parses solutions, emits `compile_commands.json`.     |
 | `nvim/`     | Neovim plugin: drives the binary, manages clangd.                 |
 | `fixtures/` | Sample MSVC solutions for tests and manual verification.          |
-| `docs/`     | Project spec, engineering spec, milestones.                       |
+| `docs/`     | Project spec, engineering spec, milestones, glossary.             |
 
 ## Status
 
 Early scaffolding — nothing is implemented yet. See [docs/milestones.md](docs/milestones.md)
 for what's planned, and [docs/engineering_spec.md](docs/engineering_spec.md) for how it's
 being built.
+
+If MSBuild's vocabulary is unfamiliar — items, property sheets, item definition groups, the
+difference between a solution configuration and a project configuration — start with
+[docs/glossary.md](docs/glossary.md). msvclsp's warnings use those terms, and the terms are
+the tricky part of working with MSVC project files.
 
 The binary builds on any platform, but real use requires Windows with Visual Studio
 installed, since toolchain and Windows SDK discovery depend on it.
