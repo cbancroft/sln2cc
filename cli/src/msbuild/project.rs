@@ -14,7 +14,10 @@ use roxmltree::{Document, Node};
 use crate::{Error, Reporter, Result, progress};
 
 /// How deeply XML elements may nest before a project file is refused, counting `<Project>` as level
-/// 1.
+/// 1. `roxmltree::Document::parse` recurses once per level and aborts the process rather than
+/// return an error when the stack is gone, so depth has to be checked before parsing.
+/// See [ADR 14](../../../docs/adr/14-xml-nesting-depth-guard.md). Real project typically reach 4 
+/// levels of nesting. 8 times that is a generous buffer to account for truly complex projects.
 const MAX_XML_DEPTH: usize = 32;
 
 // One MSBuild project file, lowered into owned data.
@@ -393,7 +396,7 @@ fn text_of(node: Node) -> String {
 /// Check the nesting depth of document.
 ///
 /// Returns an error if it exceeds `MAX_XML_DEPTH`. This is a byte scan rather than a parse as the
-/// crash induced by an depth overrun happens within `Document::parse`. This is a guard, and not
+/// crash induced by a depth overrun happens within `Document::parse`. This is a guard, and not
 /// a validator. Malformed XML is stepped over rather than reported, as that is the job of the
 /// parser to detect. This just checks that the maximum depth does not exceed `MAX_XML_DEPTH` and
 /// returns an [`Error::RecursionLimit`] if it does.
@@ -418,7 +421,8 @@ fn check_nesting_depth(text: &str, path: &Path) -> Result<()> {
             // a `<!DOCTYPE>` is rejected by the parser before it recurses.
             index = skip_past(bytes, index + 2, b">");
         } else if rest.starts_with(b"</") {
-            // Saturating rather than checked.
+            // Saturating rather than checked. A close with no open is malformed and saying so
+            // is the parsers job, not ours.
             depth = depth.saturating_sub(1);
             index = skip_past(bytes, index + 2, b">");
         } else if rest.get(1).is_some_and(|&byte| is_name_start(byte)) {
@@ -436,8 +440,8 @@ fn check_nesting_depth(text: &str, path: &Path) -> Result<()> {
             }
             index = end;
         } else {
-            // Stray '<'
-            index += 1
+            // Stray '<'. Again, the parsers job to throw an error about.
+            index += 1;
         }
     }
 
@@ -487,7 +491,7 @@ fn skip_past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
 /// Only approximate for the sake of speed. The real production is a long list of Unicode ranges,
 /// and every byte of a multi-byte UTF-8 sequence is `>= 0x80` so accepting all of them is fine.
 fn is_name_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_' || byte == b':' || byte > 0x80
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b':' || byte >= 0x80
 }
 
 #[cfg(test)]
