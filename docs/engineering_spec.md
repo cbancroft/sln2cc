@@ -214,7 +214,7 @@ Rough module breakdown implied by the parsing pipeline:
   start tag ends — a literal `>` is legal in an attribute value where a `<` is not — because
   failing to see a `/>` leaks a level per source file and would refuse real projects before hostile
   ones. It is a guard rather than a validator: malformed markup is stepped over and still reported
-  by the parser as `project-parse`. See [ADR 14](adr/14-xml-nesting-depth-guard.md).
+  by the parser as `project-parse`. See [ADR 16](adr/16-xml-nesting-depth-guard.md).
 
   Macro expansion is settled by MVP-08 and lives in `msbuild/eval.rs`. It is **eager**: a value is
   expanded at the point of *assignment*, against the property bag as it stood at that moment, so

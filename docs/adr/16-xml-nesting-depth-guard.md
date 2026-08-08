@@ -1,4 +1,4 @@
-# ADR 14 — Bounding XML Nesting Depth Before the Parse
+# ADR 16 — Bounding XML Nesting Depth Before the Parse
 
 - **Status:** Accepted
 - **Date:** 2026-08-07
@@ -143,4 +143,5 @@ it would leave neither half readable on its own.
 - **This closes the hazard ADR 07 named, not the whole class it belongs to.** File *size* remains
   unbounded: `parse_project` calls `read_to_string` and allocates whatever is on disk. Depth was the
   documented gap and is the one closed here; a cap on bytes read is a separate decision, belongs with
-  the read rather than with the parser, and is deliberately not taken on now.
+  the read rather than with the parser, and is deliberately not taken on now — tracked as
+  **MVP-40**.

@@ -637,7 +637,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   keeps failing as `project-parse` with `roxmltree`'s own message and does not acquire a second,
   worse one. What it approximates — a DTD internal subset, a non-ASCII name start — it approximates
   by over-counting, on files the parser rejects anyway. See
-  [ADR 14](adr/14-xml-nesting-depth-guard.md).
+  [ADR 16](adr/16-xml-nesting-depth-guard.md).
 
   **Tests:** Un-`#[ignore]` `a_deeply_nested_document_is_rejected_rather_than_crashing` in
   `msbuild/project.rs`, which already asserts `ErrorKind::RecursionLimit`. Add a unit test that a
@@ -656,6 +656,27 @@ Goal: one solution, one manually selected configuration/platform, producing a
   existing suite fails at once. `malformed_xml_is_an_error_not_a_panic` and `a_dtd_is_rejected`
   serve unchanged as the guard's negative cases: both still expect `project-parse`, which is what
   keeps the scan from becoming a validator.
+
+- [ ] **MVP-40 — Bound project file size before reading**
+
+  **Summary:** Cap the bytes `parse_project` will read from a single `.vcxproj`/`.props` file,
+  the sibling gap MVP-35 found but did not close.
+
+  **Description:** `parse_project` calls `read_to_string` and allocates however many bytes are on
+  disk. A failed allocation aborts the process the same wordless way an unbounded XML-nesting
+  stack overflow used to — no `Err`, no exit code, nothing for the plugin to surface, which is the
+  exact failure CLAUDE.md §5 forbids and MVP-35/[ADR 16](adr/16-xml-nesting-depth-guard.md) closed
+  for depth. Depth and size are separate properties: a file can be small and deeply nested, or
+  large and flat, so bounding one does not bound the other. This belongs with the read itself
+  rather than with the parser, which is why it is a separate item rather than folded into
+  MVP-35's guard.
+
+  Numbered 40 rather than slotted into this section's sequence because numbers are assigned in
+  order and never reused.
+
+  **Tests:** Unit test that a file over the size cap fails as a structured error (existing
+  `ErrorKind`, if one fits, or a new one if not) rather than attempting the read; a file at or
+  under the cap reads normally.
 
 - [ ] **MVP-36 — Unsupported-condition policy for toolchain files**
   `fix/unsupported-condition-policy` · ~5h

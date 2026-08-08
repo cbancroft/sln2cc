@@ -149,7 +149,7 @@ work: **MVP-35**. The test for it is written and `#[ignore]`d, since running it 
 whole test binary.
 
 > **Resolved by MVP-35.** `parse_project_text` now bounds nesting with a byte scan before the text
-> reaches `roxmltree`, and the test runs. See [ADR 14](14-xml-nesting-depth-guard.md).
+> reaches `roxmltree`, and the test runs. See [ADR 16](16-xml-nesting-depth-guard.md).
 
 ## Consequences
 
@@ -165,7 +165,7 @@ whole test binary.
   `Remove` or `Update`, and a non-`Import` child of an `ImportGroup`.
 - **MVP-35 is new**: bound XML nesting depth before parsing, unblocking
   `a_deeply_nested_document_is_rejected_rather_than_crashing`. **Done** — a 32-level cap enforced
-  by a byte scan; see [ADR 14](14-xml-nesting-depth-guard.md).
+  by a byte scan; see [ADR 16](16-xml-nesting-depth-guard.md).
 - **`ErrorKind::ProjectSchema` is now part of the plugin contract** and cannot be renamed.
 - **New open question:** nothing expands a wildcard `Include`. `<ClCompile Include="src\*.cpp"/>`
   is legal MSBuild; Visual Studio never writes it, so it has stayed invisible, but MVP-12's scope

@@ -13,10 +13,10 @@ use roxmltree::{Document, Node};
 
 use crate::{Error, Reporter, Result, progress};
 
-/// How deeply XML elements may nest before a project file is refused, counting `<Project>` as level
-/// 1. `roxmltree::Document::parse` recurses once per level and aborts the process rather than
+/// How deeply XML elements may nest before a project file is refused, counting `<Project>` as
+/// level 1. `roxmltree::Document::parse` recurses once per level and aborts the process rather than
 /// return an error when the stack is gone, so depth has to be checked before parsing.
-/// See [ADR 14](../../../docs/adr/14-xml-nesting-depth-guard.md). Real project typically reach 4 
+/// See [ADR 16](../../../docs/adr/16-xml-nesting-depth-guard.md). Real project typically reach 4
 /// levels of nesting. 8 times that is a generous buffer to account for truly complex projects.
 const MAX_XML_DEPTH: usize = 32;
 
@@ -450,7 +450,7 @@ fn check_nesting_depth(text: &str, path: &Path) -> Result<()> {
 
 /// Where a start tag ends, and whether it closed itself.
 ///
-/// `from` is the offset just past the  `<`. Quoting is tracked because an attribute value may hold
+/// `from` is the offset just past the `<`. Quoting is tracked because an attribute value may hold
 /// a literal `>`, stopping at the first one would read `<X A="a>b" />` as a tag that opens a level
 /// and never closes it.
 ///
@@ -488,7 +488,7 @@ fn skip_past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
 
 /// Whether `byte` can begin an XML element name.
 ///
-/// Only approximate for the sake of speed. The real production is a long list of Unicode ranges,
+/// Only approximate for the sake of simplicity. The real production is a long list of Unicode ranges,
 /// and every byte of a multi-byte UTF-8 sequence is `>= 0x80` so accepting all of them is fine.
 fn is_name_start(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_' || byte == b':' || byte >= 0x80
