@@ -3,18 +3,18 @@
 
 describe("msvclsp.discovery", function()
   it("finds the project root from configured root markers", function()
-    pending("not yet implemented")
+    MiniTest.skip("not yet implemented")
   end)
 
   it("caches discovered solutions instead of rescanning", function()
-    pending("not yet implemented")
+    MiniTest.skip("not yet implemented")
   end)
 
   it("rescan refreshes the cache", function()
-    pending("not yet implemented")
+    MiniTest.skip("not yet implemented")
   end)
 
   it("remembers the active solution per project root", function()
-    pending("not yet implemented")
+    MiniTest.skip("not yet implemented")
   end)
 end)
