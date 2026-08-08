@@ -723,7 +723,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Toolchain discovery
 
-- [ ] **MVP-14 — Locate Visual Studio via `vswhere`**
+- [x] **MVP-14 — Locate Visual Studio via `vswhere`**
   `feat/vswhere-discovery` · ~5h
 
   **Summary:** Implement `VsWhereToolchain`'s discovery of installed Visual Studio instances.
@@ -735,9 +735,35 @@ Goal: one solution, one manually selected configuration/platform, producing a
   not a panic, since it is what a user without Visual Studio will hit first. Keep this
   Windows-only behavior behind the existing trait so the crate still builds elsewhere.
 
+  **Outcome:** `toolchain/vswhere.rs` gains `VsInstance` and a small pipeline split at the
+  impure/pure boundary: `run_vswhere` shells out and returns raw stdout, `parse_instances` and
+  `newest` are pure, and `select_instance` composes them into what `VsWhereToolchain::locate`
+  calls. That split is what makes the issue's three test cases — multiple instances, an empty
+  result, malformed output — unit-testable against recorded strings with no filesystem, and what
+  makes "`vswhere.exe` absent" testable on any OS: `run_vswhere` takes its path as a parameter
+  rather than resolving `vswhere_path()` internally, so a test can point it at a path that exists
+  nowhere. Filtering settled on the **component** `Microsoft.VisualStudio.Component.VC.Tools.
+  x86.x64` rather than the broader **workload** `NativeDesktop`, confirmed with the user, since a
+  standalone Build Tools install carries the component without the workload and would otherwise
+  read as "no usable installation". Prerelease instances are excluded, `vswhere`'s own default.
+  The newest instance wins by comparing `installationVersion` as parsed per-component integers,
+  not as a string, since `"9.0" > "17.0"` lexicographically. All three failure shapes — no
+  `vswhere`, no matching instance, malformed output — raise the existing `Error::ToolchainNotFound`
+  rather than a new kind, since its documented remediation already covers all of them and none of
+  the failure modes was named ahead of time the way ADR 02's fourteen variants were. **Nothing
+  calls `discover()` from a subcommand yet**, so it wires up the new `locate()` and leaves resolving
+  the toolset/Windows SDK layout as `todo!()`, the same position `reserved::seed()` was in until
+  MVP-12 — **MVP-15 removes it** and reads `VsInstance::install_path`. See
+  [ADR 14](adr/14-vswhere-discovery.md) and "Toolchain discovery" in `engineering_spec.md`.
+
   **Tests:** Unit tests parsing recorded `vswhere` JSON output (multiple instances, empty
   result, malformed output). Live discovery is verified manually — no test may depend on a
   real installation.
+
+  All three written as specified, plus: version comparison asserted directly against a
+  lexicographic-vs-numeric case (`"9.0.0.0"` vs `"17.0.0.0"`), and the missing-`vswhere.exe` case
+  from the issue's description (not its test list) made assertable cross-platform by parameterizing
+  `run_vswhere` on the path rather than resolving it internally.
 
 - [ ] **MVP-15 — Resolve toolset and Windows SDK include paths**
   `feat/toolchain-includes` · ~1d

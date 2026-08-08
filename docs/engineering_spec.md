@@ -321,8 +321,27 @@ Rough module breakdown implied by the parsing pipeline:
   warns, because it evaluates cleanly, matches no gated group, and yields source files with no flags.
   See [ADR 12](adr/12-clcompile-flag-extraction.md).
 - **Toolchain discovery** — locates the MSVC toolset and Windows SDK include paths/versions for the
-  resolved project (via `vswhere` or equivalent), since these aren't fully specified inside the
-  project files.
+  resolved project, since these aren't fully specified inside the project files. Split across two
+  issues along the boundary `vswhere` itself draws: MVP-14 finds *which* installation to use, MVP-15
+  reads *what's in it*.
+
+  Instance discovery is settled by MVP-14 and lives in `toolchain/vswhere.rs`. `vswhere` is shelled
+  out to as an argument vector, never a shell string, from its well-known
+  `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` location, requesting
+  `-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json` — the core MSVC compiler
+  *component* rather than the broader `NativeDesktop` *workload*, so a standalone Build Tools install
+  is found too, not just the full IDE. Prerelease instances are excluded, matching `vswhere`'s own
+  default. The shell-out (`run_vswhere`) is kept separate from parsing (`parse_instances`) and
+  selection (`select_instance`/`newest`), which is what makes "no `vswhere.exe`", "no matching
+  instance", and "malformed output" unit-testable against recorded strings and a nonexistent path,
+  without a filesystem or a real installation. The newest instance wins ties, compared by parsing
+  `installationVersion` into per-component integers rather than as a string, since `"9.0" >
+  "17.0"` lexicographically. All three failure shapes raise the existing `Error::ToolchainNotFound`
+  rather than a new kind — its remediation ("something about your Visual Studio install needs
+  fixing") already covers all of them. `ToolchainProvider::discover()` is not reachable from any
+  subcommand yet, so it calls the new `locate()` and leaves resolving the toolset/SDK layout as
+  `todo!()` for MVP-15, the same position `reserved::seed()` was in until MVP-12 wired it up. See
+  [ADR 14](adr/14-vswhere-discovery.md).
 - **Compilation database generation** — combines evaluated per-file compiler flags, include paths,
   and defines into `compile_commands.json` entries. Flags should be emitted in a form `clangd`
   understands directly (e.g. via `--driver-mode=cl` for MSVC-style flags) rather than translated to

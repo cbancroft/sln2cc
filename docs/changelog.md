@@ -85,6 +85,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   Everything msvclsp reports now says what it means for you rather than just what it saw, and there
   is a full list of what it can report in the engineering spec.
 
+- msvclsp can now find your Visual Studio installation on its own, the same way the VS installers
+  register themselves — by asking `vswhere` which installed instances have the C++ compiler toolset
+  and picking the newest one. Toolset and Windows SDK include paths, which is what actually makes
+  `#include <windows.h>` resolve, are the next piece.
+
 ### Fixed
 
 - The same problem is no longer reported over and over. One mistake in a property sheet shared by
