@@ -932,6 +932,29 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Neovim plugin
 
+- [ ] **MVP-39 — Migrate the plugin test harness from `plenary.nvim` to `mini.test`**
+  `chore/nvim-mini-test` · ~6h
+
+  **Summary:** Replace `plenary.nvim`'s busted-style test harness with `mini.test`'s, before
+  MVP-25 through MVP-34 write real specs against it.
+
+  **Description:** `plenary.nvim`'s own README now carries a deprecation notice — no new
+  features, critical-bug-only support through 2026-06-30, and no successor named. Right now
+  `nvim/tests/discovery_spec.lua` is still all `pending()` placeholders and every plugin issue
+  from MVP-25 onward is unstarted, so this is the one point where migrating costs a rewrite of
+  one placeholder file and the harness plumbing rather than a rewrite of dozens of real specs
+  later. Swap `minimal_init.lua`'s plenary bootstrap for `mini.test`'s, using its
+  `emulate_busted = true` mode so the existing `describe`/`it`/`pending` shape needs no rewrite
+  in the spec files themselves. Update the CI workflow, README, and CLAUDE.md's command and
+  etiquette references from `PlenaryBustedDirectory` to `mini.test`'s runner, and reword every
+  `docs/todos.md` entry from MVP-25 onward that still says "plenary specs" — those are
+  unstarted specifications, not completed work, so they get corrected in place rather than
+  left to drift.
+
+  **Tests:** This issue *is* test infrastructure — success is `discovery_spec.lua`'s existing
+  `pending()` cases still discovered and reported, not silently dropped, by the new runner,
+  both locally and in CI.
+
 - [ ] **MVP-25 — Configuration defaults and `setup()`**
   `feat/nvim-config` · ~3h
 
@@ -942,7 +965,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   resolved table to other modules. Every configurable value lives here with a default — no
   magic values inline elsewhere. Calling `setup()` twice should be safe.
 
-  **Tests:** plenary specs for default values, user overrides, deep-merge of nested tables,
+  **Tests:** mini.test specs for default values, user overrides, deep-merge of nested tables,
   rejection of an unknown key and of a wrong-typed value.
 
 - [ ] **MVP-26 — Project root detection**
@@ -957,7 +980,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   directory rather than erroring, and cache the result per buffer since this runs on every
   command. Handle unnamed and non-file buffers without throwing.
 
-  **Tests:** plenary specs over a temporary directory tree covering a marker at the root, a
+  **Tests:** mini.test specs over a temporary directory tree covering a marker at the root, a
   marker several levels up, no marker present, and an unnamed buffer.
 
 - [ ] **MVP-27 — Solution discovery**
@@ -972,7 +995,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   workflows both use. The MVP assumes a single solution and simply takes the first result when
   several are found; the picker arrives in V1.
 
-  **Tests:** plenary specs over a temporary tree covering one solution, a nested solution,
+  **Tests:** mini.test specs over a temporary tree covering one solution, a nested solution,
   ignored directories being skipped, no solutions found, and the second call hitting the
   cache.
 
@@ -988,7 +1011,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   undecodable output both become structured errors carrying stderr's contents so failures are
   legible. Every other module goes through this boundary so tests can stub it wholesale.
 
-  **Tests:** plenary specs with a stubbed job runner covering successful decode, non-zero
+  **Tests:** mini.test specs with a stubbed job runner covering successful decode, non-zero
   exit, malformed JSON, and a missing binary — no spec invokes the real binary.
 
 - [ ] **MVP-29 — Configuration/platform picker**
@@ -1002,7 +1025,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   the user's existing picker UI applies automatically. Cancelling must be a clean no-op, and
   the in-flight CLI call should give feedback so the editor doesn't appear frozen.
 
-  **Tests:** plenary specs with stubbed CLI covering options passed to `vim.ui.select`, the
+  **Tests:** mini.test specs with stubbed CLI covering options passed to `vim.ui.select`, the
   active entry being marked, selection triggering generation, and cancellation doing nothing.
 
 - [ ] **MVP-30 — clangd lifecycle**
@@ -1016,7 +1039,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   the existing client and reattaching open buffers. If the database doesn't exist yet, say so
   via `vim.notify` instead of starting a client that will silently fail.
 
-  **Tests:** plenary specs asserting the correct `--compile-commands-dir` argument, restart
+  **Tests:** mini.test specs asserting the correct `--compile-commands-dir` argument, restart
   stopping the previous client, buffers reattaching, and a missing database producing a
   notification rather than a start attempt.
 
@@ -1031,7 +1054,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   and register lazily so the load guard in `plugin/msvclsp.lua` keeps startup cost at zero.
   Commands invoked before `setup()` should say so clearly.
 
-  **Tests:** plenary specs asserting each command exists after `setup()`, dispatches to the
+  **Tests:** mini.test specs asserting each command exists after `setup()`, dispatches to the
   right module, and that invocation before setup produces a clear error.
 
 - [ ] **MVP-32 — `:checkhealth msvclsp`**
@@ -1045,7 +1068,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   should carry an actionable remedy rather than just a red mark, since this is the first place
   a user looks when nothing works.
 
-  **Tests:** plenary specs with stubbed CLI and filesystem covering all-healthy, missing
+  **Tests:** mini.test specs with stubbed CLI and filesystem covering all-healthy, missing
   binary, missing clangd, no solution found, and no database generated.
 
 - [ ] **MVP-33 — User documentation**
@@ -1097,21 +1120,21 @@ behind them have been tested.
 
 - [ ] **V1-03 — Solution picker with persistence** · `feat/nvim-solution-picker` · ~6h
   Present discovered solutions via `vim.ui.select` and remember the choice per project root so
-  later sessions don't re-prompt. Tests: plenary specs for selection, persistence across
+  later sessions don't re-prompt. Tests: mini.test specs for selection, persistence across
   simulated restarts, and cancellation.
 
 - [ ] **V1-04 — Rescan command** · `feat/nvim-rescan` · ~2h
   Invalidate the discovery cache and re-scan on demand for when solutions are added, moved, or
-  removed. Tests: plenary spec asserting the cache is dropped and repopulated.
+  removed. Tests: mini.test spec asserting the cache is dropped and repopulated.
 
 - [ ] **V1-05 — Switch-solution command** · `feat/nvim-switch-solution` · ~5h
   Change the active solution, restore *that* solution's own remembered configuration/platform,
-  regenerate if needed, and restart clangd. Tests: plenary specs asserting per-solution
+  regenerate if needed, and restart clangd. Tests: mini.test specs asserting per-solution
   configuration restoration rather than a carried-over global value.
 
 - [ ] **V1-06 — Inline first-run discovery** · `feat/nvim-inline-discovery` · ~3h
   Run discovery automatically when selection is requested and no cache exists, keeping it one
-  user action instead of two. Tests: plenary spec asserting discovery runs then the picker
+  user action instead of two. Tests: mini.test spec asserting discovery runs then the picker
   appears.
 
 ---
@@ -1120,7 +1143,7 @@ behind them have been tested.
 
 - [ ] **V2-01 — Handle a vanished active solution** · `fix/missing-solution` · ~4h
   Detect that a remembered solution's `.sln` no longer exists and prompt for a new one instead
-  of failing obscurely. Tests: unit and plenary specs covering a deleted and a moved solution.
+  of failing obscurely. Tests: unit and mini.test specs covering a deleted and a moved solution.
 
 - [ ] **V2-02 — Config-based solution pinning** · `feat/solution-pin` · ~4h
   Allow an explicit solution path via configuration for CI and scripting, bypassing the
@@ -1133,7 +1156,7 @@ behind them have been tested.
 
 - [ ] **V2-04 — Surface CLI errors in the plugin UI** · `feat/nvim-error-surfacing` · ~4h
   Present structured CLI errors and evaluation warnings legibly rather than letting them
-  vanish into a silent no-op. Tests: plenary specs asserting each error kind produces a
+  vanish into a silent no-op. Tests: mini.test specs asserting each error kind produces a
   distinct, actionable notification.
 
 - [ ] **V2-05 — Expanded documentation** · `docs/multi-solution-docs` · ~4h

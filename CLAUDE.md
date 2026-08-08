@@ -92,8 +92,8 @@ msvclsp/
 │   ├── plugin/msvclsp.lua        Load guard. Keep startup cost at zero.
 │   ├── doc/msvclsp.txt           Vimdoc.
 │   └── tests/
-│       ├── minimal_init.lua      Headless test bootstrap; locates plenary.
-│       └── *_spec.lua            plenary specs. CLI is stubbed, never really invoked.
+│       ├── minimal_init.lua      Headless test bootstrap; locates mini.test.
+│       └── test_*.lua            mini.test specs. CLI is stubbed, never really invoked.
 │
 ├── fixtures/                     Sample MSVC solutions: simple, multi-project,
 │                                 props-inheritance, multi-config. Used by both Rust
@@ -149,7 +149,7 @@ msvclsp/
   why `quick-xml`, `rusqlite`, `anyhow`, and `tracing` were rejected — is in `Cargo.toml` comments
   and "Dependency Decisions" in the engineering spec. Read it before proposing an addition; don't
   add dependencies casually, and if one is genuinely needed, say why.
-- The plugin depends on Neovim itself and plenary (tests only). Avoid adding runtime plugin
+- The plugin depends on Neovim itself and mini.test (tests only). Avoid adding runtime plugin
   dependencies.
 
 **Security**
@@ -210,19 +210,21 @@ cargo check --all-targets        # fast type check
 
 ```sh
 nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+  -c "lua require('mini.test').setup()" \
+  -c "lua MiniTest.run()"
 ```
 
 `--noplugin` matters — without it the developer's own config loads into the test session and
-throws unrelated errors. plenary is found automatically at
-`stdpath("data")/lazy/plenary.nvim`, or set `PLENARY_DIR`.
+throws unrelated errors. mini.test is found automatically at
+`stdpath("data")/lazy/mini.test`, or set `MINI_TEST_DIR`.
 
 **Full pre-push check:**
 
 ```sh
 cd cli && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cd ..
 cd nvim && nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+  -c "lua require('mini.test').setup()" \
+  -c "lua MiniTest.run()"
 ```
 
 ## 8. Testing
@@ -242,7 +244,7 @@ cd nvim && nvim --headless --noplugin -u tests/minimal_init.lua \
   Studio installation is a broken test — it won't run in CI and won't reproduce across
   machines.
 - Plugin tests never invoke the real binary and never require a Windows toolchain.
-- Unimplemented tests are `#[ignore]`d (Rust) or `pending()` (Lua) placeholders rather than
+- Unimplemented tests are `#[ignore]`d (Rust) or `MiniTest.skip()` (Lua) placeholders rather than
   deleted, so the gap stays visible.
 
 **MVP testing constraints**

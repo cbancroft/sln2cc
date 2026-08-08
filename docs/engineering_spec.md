@@ -119,7 +119,7 @@ statement ordering — `cargo fmt` output differs from 2021, so don't be surpris
 - **Language:** Lua.
 - Uses standard Neovim APIs (`vim.ui.select`, `vim.system`/`jobstart` for invoking the binary,
   `vim.lsp` for starting/restarting `clangd`).
-- Testing via `plenary.nvim`'s test harness (busted-style), run headless.
+- Testing via `mini.test`'s test harness (busted-style), run headless.
 
 ## Build/Tooling
 
@@ -584,7 +584,7 @@ MSBuild-evaluation surface area bounded.
   need for the plugin/binary itself to reason about LSP protocol correctness. Automating this
   (spinning up real `clangd` and asserting on LSP responses) is left as a future enhancement, not a
   v1 requirement.
-- **Neovim plugin tests**: `plenary.nvim`-based headless tests covering solution discovery/caching
+- **Neovim plugin tests**: `mini.test`-based headless tests covering solution discovery/caching
   logic, picker/persistence behavior, and `clangd` lifecycle management — with the CLI binary
   invocation faked/stubbed rather than requiring a real Windows toolchain in plugin tests.
 
@@ -598,7 +598,7 @@ MSBuild-evaluation surface area bounded.
 - **MSRV:** a job pinned to the declared `rust-version` running `cargo check --all-targets
   --locked`. Every other job uses `stable`, so without this the declared floor would drift upward
   the first time someone used a newer language feature. `--locked` also catches a stale lockfile.
-- **Neovim plugin:** headless `plenary.nvim` test run on every push/PR.
+- **Neovim plugin:** headless `mini.test` test run on every push/PR.
 - Provider (e.g. GitHub Actions) and exact workflow files are not yet written — this section
   documents intent/expectations, not a finished pipeline.
 

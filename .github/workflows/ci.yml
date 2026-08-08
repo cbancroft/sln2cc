@@ -63,12 +63,13 @@ jobs:
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
-      - name: Install plenary.nvim
-        run: git clone --depth 1 https://github.com/nvim-lua/plenary.nvim /tmp/plenary.nvim
+      - name: Install mini.test
+        run: git clone --depth 1 https://github.com/nvim-mini/mini.test /tmp/mini.test
       - name: Run tests
         working-directory: nvim
         env:
-          PLENARY_DIR: /tmp/plenary.nvim
+          MINI_TEST_DIR: /tmp/mini.test
         run: |
           nvim --headless --noplugin -u tests/minimal_init.lua \
-            -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+            -c "lua require('mini.test').setup()" \
+            -c "lua MiniTest.run()"

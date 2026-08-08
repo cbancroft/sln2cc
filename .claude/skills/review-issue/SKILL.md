@@ -29,7 +29,7 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
-and the plenary suite from `nvim/`. All four are CI gates, so a failure in any is the headline of
+and the mini.test suite from `nvim/`. All four are CI gates, so a failure in any is the headline of
 your review regardless of what the code looks like.
 
 Formatting deserves a specific note: when `rustfmt` reports `left behind trailing whitespace`, the

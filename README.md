@@ -39,11 +39,11 @@ installed, since toolchain and Windows SDK discovery depend on it.
 | ------------------------ | -------------------------------------------------------- |
 | Rust 1.85+ + Cargo       | Building and testing the CLI.                             |
 | Neovim 0.9+              | Running the plugin and its tests.                         |
-| [plenary.nvim]           | The plugin test harness.                                  |
+| [mini.test]               | The plugin test harness.                                  |
 | clangd                   | Manual end-to-end verification only.                      |
 | Visual Studio 2019/2022  | Manual end-to-end verification only (Windows).            |
 
-[plenary.nvim]: https://github.com/nvim-lua/plenary.nvim
+[mini.test]: https://github.com/nvim-mini/mini.test
 
 Rust builds, lints, and unit/integration tests run on any OS — toolchain discovery is
 mocked out. Only manual verification against a real solution requires Windows with Visual
@@ -76,21 +76,23 @@ what's still unimplemented.
 
 ### Neovim plugin
 
-Tests use [plenary.nvim] and run headless:
+Tests use [mini.test] and run headless:
 
 ```sh
 cd nvim
 nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+  -c "lua require('mini.test').setup()" \
+  -c "lua MiniTest.run()"
 ```
 
-plenary is located automatically at `stdpath("data")/lazy/plenary.nvim` if you already have
-it installed via `lazy.nvim`. Otherwise clone it and point `PLENARY_DIR` at the checkout:
+mini.test is located automatically at `stdpath("data")/lazy/mini.test` if you already have
+it installed via `lazy.nvim`. Otherwise clone it and point `MINI_TEST_DIR` at the checkout:
 
 ```sh
-git clone --depth 1 https://github.com/nvim-lua/plenary.nvim /tmp/plenary.nvim
-PLENARY_DIR=/tmp/plenary.nvim nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+git clone --depth 1 https://github.com/nvim-mini/mini.test /tmp/mini.test
+MINI_TEST_DIR=/tmp/mini.test nvim --headless --noplugin -u tests/minimal_init.lua \
+  -c "lua require('mini.test').setup()" \
+  -c "lua MiniTest.run()"
 ```
 
 `--noplugin` matters: without it your own config's plugin scripts load into the test
