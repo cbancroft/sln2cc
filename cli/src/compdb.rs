@@ -32,7 +32,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// The lowercased, normalized absolute directory a `.sln` list in. Used for hash generation and
+/// The lowercased, normalized absolute directory a `.sln` lives in. Used for hash generation and
 /// storing in the collision marker file.
 ///
 /// Unicode aware.
@@ -57,7 +57,7 @@ fn output_dir_name(sln_path: &Path) -> String {
 }
 
 /// Resolve the `.msvclsp/<solution-name>-<hash>` directory for `sln_path`, creating it (and
-/// `msvclsp_root`, if needed) and writing its collision marker on first use.
+/// `root`, if needed) and writing its collision marker on first use.
 ///
 /// A mismatched marker means a different solution's directory already claims this hash. The error
 /// is reported as [`Error::StorageCollision`] rather than silently overwriting.
@@ -157,7 +157,7 @@ impl<'a> From<&'a CompileCommand> for Entry<'a> {
 }
 
 /// Write the database to `<output_dir>/compile_commands.json`, atomically (temp file then rename)
-/// so an interrupted run can never read clangd reading a truncated DB.
+/// so an interrupted run can never leave clangd reading a truncated DB.
 pub fn write(commands: &[CompileCommand], output_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(output_dir).map_err(|e| Error::io(output_dir, e))?;
 
