@@ -6,10 +6,12 @@ local plugin_root = vim.fn.fnamemodify(this, ":p:h:h")
 vim.opt.runtimepath:prepend(plugin_root)
 
 -- mini.test must be on the runtimepath. Prefer an explicit MINI_TEST_DIR (CI clones it),
--- otherwise fall back to a lazy.nvim-managed checkout if the developer already has one.
+-- otherwise fall back to a vim.pack-managed checkout if the developer already has one —
+-- vim.pack (built into Neovim 0.12+) installs plugins under `site/pack/core/opt/<name>`
+-- of stdpath("data"); see :help vim.pack.
 local mini_test = os.getenv("MINI_TEST_DIR")
 if not mini_test or mini_test == "" then
-  mini_test = vim.fn.stdpath("data") .. "/lazy/mini.test"
+  mini_test = vim.fn.stdpath("data") .. "/site/pack/core/opt/mini.test"
 end
 
 if vim.fn.isdirectory(mini_test) == 0 then

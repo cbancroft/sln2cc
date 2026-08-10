@@ -85,8 +85,9 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
   -c "lua MiniTest.run()"
 ```
 
-mini.test is located automatically at `stdpath("data")/lazy/mini.test` if you already have
-it installed via `lazy.nvim`. Otherwise clone it and point `MINI_TEST_DIR` at the checkout:
+mini.test is located automatically at `stdpath("data")/site/pack/core/opt/mini.test` if
+you already have it installed via `vim.pack` (Neovim's built-in plugin manager, 0.12+).
+Otherwise clone it and point `MINI_TEST_DIR` at the checkout:
 
 ```sh
 git clone --depth 1 https://github.com/nvim-mini/mini.test /tmp/mini.test

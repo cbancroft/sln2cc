@@ -870,7 +870,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Compilation database
 
-- [ ] **MVP-16 — Build compilation database entries**
+- [x] **MVP-16 — Build compilation database entries**
   `feat/compdb-build` · ~6h
 
   **Summary:** Combine evaluated project settings and toolchain includes into
@@ -893,6 +893,16 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** Unit tests asserting absolute paths, argument ordering (project includes before
   system includes), driver-mode presence, and deterministic ordering across runs.
+
+  **Outcome:** All four written as specified, plus: no dedup across projects (two entries, each
+  keeping its own project's flags) and a no-files project contributing nothing. `arguments` is
+  `["clang-cl", "--driver-mode=cl"]`, project `/I`s, toolchain `/I`s, `/D`s, `flags` unchanged, then
+  the file path trailing as the final argument — full reasoning, including the two orderings
+  considered and rejected, in [ADR 18](adr/18-compdb-entry-assembly.md). `EvaluatedProject` and
+  `FileCompilation` needed no changes, confirming ADR 12's prediction. `CompileCommand` gained
+  `PartialEq` for the determinism test. `compdb::write` (serializing to disk) remains MVP-17's, and
+  wiring `generate` to this pipeline is MVP-22's — so nothing here is user-visible yet, and no
+  changelog entry was added.
 
 - [ ] **MVP-17 — Serialize and write `compile_commands.json`**
   `feat/compdb-write` · ~3h

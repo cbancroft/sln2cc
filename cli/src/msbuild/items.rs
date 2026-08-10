@@ -99,28 +99,28 @@ pub fn settle(
                 }
             }
 
-            Element::Items(group) => {
-                if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
-                    for item in &group.items {
-                        if !item.item_type.eq_ignore_ascii_case("ClCompile") {
-                            continue;
-                        }
+            Element::Items(group)
+                if holds(group.condition.as_deref(), &scope, group.line, reporter)? =>
+            {
+                for item in &group.items {
+                    if !item.item_type.eq_ignore_ascii_case("ClCompile") {
+                        continue;
+                    }
 
-                        if !holds(item.condition.as_deref(), &scope, item.line, reporter)? {
-                            continue;
-                        }
+                    if !holds(item.condition.as_deref(), &scope, item.line, reporter)? {
+                        continue;
+                    }
 
-                        // Include, Update, and Remove are mutually exclusive in practice, and taken
-                        // in that order so an item spelling two only has the first acted on
-                        if let Some(include) = &item.include {
-                            include_item(&mut sources, item, include, &defaults, &scope, reporter)?;
-                        } else if let Some(update) = &item.update {
-                            update_item(&mut sources, item, update, &scope, reporter)?;
-                        } else if let Some(remove) = &item.remove {
-                            let dropped =
-                                specs(remove, &scope, item.line, Wildcard::Harmless, reporter)?;
-                            sources.retain(|source| !dropped.contains(&source.path));
-                        }
+                    // Include, Update, and Remove are mutually exclusive in practice, and taken
+                    // in that order so an item spelling two only has the first acted on
+                    if let Some(include) = &item.include {
+                        include_item(&mut sources, item, include, &defaults, &scope, reporter)?;
+                    } else if let Some(update) = &item.update {
+                        update_item(&mut sources, item, update, &scope, reporter)?;
+                    } else if let Some(remove) = &item.remove {
+                        let dropped =
+                            specs(remove, &scope, item.line, Wildcard::Harmless, reporter)?;
+                        sources.retain(|source| !dropped.contains(&source.path));
                     }
                 }
             }

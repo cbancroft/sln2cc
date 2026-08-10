@@ -375,6 +375,17 @@ Rough module breakdown implied by the parsing pipeline:
   and defines into `compile_commands.json` entries. Flags should be emitted in a form `clangd`
   understands directly (e.g. via `--driver-mode=cl` for MSVC-style flags) rather than translated to
   native clang flags, to minimize translation-fidelity risk.
+
+  `compdb::build` (MVP-16) settles the entry shape: `arguments` begins with
+  `["clang-cl", "--driver-mode=cl"]`, then each file's project `/I`s, then the toolchain's system
+  `/I`s appended after (matching `cl`'s own search order), then `/D`s, then `flags` unchanged in the
+  order `msbuild::flags::compile` already settled, then the absolute file path as the trailing
+  argument — `arguments` has to read as a runnable command line, not just a flag bag. `directory` is
+  the owning project's directory. A file compiled by two different projects produces two entries, one
+  per project with that project's own flags; MVP-12 deduplicates only within a single project. No
+  sorting happens in `build` itself — determinism is inherited from the `Vec`-based structures ADR 12
+  already made stable end to end. See [ADR 18](adr/18-compdb-entry-assembly.md). `compdb::write`
+  (serializing and persisting the result) is MVP-17.
 - **Persistence (JSON state file)** — stores, per discovered solution: known configuration/platform
   values, the last-active configuration/platform, and file modification timestamps used to detect
   when a reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
