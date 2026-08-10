@@ -148,6 +148,15 @@ pub enum Error {
         line: Option<usize>,
         detail: String,
     },
+
+    #[error("{}: already claimed by {found}; this solution's directory is {expected}",
+        dir.display()
+    )]
+    StorageCollision {
+        dir: PathBuf,
+        expected: String,
+        found: String,
+    },
 }
 
 impl Error {
@@ -171,6 +180,7 @@ impl Error {
             Error::StateVersion { .. } => ErrorKind::StateVersion,
             Error::Unimplemented { .. } => ErrorKind::Unimplemented,
             Error::ProjectSchema { .. } => ErrorKind::ProjectSchema,
+            Error::StorageCollision { .. } => ErrorKind::StorageCollision,
             Error::Context { source, .. } => source.kind(),
         }
     }
@@ -234,12 +244,13 @@ pub enum ErrorKind {
     StateVersion,
     Unimplemented,
     ProjectSchema,
+    StorageCollision,
 }
 
 impl ErrorKind {
     /// Every kind, in declaration order. Exists so tests can assert the wire strings stay
     /// unique and unchanged without listing them twice.
-    pub const ALL: [ErrorKind; 14] = [
+    pub const ALL: [ErrorKind; 15] = [
         ErrorKind::Io,
         ErrorKind::SolutionNotFound,
         ErrorKind::SolutionParse,
@@ -250,6 +261,7 @@ impl ErrorKind {
         ErrorKind::ToolchainNotFound,
         ErrorKind::ToolchainIncomplete,
         ErrorKind::InvalidConfiguration,
+        ErrorKind::StorageCollision,
         ErrorKind::StateParse,
         ErrorKind::StateVersion,
         ErrorKind::Unimplemented,
@@ -274,6 +286,7 @@ impl ErrorKind {
             ErrorKind::StateVersion => "state-version",
             ErrorKind::Unimplemented => "unimplemented",
             ErrorKind::ProjectSchema => "project-schema",
+            ErrorKind::StorageCollision => "storage-collision",
         }
     }
 
@@ -303,6 +316,7 @@ impl ErrorKind {
             ErrorKind::ToolchainNotFound | ErrorKind::ToolchainIncomplete => 6,
             ErrorKind::InvalidConfiguration => 7,
             ErrorKind::Unimplemented => 9,
+            ErrorKind::StorageCollision => 10,
         }
     }
 }
@@ -419,6 +433,16 @@ mod tests {
                 ErrorKind::InvalidConfiguration,
             ),
             (
+                // MVP-17: two different solution directories hashed to the same
+                // `.msvclsp/<name>-<hash>` directory.
+                Error::StorageCollision {
+                    dir: PathBuf::from(r"C:\proj\.msvclsp\App-abcd1234"),
+                    expected: r"c:\proj\app".to_string(),
+                    found: r"c:\other\app".to_string(),
+                },
+                ErrorKind::StorageCollision,
+            ),
+            (
                 Error::StateParse {
                     path: PathBuf::from(r"C:\proj\.msvclsp\state.json"),
                     source: serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
@@ -503,14 +527,18 @@ mod tests {
             "Profile|ARM64 is not a configuration of this solution; \
              valid values are: Debug|x64, Release|x64"
         );
-        assert!(rendered[10].starts_with(r"C:\proj\.msvclsp\state.json: malformed state file: "));
         assert_eq!(
-            rendered[11],
+            rendered[10],
+            r"C:\proj\.msvclsp\App-abcd1234: already claimed by c:\other\app; this solution's directory is c:\proj\app"
+        );
+        assert!(rendered[11].starts_with(r"C:\proj\.msvclsp\state.json: malformed state file: "));
+        assert_eq!(
+            rendered[12],
             r"C:\proj\.msvclsp\state.json: state file version 9 is not supported (expected 1)"
         );
-        assert_eq!(rendered[12], "test_function is not implemented yet");
+        assert_eq!(rendered[13], "test_function is not implemented yet");
         assert_eq!(
-            rendered[13],
+            rendered[14],
             r"C:\proj\app.vcxproj:1: invalid project file: root element is <Filters>"
         );
     }
@@ -543,6 +571,7 @@ mod tests {
             "toolchain-not-found",
             "toolchain-incomplete",
             "invalid-configuration",
+            "storage-collision",
             "state-parse",
             "state-version",
             "unimplemented",
@@ -581,6 +610,8 @@ mod tests {
         assert_eq!(ErrorKind::ToolchainIncomplete.exit_code(), 6);
         assert_eq!(ErrorKind::InvalidConfiguration.exit_code(), 7);
         assert_eq!(ErrorKind::Unimplemented.exit_code(), 9);
+        // MVP-17: the next unused code — `8` stays reserved (see the comment on `exit_code`).
+        assert_eq!(ErrorKind::StorageCollision.exit_code(), 10);
 
         for kind in ErrorKind::ALL {
             let code = kind.exit_code();

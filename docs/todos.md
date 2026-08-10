@@ -904,7 +904,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   wiring `generate` to this pipeline is MVP-22's — so nothing here is user-visible yet, and no
   changelog entry was added.
 
-- [ ] **MVP-17 — Serialize and write `compile_commands.json`**
+- [x] **MVP-17 — Serialize and write `compile_commands.json`**
   `feat/compdb-write` · ~5h
 
   **Summary:** Write the database to `.msvclsp/<solution-name>-<hash>/compile_commands.json`,
@@ -939,6 +939,20 @@ Goal: one solution, one manually selected configuration/platform, producing a
   produce two different, independently-writable directories; test asserting a genuine collision
   (same `<solution-name>-<hash>` claimed by a different source directory) errors rather than
   overwriting.
+
+  **Outcome:** All five written as specified, plus a sixth covering the "stable ordering across
+  runs" half of the atomic-write test at the serialized-bytes level, since the original split it
+  from "replaces an existing file." Directory naming/collision detection (`output_dir_name`,
+  `resolve_output_dir`) landed separate from serialization (`write`) so the hash tests need no
+  filesystem at all. The collision marker is a plain-text `.source` file holding the same
+  lowercased, normalized source directory the hash is computed from — one field, so no
+  `serde_json` envelope. `Error::StorageCollision` takes exit code `10`, the next unused one
+  (`8` stays reserved per ADR 10). Since a genuine FNV-1a collision can't be constructed by
+  hand, its test seeds a `.source` marker directly at the path `output_dir_name` would compute,
+  rather than exercising a real hash collision — the handling code is real, only the trigger is
+  synthetic. Full reasoning in [ADR 19](adr/19-hashed-storage-directory-write.md). `compdb::write`
+  still isn't reachable from the CLI — `generate` isn't wired to this pipeline until MVP-22 — so,
+  matching MVP-16's own precedent, no changelog entry was added.
 
 ## Persistence
 

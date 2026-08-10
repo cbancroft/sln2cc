@@ -623,9 +623,10 @@ belongs to `main.rs`.
     solution's artifacts across two `.msvclsp` entries depending on invocation casing.
   - **A collision is detected and errors loudly**, never silently shared or overwritten, per
     "never silently guess" (CLAUDE.md §3). Each `.msvclsp/<solution-name>-<hash>/` carries a small
-    marker recording the absolute (lowercased, normalized) directory it was created for; before
-    writing, an existing directory's marker is checked against the current one, and a mismatch is
-    a specific, actionable error naming both directories rather than a silent overwrite.
+    marker file, `.source`, recording the absolute (lowercased, normalized) directory it was
+    created for; before writing, an existing directory's marker is checked against the current
+    one, and a mismatch is a specific, actionable error naming both directories rather than a
+    silent overwrite. See [ADR 19](adr/19-hashed-storage-directory-write.md).
   - **A moved solution directory orphans its old `.msvclsp/<solution-name>-<hash>/` with no
     cleanup**, accepted as a known v1 cost consistent with the state file's own already-accepted
     "last-writer-wins, no locking" tradeoff (see `db.rs`'s module doc). Not addressed until it
