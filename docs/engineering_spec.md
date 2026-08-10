@@ -594,18 +594,47 @@ belongs to `main.rs`.
 - Active solution/config selection: interactive picker, persisted per workspace (project root,
   detected via standard LSP root markers like `.git`), with an explicit switch command.
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into
-  `.msvclsp/<solution-name>/`.
+  `.msvclsp/<solution-name>-<hash>/`.
 - `clangd` lifecycle: start/restart `clangd` pointed explicitly at
-  `.msvclsp/<solution-name>/compile_commands.json` (not relying on `clangd`'s own directory-walk
-  discovery), re-launching when the database is regenerated or the active solution/config changes.
+  `.msvclsp/<solution-name>-<hash>/compile_commands.json` (not relying on `clangd`'s own
+  directory-walk discovery), re-launching when the database is regenerated or the active
+  solution/config changes. The plugin never constructs this path itself — `generate`'s JSON envelope
+  (`GenerateResult.database`, `cli.rs`) always carries the absolute path it actually wrote.
 
 ## Storage Layout
 
 - `.msvclsp/` at the project root (project root = same root markers Neovim's LSP clients use).
-- Namespaced by solution: `.msvclsp/<solution-name>/compile_commands.json`.
+- Namespaced by solution: `.msvclsp/<solution-name>-<hash>/compile_commands.json`, where
+  `<solution-name>` is the `.sln` file's stem and `<hash>` is the low 32 bits of a 64-bit FNV-1a
+  hash of the lowercased, lexically-normalized absolute path of the directory containing the
+  `.sln`, formatted as 8 lowercase hex digits (e.g. `App-abcd1234`). This disambiguates two
+  discovered solutions that share a filename in different directories — resolves the naming
+  collision this scheme originally left open (was tracked as V2-03; folded in here instead of
+  deferred, since nothing implements the old bare-name scheme yet).
+  - **FNV-1a, hand-rolled, not `std::collections::hash_map::DefaultHasher`.** `DefaultHasher`'s
+    documented algorithm is explicitly unspecified "over releases" — a future Rust/std upgrade
+    could silently change every hash, orphaning every existing `.msvclsp` directory on the next
+    rebuild. FNV-1a is small enough to own directly (consistent with the stdlib-first dependency
+    policy in "Dependency Decisions" above) and its output never changes underneath the project.
+  - **Lowercased before hashing**, via Unicode-aware `.to_lowercase()` rather than
+    `.to_ascii_lowercase()` since a path can contain non-ASCII characters. Windows paths are
+    case-preserving but the filesystem is case-insensitive; without folding, `C:\Code\App` and
+    `C:\CODE\APP` — the same directory — would hash to different suffixes and silently split one
+    solution's artifacts across two `.msvclsp` entries depending on invocation casing.
+  - **A collision is detected and errors loudly**, never silently shared or overwritten, per
+    "never silently guess" (CLAUDE.md §3). Each `.msvclsp/<solution-name>-<hash>/` carries a small
+    marker recording the absolute (lowercased, normalized) directory it was created for; before
+    writing, an existing directory's marker is checked against the current one, and a mismatch is
+    a specific, actionable error naming both directories rather than a silent overwrite.
+  - **A moved solution directory orphans its old `.msvclsp/<solution-name>-<hash>/` with no
+    cleanup**, accepted as a known v1 cost consistent with the state file's own already-accepted
+    "last-writer-wins, no locking" tradeoff (see `db.rs`'s module doc). Not addressed until it
+    proves to be a real problem.
 - A JSON state file (location within `.msvclsp/` TBD — likely a single file at the `.msvclsp/` root
   rather than one per solution, since it needs to track which solution is currently active) holds
   discovery cache, per-solution configuration/platform state, and file modification timestamps.
+  Keyed by the solution's own absolute path, independent of the hash-suffixed directory naming
+  above — `db.rs` already scopes its (currently unimplemented) API by `&Path`, not by name.
 
 ## VS/Project Schema Support
 

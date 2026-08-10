@@ -82,9 +82,10 @@ rework.
   clients already use (e.g. `.git`), rather than a bespoke convention. This is also where `.msvclsp`
   lives.
 - **Storage is a single `.msvclsp` at project root, namespaced by solution** — e.g.
-  `.msvclsp/<solution-name>/compile_commands.json` — rather than one `.msvclsp` per solution
-  directory. This keeps a previously-used solution's cached artifacts around when switching back to
-  it later.
+  `.msvclsp/<solution-name>-<hash>/compile_commands.json`, where `<hash>` disambiguates two
+  solutions sharing a filename — rather than one `.msvclsp` per solution directory. This keeps a
+  previously-used solution's cached artifacts around when switching back to it later. See
+  "Storage Layout" in [engineering_spec.md](engineering_spec.md) for the naming scheme itself.
 - **Configuration/platform is remembered per solution, independently.** Different solutions can
   define different configuration/platform names, so switching back to a previously-used solution
   restores that solution's own last-used configuration/platform rather than falling back to a
@@ -108,5 +109,3 @@ rework.
   or deleted)?
 - Should there be a way to explicitly pin/override the active solution via config (e.g. for CI or
   scripting use), bypassing the interactive picker?
-- Naming collisions: how should `.msvclsp/<solution-name>/` namespacing handle two discovered
-  solutions that share the same filename in different directories?

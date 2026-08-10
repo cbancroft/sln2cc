@@ -44,7 +44,7 @@ workflow smoother.
 - Subcommand to discover `.sln` files under a project root.
 - Per-solution state on disk: each discovered solution independently tracks its own last-used
   configuration/platform.
-- `compile_commands.json` output namespaced by solution (`.msvclsp/<solution-name>/`).
+- `compile_commands.json` output namespaced by solution (`.msvclsp/<solution-name>-<hash>/`).
 
 ## Neovim Plugin
 

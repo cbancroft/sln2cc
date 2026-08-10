@@ -905,10 +905,11 @@ Goal: one solution, one manually selected configuration/platform, producing a
   changelog entry was added.
 
 - [ ] **MVP-17 — Serialize and write `compile_commands.json`**
-  `feat/compdb-write` · ~3h
+  `feat/compdb-write` · ~5h
 
-  **Summary:** Write the database to `.msvclsp/<solution-name>/compile_commands.json`,
-  creating directories as needed.
+  **Summary:** Write the database to `.msvclsp/<solution-name>-<hash>/compile_commands.json`,
+  creating directories as needed, where `<hash>` disambiguates two discovered solutions that
+  share a filename in different directories.
 
   **Description:** Serialize with stable key and entry ordering so the file is diffable and
   golden tests are reproducible, and write atomically via a temporary file and rename so an
@@ -917,8 +918,27 @@ Goal: one solution, one manually selected configuration/platform, producing a
   verify against a real clangd, since this is an easy place to emit something that parses but
   doesn't resolve.
 
+  The output directory name is `<solution-name>-<hash>`: `<hash>` is the low 32 bits of a 64-bit
+  FNV-1a hash (hand-rolled, not `std::collections::hash_map::DefaultHasher` — its algorithm is
+  documented as unspecified across releases, which would silently reshuffle every existing
+  `.msvclsp` directory on a future Rust upgrade) of the lowercased, lexically-normalized absolute
+  path of the directory containing the `.sln`. Lowercasing matters because Windows paths are
+  case-preserving but the filesystem is case-insensitive — hashing as-written would silently split
+  one solution's artifacts across two directories depending on invocation casing. On a collision
+  (an existing `.msvclsp/<solution-name>-<hash>/` whose recorded source directory doesn't match the
+  current one), fail loudly with a specific error rather than silently sharing or overwriting the
+  directory — per CLAUDE.md §3, never silently guess. See "Storage Layout" in
+  `engineering_spec.md` for the full scheme, including the accepted orphan-directory cost when a
+  solution moves. This folds in what **V2-03** was tracking; V2-03 is removed rather than
+  duplicated, since nothing implemented the old bare-name scheme yet.
+
   **Tests:** Unit test round-tripping entries through serialization; test asserting stable
-  ordering across runs and that an existing file is replaced atomically.
+  ordering across runs and that an existing file is replaced atomically; test asserting the same
+  solution directory (including a differently-cased spelling of it) always produces the same
+  `<solution-name>-<hash>`; test asserting two different solution directories sharing a filename
+  produce two different, independently-writable directories; test asserting a genuine collision
+  (same `<solution-name>-<hash>` claimed by a different source directory) errors rather than
+  overwriting.
 
 ## Persistence
 
@@ -1263,11 +1283,6 @@ behind them have been tested.
 - [ ] **V2-02 — Config-based solution pinning** · `feat/solution-pin` · ~4h
   Allow an explicit solution path via configuration for CI and scripting, bypassing the
   picker entirely. Tests: assert the pinned solution wins over any remembered selection.
-
-- [ ] **V2-03 — Resolve solution name collisions** · `fix/name-collisions` · ~4h
-  Disambiguate two discovered solutions sharing a filename so their `.msvclsp/<name>/`
-  directories don't collide. Tests: two same-named solutions in different directories
-  generating independently.
 
 - [ ] **V2-04 — Surface CLI errors in the plugin UI** · `feat/nvim-error-surfacing` · ~4h
   Present structured CLI errors and evaluation warnings legibly rather than letting them
