@@ -45,9 +45,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   project that imported it. Properties MSBuild reserves for itself are protected: a project file
   trying to redefine one gets a warning naming the file and line, and the real value is kept.
 
-  Properties that come from your Visual Studio installation — `$(VCTargetsPath)` above all — are
-  still empty, so imports depending on them continue to be skipped with a warning until toolchain
-  discovery lands.
+  Properties that come from your Visual Studio installation — `$(VCTargetsPath)`,
+  `$(VSInstallDir)`, `$(MSBuildExtensionsPath)` — are filled in once a Visual Studio installation
+  is discovered, so the imports that reach Microsoft's own property sheets through them are no
+  longer skipped for that reason.
 
 - Your project's compiler settings now turn into actual flags. Evaluating a `.vcxproj` produces the
   list of source files it compiles and, for each one, its include directories as absolute paths, its
@@ -68,10 +69,17 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   recognize is named and skipped; and a value that still contains an unresolved `$(...)` says so
   before it reaches clangd.
 
-  Flags are still missing whatever Microsoft's own property sheets would add — `UNICODE` and the
-  toolset's default include directories among them — because those imports need a discovered Visual
-  Studio installation. What is generated is accurate about what your project files say and incomplete
-  about what MSBuild would add on top, until toolchain discovery lands.
+  Flags are still missing whatever Microsoft's own property sheets would add on top of your
+  project's own settings, and the toolset's own system include directories are not yet appended to
+  the database — both need the toolchain-derived properties threaded through a wired generation
+  pipeline, which arrives with compilation database assembly.
+
+- msvclsp can now find the actual compiler and Windows SDK headers on your machine, not just the
+  ones your project files mention. Given a located Visual Studio installation, it reads which MSVC
+  toolset version it defaults to, finds that toolset's `include` directory, and finds the newest
+  complete Windows SDK installed (skipping a newer one that's missing a piece, in favor of an older
+  one that works) — so `#include <windows.h>` and the C runtime headers will resolve once these
+  paths reach the generated database.
 
 - Warnings now come at two levels, so a long list is worth reading. A **warning** means msvclsp could
   not make sense of something and your flags may be wrong because of it — an unresolved `$(...)`, a

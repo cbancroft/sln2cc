@@ -20,6 +20,7 @@ use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf};
 
 use crate::ConfigPlatform;
 use crate::msbuild::eval::Properties;
+use crate::toolchain::Toolchain;
 
 /// The solution, project and configuration one evaluation runs for
 ///
@@ -33,6 +34,9 @@ pub struct ProjectScope {
     pub project: PathBuf,
     /// The project-level configuration/platform pair.
     pub config: ConfigPlatform,
+    /// `None` until a subcommand wires up `ToolchainProvider::discover`. While `None`, associated
+    /// properties remain unseeded.
+    pub toolchain: Option<Toolchain>,
 }
 
 /// Fills out a Properties object with everything derivable from `scope`, ready to be handed to
@@ -70,7 +74,27 @@ pub fn seed(scope: &ProjectScope) -> Properties {
     props.set("ProjectName", stem(&scope.project));
     props.set("ProjectExt", extension(&scope.project));
 
+    if let Some(toolchain) = &scope.toolchain {
+        props.set_reserved(
+            "VSInstallDir",
+            with_trailing_separator(&toolchain.install_path),
+        );
+        props.set_reserved(
+            "MSBuildExtensionsPath",
+            with_trailing_separator(&toolchain.install_path.join("MSBuild")),
+        );
+        props.set_reserved(
+            "VCTargetsPath",
+            with_trailing_separator(&toolchain.vc_targets_path),
+        );
+    }
     props
+}
+/// `path` with a trailing separator. Unlike `directory()`, which is written for a file path, this
+/// is for a path that already names a directory, such as `Toolchain::install_path` and
+/// `Toolchain::vc_targets_path`
+fn with_trailing_separator(path: &Path) -> String {
+    format!("{}{MAIN_SEPARATOR}", text(path))
 }
 
 /// The `MSBuildThisFile*` values displaced by [`enter_file`]. Opaque. Hand it back to [`restore`].
@@ -172,6 +196,7 @@ mod tests {
     use super::*;
     use crate::ConfigPlatform;
     use crate::msbuild::eval::Properties;
+    use crate::toolchain::Toolchain;
     use std::path::{Path, PathBuf};
 
     /// Spelled once, so every expectation below is built the way the host platform builds a path.
@@ -211,6 +236,26 @@ mod tests {
             solution: absolute(&["code", "app", "App.sln"]),
             project: absolute(&["code", "app", "lib", "Lib.vcxproj"]),
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
+        }
+    }
+
+    /// A fake but internally consistent `Toolchain`, standing in for a real `discover()` result.
+    fn toolchain() -> Toolchain {
+        Toolchain {
+            install_path: absolute(&["vs", "2022", "community"]),
+            vc_targets_path: absolute(&[
+                "vs",
+                "2022",
+                "community",
+                "MSBuild",
+                "Microsoft",
+                "VC",
+                "v170",
+            ]),
+            include_paths: Vec::new(),
+            toolset_version: "14.38.33130".to_string(),
+            sdk_version: "10.0.22621.0".to_string(),
         }
     }
 
@@ -350,6 +395,7 @@ mod tests {
             solution: PathBuf::from(r"\\server\share\code\App.sln"),
             project: PathBuf::from(r"\\server\share\code\lib\Lib.vcxproj"),
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
         });
 
         assert_property(&props, "MSBuildProjectDirectoryNoRoot", r"code\lib");
@@ -396,6 +442,67 @@ mod tests {
         }
     }
 
+    // -------------------------------------------------------------------------------------------
+    // MVP-15: the toolchain family, extending ADR 11's reserved space
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn toolchain_properties_are_seeded_when_a_toolchain_is_present() {
+        let toolchain = toolchain();
+        let props = seed(&ProjectScope {
+            toolchain: Some(toolchain.clone()),
+            ..scope()
+        });
+
+        assert_property(
+            &props,
+            "VSInstallDir",
+            &directory_of(&toolchain.install_path),
+        );
+        assert_property(
+            &props,
+            "MSBuildExtensionsPath",
+            &directory_of(&toolchain.install_path.join("MSBuild")),
+        );
+        assert_property(
+            &props,
+            "VCTargetsPath",
+            &directory_of(&toolchain.vc_targets_path),
+        );
+    }
+
+    #[test]
+    fn toolchain_properties_stay_undefined_without_a_toolchain() {
+        // Matches the "empty path, warned about" behavior `imports.rs` relies on today: seeding
+        // these empty rather than leaving them absent would read as *defined* per ADR 11's
+        // `Condition="'$(X)' != ''"` distinction and silently change what gets warned about.
+        let props = seed(&scope());
+
+        for name in ["VCTargetsPath", "VSInstallDir", "MSBuildExtensionsPath"] {
+            assert_eq!(
+                props.get(name),
+                None,
+                "$({name}) must stay undefined without a toolchain"
+            );
+        }
+    }
+
+    #[test]
+    fn every_toolchain_seeded_property_holds_something() {
+        // The toolchain-family counterpart to `every_seeded_property_holds_something`: a
+        // misspelled name here is exactly as invisible as one in the base 24.
+        let props = seed(&ProjectScope {
+            toolchain: Some(toolchain()),
+            ..scope()
+        });
+
+        for name in ["VCTargetsPath", "VSInstallDir", "MSBuildExtensionsPath"] {
+            let value = props.get(name);
+            assert!(value.is_some(), "$({name}) was never seeded");
+            assert_ne!(value, Some(""), "$({name}) was seeded empty");
+        }
+    }
+
     #[test]
     fn a_property_names_casing_does_not_matter_to_the_seed() {
         // Seeding writes through the same case-insensitive keying MVP-08 built, so a file spelling
@@ -414,6 +521,7 @@ mod tests {
             solution: absolute(&["проект", "App.sln"]),
             project: absolute(&["проект", "lib", "Lib.vcxproj"]),
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
         });
 
         assert_property(

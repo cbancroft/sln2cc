@@ -277,9 +277,10 @@ Rough module breakdown implied by the parsing pipeline:
   configuration-specific `PropertyGroup` applies at all — a database that generates cleanly and is
   wrong. Twenty-four properties are seeded in five families (`Solution*`, `Configuration`/`Platform`,
   `MSBuildProject*`, `MSBuildThisFile*`, `Project*`), all derived from three inputs: the `.sln` path,
-  the `.vcxproj` path, and the selected **project** pair per ADR 05. Toolchain-derived properties
-  (`$(VCTargetsPath)`, `$(VSInstallDir)`) are deliberately absent until MVP-15 can supply them from a
-  real installation. Directory-valued properties carry MSBuild's trailing separator — spelled with
+  the `.vcxproj` path, and the selected **project** pair per ADR 05. A twenty-fifth through
+  twenty-seventh family — `$(VCTargetsPath)`, `$(VSInstallDir)`, `$(MSBuildExtensionsPath)` — is
+  seeded by MVP-15 through `ProjectScope.toolchain: Option<Toolchain>`, undefined when it is
+  `None`. Directory-valued properties carry MSBuild's trailing separator — spelled with
   `MAIN_SEPARATOR` so a Linux CI run never mixes separators inside one path — except
   `$(MSBuildProjectDirectory)`, which MSBuild deliberately leaves without one; both conventions are
   load-bearing, since files concatenate these values directly. This module owns the *policy* of which
@@ -351,10 +352,25 @@ Rough module breakdown implied by the parsing pipeline:
   `installationVersion` into per-component integers rather than as a string, since `"9.0" >
   "17.0"` lexicographically. All three failure shapes raise the existing `Error::ToolchainNotFound`
   rather than a new kind — its remediation ("something about your Visual Studio install needs
-  fixing") already covers all of them. `ToolchainProvider::discover()` is not reachable from any
-  subcommand yet, so it calls the new `locate()` and leaves resolving the toolset/SDK layout as
-  `todo!()` for MVP-15, the same position `reserved::seed()` was in until MVP-12 wired it up. See
-  [ADR 14](adr/14-vswhere-discovery.md).
+  fixing") already covers all of them. See [ADR 14](adr/14-vswhere-discovery.md).
+
+  Resolving what's *inside* the located installation is settled by MVP-15. The MSVC toolset
+  version comes from reading `VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` under
+  `install_path` — the same file a real MSBuild reads when a project doesn't override
+  `$(VCToolsVersion)` — rather than picking the newest `VC\Tools\MSVC\*` directory on disk, since
+  those answer different questions. The Windows SDK is found at its own well-known location,
+  `%ProgramFiles(x86)%\Windows Kits\10`, mirroring `vswhere_path()`'s no-registry, no-`PATH`-search
+  pattern; the newest version with `ucrt`, `um`, and `shared` **all** present is selected, skipping
+  a newer-but-incomplete installation in favor of an older complete one. `Toolchain::include_paths`
+  is the MSVC include directory followed by `ucrt`, `um`, `shared`, in `cl`'s own search order.
+  `Toolchain` also carries `install_path` and a precomputed `vc_targets_path` (the VS *product*
+  version's `MSBuild\Microsoft\VC\v170`-style folder, unrelated to the MSVC toolset version), which
+  `msbuild/reserved.rs` seeds as `$(VSInstallDir)`, `$(MSBuildExtensionsPath)`, and
+  `$(VCTargetsPath)` through a new `ProjectScope.toolchain: Option<Toolchain>` — `None` leaves all
+  three undefined, matching the "empty path, warned about" behavior every import depending on them
+  had before this issue. Every failure this resolution can hit (missing version file, a version the
+  file names but that isn't installed, no complete Windows SDK) raises the existing
+  `Error::ToolchainIncomplete`. See [ADR 17](adr/17-toolchain-include-resolution.md).
 - **Compilation database generation** — combines evaluated per-file compiler flags, include paths,
   and defines into `compile_commands.json` entries. Flags should be emitted in a form `clangd`
   understands directly (e.g. via `--driver-mode=cl` for MSVC-style flags) rather than translated to

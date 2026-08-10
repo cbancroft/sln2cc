@@ -13,10 +13,16 @@ pub mod vswhere;
 use std::path::PathBuf;
 
 use crate::Result;
-
 /// Toolchain facts that cannot be derived from `.sln`/`.vcxproj` files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toolchain {
+    /// Visual Studio's own install root. Seeds `$(VSInstallDir)`.
+    pub install_path: PathBuf,
+    /// `install_path\MSBuild\Microsoft\VC\v{major}0`, precomputed because deriving it needs the
+    /// VS *product* version, which `reserved.rs` never sees. Seeds `$(VCTargetsPath)`.
+    pub vc_targets_path: PathBuf,
+    /// The MSVC toolset include directory, then the Windows SDK's `ucrt`/`um`/`shared`, in the
+    /// order `cl` itself searches them.
     pub include_paths: Vec<PathBuf>,
     pub toolset_version: String,
     pub sdk_version: String,

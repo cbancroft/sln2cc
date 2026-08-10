@@ -172,7 +172,9 @@ variants for being unraisable; adding a third would be the same mistake.
   Nothing calls `seed` today, since `evaluate` is still `todo!()`.
 - **MVP-15 extends the seed** rather than adding a second mechanism: the toolchain families
   (`VCTargetsPath`, `VSInstallDir`, `MSBuildExtensionsPath`) belong in `reserved.rs` behind the
-  `ToolchainProvider` trait, and `ProjectScope` is where they arrive.
+  `ToolchainProvider` trait, and `ProjectScope` is where they arrive. **Landed**: `ProjectScope`
+  gained `toolchain: Option<Toolchain>`, seeded when `Some` and left undefined when `None`,
+  exactly as anticipated here. See [ADR 17](17-toolchain-include-resolution.md).
 - **MVP-13 inherits one more warning wording** — the reserved-assignment refusal — on the same terms
   as ADR 10's: the fact is settled here, the phrasing is MVP-13's.
 - **MVP-10's undefined-property warning noise drops sharply** once a caller seeds, which is the

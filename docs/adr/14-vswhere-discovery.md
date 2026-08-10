@@ -125,7 +125,8 @@ cheap to add later against a real report of it mattering.
 ## Consequences
 
 - **MVP-15 consumes `VsInstance::install_path`** to locate `VC/Tools/MSVC/<version>/include` and the
-  Windows SDK layout, and removes `discover()`'s remaining `todo!()`.
+  Windows SDK layout, and removes `discover()`'s remaining `todo!()`. **Landed**: see
+  [ADR 17](17-toolchain-include-resolution.md).
 - **MVP-36** (unsupported-condition policy for toolchain files) still needs `$(VCTargetsPath)` seeded
   from a real installation before it can be worked, which is unchanged — this issue only produces an
   install root, not the seeded properties themselves.

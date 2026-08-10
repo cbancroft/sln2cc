@@ -276,6 +276,7 @@ mod tests {
             solution: dir.path("App.sln"),
             project: root.to_path_buf(),
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
         })
     }
 

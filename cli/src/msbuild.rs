@@ -165,6 +165,7 @@ mod tests {
             solution: dir.path("App.sln"),
             project,
             config: ConfigPlatform::new(config, platform),
+            toolchain: None,
         }
     }
 
@@ -386,6 +387,7 @@ mod tests {
             solution: dir.path("App.sln"),
             project: project_path,
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
         };
 
         let (project, reporter) = evaluated_reporting(&scope);
@@ -429,6 +431,7 @@ mod tests {
             solution: dir.path("App.sln"),
             project: dir.path("app/Gone.vcxproj"),
             config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: None,
         };
 
         let error = evaluate(&scope, &mut Reporter::new(false)).expect_err("must not evaluate");

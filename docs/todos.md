@@ -819,7 +819,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   from the issue's description (not its test list) made assertable cross-platform by parameterizing
   `run_vswhere` on the path rather than resolving it internally.
 
-- [ ] **MVP-15 — Resolve toolset and Windows SDK include paths**
+- [x] **MVP-15 — Resolve toolset and Windows SDK include paths**
   `feat/toolchain-includes` · ~1d
 
   **Summary:** Derive the MSVC toolset and Windows SDK system include directories from a
@@ -842,6 +842,31 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Unit tests against a fake directory tree mimicking a VS layout, asserting
   correct version selection when several toolsets are installed and a clear error when the
   SDK is absent.
+
+  **Outcome:** `Toolchain` gains `install_path` and a precomputed `vc_targets_path`; `vswhere.rs`
+  gains the pipeline that fills in the rest of `discover()`: `read_toolset_version` reads
+  `VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt` verbatim rather than picking the
+  newest `VC/Tools/MSVC/*` directory on disk, since a project can legitimately pin an older
+  toolset and "newest" would silently produce flags no real build uses. The Windows SDK is found
+  at its own well-known `%ProgramFiles(x86)%\Windows Kits\10` location — mirroring
+  `vswhere_path()`'s no-registry pattern rather than adding a dependency to read one — and
+  `resolve_sdk` picks the newest version where `ucrt`, `um`, and `shared` **all** exist, skipping
+  a newer-but-incomplete install in favor of an older complete one. `msbuild/reserved.rs` gains
+  `ProjectScope.toolchain: Option<Toolchain>`; `seed()` writes `$(VCTargetsPath)`,
+  `$(VSInstallDir)`, `$(MSBuildExtensionsPath)` when it is `Some` and leaves all three undefined
+  when `None`, preserving the exact "empty path, warned about" behavior every import depending on
+  them had before this issue for every call site that hasn't discovered a toolchain. Every new
+  failure mode reuses the existing `Error::ToolchainIncomplete` — no new `ErrorKind`. See
+  [ADR 17](adr/17-toolchain-include-resolution.md).
+
+  All tests written as specified, plus coverage the Description required but the Tests: block
+  didn't enumerate: `reserved.rs` gains three tests asserting the toolchain family is seeded when
+  present, stays undefined when absent, and holds nothing empty when present — the same contract
+  `every_seeded_property_holds_something` already holds the base twenty-four to.
+
+  **Unblocks MVP-16** (compilation database assembly, which appends `Toolchain::include_paths`
+  after project includes) and **MVP-36** (toolchain-import condition policy, which needed
+  `$(VCTargetsPath)` seeded from a real installation before it could be worked at all).
 
 ## Compilation database
 
