@@ -386,10 +386,17 @@ Rough module breakdown implied by the parsing pipeline:
   sorting happens in `build` itself — determinism is inherited from the `Vec`-based structures ADR 12
   already made stable end to end. See [ADR 18](adr/18-compdb-entry-assembly.md). `compdb::write`
   (serializing and persisting the result) is MVP-17.
-- **Persistence (JSON state file)** — stores, per discovered solution: known configuration/platform
-  values, the last-active configuration/platform, and file modification timestamps used to detect
-  when a reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
-  cannot leave a torn file. The on-disk shape is not yet finalized (see Open Questions).
+- **Persistence (JSON state file)** — a single file, `.msvclsp/state.json`, holding a schema
+  `version` and a `solutions` map keyed by each solution's path *relative to the workspace
+  root* (root-relative rather than absolute so relocating the whole workspace — a clone to a
+  new path, a drive letter change — doesn't orphan every entry; `..`-climbing when the
+  solution isn't a descendant of root, since `--root` is documented to diverge from where the
+  solution lives, falling back to an absolute path only when no relative path can be expressed
+  at all). Each solution's record holds its known configuration/platform values, the
+  last-active configuration/platform, and file modification timestamps used to detect when a
+  reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
+  cannot leave a torn file. An unrecognized schema version is a hard error for v1, not a
+  migration. See [ADR 20](adr/20-state-file-shape.md).
 - **CLI/subcommand layer** — the contract the Neovim plugin drives, defined in full under
   "CLI Surface" below.
 
@@ -631,11 +638,13 @@ belongs to `main.rs`.
     cleanup**, accepted as a known v1 cost consistent with the state file's own already-accepted
     "last-writer-wins, no locking" tradeoff (see `db.rs`'s module doc). Not addressed until it
     proves to be a real problem.
-- A JSON state file (location within `.msvclsp/` TBD — likely a single file at the `.msvclsp/` root
-  rather than one per solution, since it needs to track which solution is currently active) holds
-  discovery cache, per-solution configuration/platform state, and file modification timestamps.
-  Keyed by the solution's own absolute path, independent of the hash-suffixed directory naming
-  above — `db.rs` already scopes its (currently unimplemented) API by `&Path`, not by name.
+- A single JSON state file, `.msvclsp/state.json`, holds discovery cache, per-solution
+  configuration/platform state, and file modification timestamps. Keyed by each solution's path
+  *relative to the workspace root* (the `.msvclsp` directory's own parent), independent of the
+  hash-suffixed directory naming above — `db.rs` scopes its API by `&Path`, not by name, and
+  derives the root itself from where it was opened rather than taking it as a separate
+  parameter. See [ADR 20](adr/20-state-file-shape.md) for the full shape and the reasoning
+  behind root-relative (rather than absolute) keys.
 
 ## VS/Project Schema Support
 
@@ -695,8 +704,6 @@ MSBuild-evaluation surface area bounded.
 
 - Exact scope of MSBuild evaluation needed (property sheet inheritance, conditions, macros) to
   produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md.
-- State file shape (keys for solutions, configurations/platforms, file timestamps) and how solution
-  identity is keyed so it survives the working directory changing.
 - Whether last-writer-wins state is acceptable long term, or whether two Neovim instances sharing a
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only

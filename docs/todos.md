@@ -956,7 +956,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Persistence
 
-- [ ] **MVP-18 — State file shape and store initialization**
+- [x] **MVP-18 — State file shape and store initialization**
   `feat/db-schema` · ~5h
 
   **Summary:** Create the JSON state file under `.msvclsp/` with a solution-scoped shape and a
@@ -976,6 +976,22 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Unit tests asserting a fresh state file is created with the expected top-level
   keys, reopening existing state round-trips unchanged, a missing file yields empty state, and
   a malformed or truncated file produces a clear error rather than a panic.
+
+  **Outcome:** All four written as specified, plus a fifth covering the unsupported-version
+  half of the version field's own purpose, since the original list didn't separately exercise
+  it. Single file at `.msvclsp/state.json` (`version` + a `solutions` map), not one per
+  solution. Solution identity turned out to need more than "keyed by the working directory
+  surviving" implied: the working discussion surfaced that `--root` is documented to diverge
+  from where the solution actually lives, so keys are the solution's path *relative to the
+  workspace root* (`..`-climbing, falling back to absolute only when no relative path can be
+  expressed — a different Windows drive) rather than the absolute path `engineering_spec.md`
+  originally named, so relocating the whole workspace doesn't orphan every entry. `Store`
+  gained private `state`/`root` fields to support this; `set_active_config`/`active_config`/
+  `is_up_to_date` bodies stay `todo!()` for MVP-19/20. `known_configs` is reserved in the shape
+  per the issue's own summary but has no owning accessor yet — flagged in
+  [ADR 20](adr/20-state-file-shape.md)'s Consequences rather than invented here. Full reasoning
+  in ADR 20. Nothing in the CLI's reachable surface calls `Store::open` yet, so no changelog
+  entry, matching MVP-16/17's own precedent.
 
 - [ ] **MVP-19 — Persist active configuration/platform per solution**
   `feat/db-active-config` · ~3h

@@ -15,36 +15,391 @@
 //! docs/engineering_spec.md. Writes must therefore be atomic (write a temporary file, then
 //! rename over the target) so a crash or a concurrent run can never leave a torn file.
 //!
-//! The on-disk shape is an open question — see docs/engineering_spec.md.
+//! The on-disk shape is settled — see ADR 20 (docs/adr/20-state-file-shape.md).
 
+use std::collections::BTreeMap;
+use std::io;
 use std::path::{Path, PathBuf};
+// MVP-20 uses these to populate `SolutionRecord::files`; unused until then.
+#[allow(unused_imports)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{ConfigPlatform, Result};
+use serde::{Deserialize, Serialize};
+
+use crate::{ConfigPlatform, Error, Result};
+
+/// Bumped whenever `State`'s shape changes incompatibly. v1 has no migration path. An unrecognized
+/// version is a hard [`Error::StateVersion`], not an upgrade attempt since we don't have any other
+/// versions yet.
+const CURRENT_VERSION: u32 = 1;
+
+const STATE_FILE: &str = "state.json";
+
+/// The on-disk shape. `solutions` is a `BTreeMap` (not a `HashMap`) so serialization is fully
+/// deterministic across runs.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct State {
+    version: u32,
+    solutions: BTreeMap<String, SolutionRecord>,
+}
+
+impl State {
+    fn fresh() -> Self {
+        State {
+            version: CURRENT_VERSION,
+            solutions: BTreeMap::new(),
+        }
+    }
+}
+
+/// Everything persisted for one solution, keyed in `State:solutions` by its path relative to the
+/// workspace root (see `Store::solution_key`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SolutionRecord {
+    /// Configuration/Platform pairs recorded when this solution was parsed. Populated in a future issue.
+    known_configs: Vec<ConfigPlatform>,
+    active_config: Option<ConfigPlatform>,
+    /// Normalized absolute path -> mtime (seconds since the Unix epoch).
+    files: BTreeMap<String, i64>,
+}
 
 /// Handle to the state file stored under `.msvclsp/`.
 #[derive(Debug)]
 pub struct Store {
     pub path: PathBuf,
+    /// The workspace root. This is `.msvclsp`'s own parent, and used to key solutions by
+    /// root-relative path rather than absolute. See [`solution_key`].
+    // MVP-19/20 read this through `solution_key`; unread until those wire up.
+    #[allow(dead_code)]
+    root: PathBuf,
+    // MVP-19/20 read and mutate this through set_active_config/active_config/is_up_to_date;
+    // unread until those bodies stop being todo!().
+    #[allow(dead_code)]
+    state: State,
 }
 
 impl Store {
     /// Open (creating if absent) the state file for a project root.
-    pub fn open(_msvclsp_dir: &Path) -> Result<Self> {
-        todo!("load or initialize the json state file")
+    /// A missing file is empty state, not an error. The state file is a cache, and an empty cache
+    /// is a normal starting state. `.msvclsp` is created if it does not exist yet.
+    pub fn open(msvclsp_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(msvclsp_dir).map_err(|e| Error::io(msvclsp_dir, e))?;
+        let path = msvclsp_dir.join(STATE_FILE);
+
+        // `msvclsp` always sits directly at the project root, so this is unreachable in practice.
+        // Falling back to `msvclsp_dir` itself is a graceful degrade rather than an `unwrap()` on
+        // a result nothing in this crate can construct without a parent.
+        let root = msvclsp_dir.parent().unwrap_or(msvclsp_dir).to_path_buf();
+
+        let state = match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let state: State =
+                    serde_json::from_str(&contents).map_err(|source| Error::StateParse {
+                        path: path.clone(),
+                        source,
+                    })?;
+                if state.version != CURRENT_VERSION {
+                    return Err(Error::StateVersion {
+                        path,
+                        found: state.version,
+                        supported: CURRENT_VERSION,
+                    });
+                }
+                state
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let fresh = State::fresh();
+                write_state(&path, &fresh)?;
+                fresh
+            }
+            Err(e) => return Err(Error::io(&path, e)),
+        };
+
+        Ok(Store { path, root, state })
     }
 
     /// Record the last-used configuration/platform for a solution.
     pub fn set_active_config(&self, _solution: &Path, _config: &ConfigPlatform) -> Result<()> {
-        todo!("persist active config/platform")
+        todo!("MVP-19")
     }
 
     /// Fetch a solution's own last-used configuration/platform, if recorded.
     pub fn active_config(&self, _solution: &Path) -> Result<Option<ConfigPlatform>> {
-        todo!("read active config/platform")
+        todo!("MVP-19")
     }
 
     /// True when nothing the solution depends on has changed since the last parse.
     pub fn is_up_to_date(&self, _solution: &Path) -> Result<bool> {
-        todo!("compare stored mtimes")
+        todo!("MVP-20")
+    }
+
+    /// The key `solution` is stored under in `state.solutions`. This is the solution path relative
+    /// to `self.root`, lowercased. Relative rather than absolute so relocating the whole workspace
+    /// doesn't orphan every entry.
+    // MVP-19/20 call this from set_active_config/active_config/is_up_to_date; unused until then.
+    #[allow(dead_code)]
+    fn solution_key(&self, solution: &Path) -> String {
+        let root = crate::msbuild::paths::normalize(&self.root);
+        let solution = crate::msbuild::paths::normalize(solution);
+        relative_to(&root, &solution)
+            .to_string_lossy()
+            .to_lowercase()
+    }
+}
+
+/// Serialize `state` to `path` atomically (temp file then rename).
+fn write_state(path: &Path, state: &State) -> Result<()> {
+    let json = serde_json::to_string_pretty(state).expect("State serializes without error");
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, json.as_bytes()).map_err(|e| Error::io(&tmp_path, e))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| Error::io(path, e))?;
+    Ok(())
+}
+
+/// Relative path from `base` to `target` (both already absolute and lexically normalized),
+/// climbing with `..` when `target` isn't a descendant of `base`. Falls back to returning `target`
+/// unchanged if the two share no common prefix. Component comparison is case-insensitive, matching
+/// the reasoning `compdb`'s output-directory hash already applies: `solution_key` lowercases the
+/// final joined string regardless, so components are pushed in their original case here.
+///
+/// Handrolled because this is the one place that needs it.
+// Only called from `solution_key`, which is itself unused until MVP-19/20.
+#[allow(dead_code)]
+fn relative_to(base: &Path, target: &Path) -> PathBuf {
+    let base_components: Vec<_> = base.components().collect();
+    let target_components: Vec<_> = target.components().collect();
+
+    let common = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(a, b)| {
+            a.as_os_str().to_string_lossy().to_lowercase()
+                == b.as_os_str().to_string_lossy().to_lowercase()
+        })
+        .count();
+
+    if common == 0 {
+        return target.to_path_buf();
+    }
+
+    let mut result = PathBuf::new();
+    for _ in common..base_components.len() {
+        result.push("..");
+    }
+    for component in &target_components[common..] {
+        result.push(component.as_os_str());
+    }
+
+    result
+}
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::Error;
+    use crate::testing::TempTree;
+
+    /// A portable absolute path, independent of which OS the test runs on — `relative_to`'s
+    /// own tests need to build and run on Linux CI even though the crate's only real runtime
+    /// is Windows (CLAUDE.md §3). Mirrors `compdb.rs`'s own `absolute()` test helper.
+    fn absolute(parts: &[&str]) -> PathBuf {
+        let mut path = PathBuf::from(if cfg!(windows) { r"D:\" } else { "/" });
+        path.extend(parts);
+        path
+    }
+
+    // --- `Store::open`: shape, create-or-load, and error handling ---
+
+    #[test]
+    fn open_creates_a_fresh_state_file_with_the_expected_top_level_keys() {
+        let tree = TempTree::new("open_creates_fresh_state");
+        let msvclsp_dir = tree.path(".msvclsp");
+
+        Store::open(&msvclsp_dir).expect("a missing state file is not an error");
+
+        let contents = std::fs::read_to_string(msvclsp_dir.join("state.json"))
+            .expect("open() must write the fresh state file to disk");
+        let value: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
+
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["solutions"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn reopening_existing_state_round_trips_unchanged() {
+        let tree = TempTree::new("reopen_round_trips");
+        let msvclsp_dir = tree.path(".msvclsp");
+        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
+        let original = serde_json::json!({
+            "version": 1,
+            "solutions": {
+                "app.sln": {
+                    "known_configs": [{"configuration": "Debug", "platform": "x64"}],
+                    "active_config": {"configuration": "Debug", "platform": "x64"},
+                    "files": {"d:\\code\\app\\app.vcxproj": 1_700_000_000_i64}
+                }
+            }
+        });
+        std::fs::write(msvclsp_dir.join("state.json"), original.to_string())
+            .expect("temp tree is writable");
+
+        Store::open(&msvclsp_dir).expect("opens existing state");
+
+        let reread: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(msvclsp_dir.join("state.json"))
+                .expect("state file still exists"),
+        )
+        .expect("valid json");
+        assert_eq!(
+            reread, original,
+            "open() must not rewrite already-valid state just by loading it"
+        );
+    }
+
+    #[test]
+    fn open_treats_a_missing_file_as_empty_state() {
+        let tree = TempTree::new("missing_file_is_empty_state");
+        let msvclsp_dir = tree.path(".msvclsp");
+
+        let result = Store::open(&msvclsp_dir);
+
+        assert!(
+            result.is_ok(),
+            "a missing state file must be treated as empty state, not an error"
+        );
+    }
+
+    #[test]
+    fn a_malformed_state_file_produces_a_clear_error_not_a_panic() {
+        let tree = TempTree::new("malformed_state_file");
+        let msvclsp_dir = tree.path(".msvclsp");
+        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
+        std::fs::write(msvclsp_dir.join("state.json"), "{ not valid json")
+            .expect("temp tree is writable");
+
+        let result = Store::open(&msvclsp_dir);
+
+        assert!(matches!(result, Err(Error::StateParse { .. })));
+    }
+
+    /// Not in the issue's own test list, but the schema version field only earns its keep
+    /// (per the issue's summary, "for future migrations") if an unsupported one is actually
+    /// rejected — this is the only case that exercises it in MVP-18.
+    #[test]
+    fn an_unsupported_schema_version_is_rejected_clearly() {
+        let tree = TempTree::new("unsupported_schema_version");
+        let msvclsp_dir = tree.path(".msvclsp");
+        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
+        std::fs::write(
+            msvclsp_dir.join("state.json"),
+            serde_json::json!({"version": 999, "solutions": {}}).to_string(),
+        )
+        .expect("temp tree is writable");
+
+        let result = Store::open(&msvclsp_dir);
+
+        match result {
+            Err(Error::StateVersion {
+                found, supported, ..
+            }) => {
+                assert_eq!(found, 999);
+                assert_eq!(supported, 1);
+            }
+            other => panic!("expected Error::StateVersion, got {other:?}"),
+        }
+    }
+
+    // --- Solution-key computation: relative to the workspace root, not absolute ---
+    //
+    // Root-relative (rather than absolute) keys are what let the whole workspace move — a
+    // clone to a new path, a drive letter change — without orphaning every entry. `--root`
+    // is documented to diverge from where the solution actually lives ("CLI Surface" in
+    // engineering_spec.md), so plain `Path::strip_prefix` isn't enough; `relative_to` climbs
+    // with `..` for a solution beside or above root, and only falls back to an absolute path
+    // when no relative path can be expressed at all (different Windows drives).
+
+    #[test]
+    fn relative_to_a_descendant_produces_no_climbs() {
+        let root = absolute(&["Code", "App"]);
+        let target = absolute(&["Code", "App", "Sub", "App.sln"]);
+
+        let relative = relative_to(&root, &target);
+
+        assert_eq!(relative, Path::new("Sub").join("App.sln"));
+    }
+
+    #[test]
+    fn relative_to_a_sibling_climbs_with_dot_dot() {
+        let root = absolute(&["Code", "App", "Workspace"]);
+        let target = absolute(&["Code", "App", "Other", "App.sln"]);
+
+        let relative = relative_to(&root, &target);
+
+        assert_eq!(relative, Path::new("..").join("Other").join("App.sln"));
+    }
+
+    /// `relative_to` only needs case-insensitive matching for *detecting* the common prefix —
+    /// it pushes `target`'s own components verbatim, so only `root`'s casing can vary here
+    /// without changing the expected output. (The tail's casing is a `solution_key` guarantee,
+    /// via the final `.to_lowercase()`; see `solution_key_is_stable_across_casing`.)
+    #[test]
+    fn relative_to_matches_the_common_prefix_regardless_of_its_casing() {
+        let root = absolute(&["Code", "App"]);
+        let differently_cased_root = absolute(&["CODE", "APP"]);
+        let target = absolute(&["Code", "App", "Sub", "App.sln"]);
+
+        assert_eq!(
+            relative_to(&root, &target),
+            relative_to(&differently_cased_root, &target)
+        );
+    }
+
+    /// A different Windows drive letter has no relative-path representation at all, so
+    /// `relative_to` must fall back to the target unchanged rather than producing a
+    /// nonsensical climb. Windows-only: on Unix every absolute path shares a leading `/`, so
+    /// this branch has no portable non-Windows trigger — matching the existing
+    /// `if cfg!(windows)` conditionals elsewhere in the test suite (`paths.rs`, `compdb.rs`'s
+    /// `absolute()` helper).
+    #[cfg(windows)]
+    #[test]
+    fn relative_to_a_different_drive_falls_back_to_the_target_unchanged() {
+        let root = PathBuf::from(r"C:\Code\App");
+        let target = PathBuf::from(r"D:\Other\App.sln");
+
+        assert_eq!(relative_to(&root, &target), target);
+    }
+
+    #[test]
+    fn solution_key_is_relative_to_the_workspace_root_and_lowercased() {
+        let tree = TempTree::new("solution_key_relative_to_root");
+        let msvclsp_dir = tree.path(".msvclsp");
+        let store = Store::open(&msvclsp_dir).expect("opens");
+        let solution = tree.path("Sub/App.sln");
+
+        let key = store.solution_key(&solution);
+
+        let expected = Path::new("Sub")
+            .join("App.sln")
+            .to_string_lossy()
+            .to_lowercase();
+        assert_eq!(key, expected);
+    }
+
+    /// Windows paths are case-preserving but the filesystem is not — without this, the same
+    /// solution invoked with different casing would silently split across two keys, the same
+    /// hazard `compdb::output_dir_name_is_stable_across_casing` guards against for the
+    /// hash-suffixed output directory. Unlike `relative_to`, `solution_key` lowercases its
+    /// final result, so this is where casing stability end-to-end actually holds.
+    #[test]
+    fn solution_key_is_stable_across_casing() {
+        let tree = TempTree::new("solution_key_stable_across_casing");
+        let msvclsp_dir = tree.path(".msvclsp");
+        let store = Store::open(&msvclsp_dir).expect("opens");
+
+        let lower_key = store.solution_key(&tree.path("Sub/App.sln"));
+        let upper_key = store.solution_key(&tree.root().join("SUB").join("APP.SLN"));
+
+        assert_eq!(lower_key, upper_key);
     }
 }
