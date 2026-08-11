@@ -137,7 +137,7 @@ impl Store {
     }
 
     /// True when nothing the solution depends on has changed since the last [`record_dependencies`]
-    /// call. `false` for a solution with no recoded dependency set at all -- nothing has been
+    /// call. `false` for a solution with no recorded dependency set at all — nothing has been
     /// evaluated yet so there is nothing to compare against, and the safe default is "reparse".
     ///
     /// Only ever compares the already recorded set against the filesystem. It never re-evaluates to
