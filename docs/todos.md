@@ -1231,7 +1231,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Neovim plugin
 
-- [ ] **MVP-39 — Migrate the plugin test harness from `plenary.nvim` to `mini.test`**
+- [x] **MVP-39 — Migrate the plugin test harness from `plenary.nvim` to `mini.test`**
   `chore/nvim-mini-test` · ~6h
 
   **Summary:** Replace `plenary.nvim`'s busted-style test harness with `mini.test`'s, before
@@ -1253,6 +1253,13 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** This issue *is* test infrastructure — success is `discovery_spec.lua`'s existing
   `pending()` cases still discovered and reported, not silently dropped, by the new runner,
   both locally and in CI.
+
+  Renamed to `test_discovery.lua` per `mini.test`'s own `tests/**/test_*.lua` discovery
+  convention, with each `pending("...")` body replaced by `MiniTest.skip("...")`. All four
+  cases are discovered and reported as notes (not silently dropped) under
+  `nvim --headless --noplugin -u tests/minimal_init.lua -c "lua require('mini.test').setup()"
+  -c "lua MiniTest.run()"`, with a clean exit code, both locally and via the reworded CI job.
+  Full reasoning in [ADR 15](adr/15-migrate-nvim-test-harness.md).
 
 - [ ] **MVP-25 — Configuration defaults and `setup()`**
   `feat/nvim-config` · ~3h
