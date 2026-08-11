@@ -36,6 +36,9 @@ pub struct FileCompilation {
 pub struct EvaluatedProject {
     pub path: PathBuf,
     pub files: Vec<FileCompilation>,
+    /// Every file this evaluation read. This includes the project itself plus all `.props` and
+    /// `.targets` files it imported, in the order entered.
+    pub dependencies: Vec<PathBuf>,
 }
 
 /// Evaluate a `.vcxproj` for one configuration/platform, in MSBuild's three passes.
@@ -94,6 +97,7 @@ pub fn evaluate(scope: &ProjectScope, reporter: &mut Reporter) -> Result<Evaluat
     Ok(EvaluatedProject {
         path: scope.project.clone(),
         files,
+        dependencies: tree.files,
     })
 }
 

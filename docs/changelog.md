@@ -19,13 +19,20 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   --configuration <name> --platform <name>`, both accepting `--root` to say where `.msvclsp/`
   should live. `--json` switches stdout to a machine-readable envelope for the Neovim plugin;
   without it you get readable text. Failures exit with a distinct code per class and explain
-  themselves on stderr. `generate`'s pipeline is not built yet, so it still reports that it is
-  unimplemented; `list-configs` now actually works — see below.
+  themselves on stderr. Both subcommands now actually work.
+
+- `msvclsp generate <solution> --configuration <name> --platform <name>` writes a real
+  `compile_commands.json` for the requested configuration/platform under `.msvclsp/`, discovering
+  your Visual Studio installation, evaluating every project the solution maps to that pair — including
+  one unchecked in Configuration Manager, since its files still deserve completions when you open
+  them — and reporting the absolute path it wrote. A second run against unchanged files is a no-op;
+  `--force` skips that check. Asking for a configuration/platform pair the solution does not declare
+  fails with the list of valid ones instead of guessing.
 
 - `msvclsp list-configs <solution>` lists the configuration/platform pairs (`Debug|x64`,
   `Release|x64`, and so on) the solution actually declares, in the order the solution lists them,
-  and marks which one you last used with `generate` for it (once `generate` can set one). Nothing
-  to guess or open Visual Studio's Configuration Manager for.
+  and marks which one you last generated for it. Nothing to guess or open Visual Studio's
+  Configuration Manager for.
 
 - Warnings about things msvclsp noticed but could work around — an unfamiliar solution format
   version, say — are now reported rather than dropped. They appear on stderr whichever output mode
@@ -74,10 +81,8 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   recognize is named and skipped; and a value that still contains an unresolved `$(...)` says so
   before it reaches clangd.
 
-  Flags are still missing whatever Microsoft's own property sheets would add on top of your
-  project's own settings, and the toolset's own system include directories are not yet appended to
-  the database — both need the toolchain-derived properties threaded through a wired generation
-  pipeline, which arrives with compilation database assembly.
+  Toolchain-derived properties and the toolset's own system include directories now reach the
+  database too, once `generate` discovers a Visual Studio installation to evaluate against.
 
 - msvclsp can now find the actual compiler and Windows SDK headers on your machine, not just the
   ones your project files mention. Given a located Visual Studio installation, it reads which MSVC

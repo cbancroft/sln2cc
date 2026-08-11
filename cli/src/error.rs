@@ -123,16 +123,6 @@ pub enum Error {
         supported: u32,
     },
 
-    /// A subcommand whose argument surface is settled but whose pipeline is not built yet.
-    ///
-    /// Deliberately temporary. `todo!()` would panic on a path reachable from the CLI, which
-    /// CLAUDE.md forbids, and would leave the exit-code plumbing with nothing exercising it.
-    /// MVP-21 and MVP-22 each drop their call site; whichever lands second removes this
-    /// variant, [`ErrorKind::Unimplemented`], and exit code `9` along with it. See
-    /// [ADR 03](../../docs/adr/03-cli-surface-and-json-contract.md).
-    #[error("{feature} is not implemented yet")]
-    Unimplemented { feature: String },
-
     /// Wraps another error with context describing what was being attempted. Its
     /// [`kind`](Error::kind) is the wrapped error's — see [`Error::context`].
     #[error("{context}")]
@@ -178,7 +168,6 @@ impl Error {
             Error::InvalidConfiguration { .. } => ErrorKind::InvalidConfiguration,
             Error::StateParse { .. } => ErrorKind::StateParse,
             Error::StateVersion { .. } => ErrorKind::StateVersion,
-            Error::Unimplemented { .. } => ErrorKind::Unimplemented,
             Error::ProjectSchema { .. } => ErrorKind::ProjectSchema,
             Error::StorageCollision { .. } => ErrorKind::StorageCollision,
             Error::Context { source, .. } => source.kind(),
@@ -242,7 +231,6 @@ pub enum ErrorKind {
     InvalidConfiguration,
     StateParse,
     StateVersion,
-    Unimplemented,
     ProjectSchema,
     StorageCollision,
 }
@@ -250,7 +238,7 @@ pub enum ErrorKind {
 impl ErrorKind {
     /// Every kind, in declaration order. Exists so tests can assert the wire strings stay
     /// unique and unchanged without listing them twice.
-    pub const ALL: [ErrorKind; 15] = [
+    pub const ALL: [ErrorKind; 14] = [
         ErrorKind::Io,
         ErrorKind::SolutionNotFound,
         ErrorKind::SolutionParse,
@@ -264,7 +252,6 @@ impl ErrorKind {
         ErrorKind::StorageCollision,
         ErrorKind::StateParse,
         ErrorKind::StateVersion,
-        ErrorKind::Unimplemented,
         ErrorKind::ProjectSchema,
     ];
 
@@ -284,7 +271,6 @@ impl ErrorKind {
             ErrorKind::InvalidConfiguration => "invalid-configuration",
             ErrorKind::StateParse => "state-parse",
             ErrorKind::StateVersion => "state-version",
-            ErrorKind::Unimplemented => "unimplemented",
             ErrorKind::ProjectSchema => "project-schema",
             ErrorKind::StorageCollision => "storage-collision",
         }
@@ -315,7 +301,6 @@ impl ErrorKind {
             | ErrorKind::RecursionLimit => 5,
             ErrorKind::ToolchainNotFound | ErrorKind::ToolchainIncomplete => 6,
             ErrorKind::InvalidConfiguration => 7,
-            ErrorKind::Unimplemented => 9,
             ErrorKind::StorageCollision => 10,
         }
     }
@@ -458,12 +443,6 @@ mod tests {
                 ErrorKind::StateVersion,
             ),
             (
-                Error::Unimplemented {
-                    feature: "test_function".to_string(),
-                },
-                ErrorKind::Unimplemented,
-            ),
-            (
                 Error::ProjectSchema {
                     path: PathBuf::from(r"C:\proj\app.vcxproj"),
                     line: Some(1),
@@ -536,9 +515,8 @@ mod tests {
             rendered[12],
             r"C:\proj\.msvclsp\state.json: state file version 9 is not supported (expected 1)"
         );
-        assert_eq!(rendered[13], "test_function is not implemented yet");
         assert_eq!(
-            rendered[14],
+            rendered[13],
             r"C:\proj\app.vcxproj:1: invalid project file: root element is <Filters>"
         );
     }
@@ -574,7 +552,6 @@ mod tests {
             "storage-collision",
             "state-parse",
             "state-version",
-            "unimplemented",
             "project-schema",
         ];
         let actual: Vec<&str> = ErrorKind::ALL.iter().map(|k| k.as_str()).collect();
@@ -609,7 +586,6 @@ mod tests {
         assert_eq!(ErrorKind::MissingImport.exit_code(), 5);
         assert_eq!(ErrorKind::ToolchainIncomplete.exit_code(), 6);
         assert_eq!(ErrorKind::InvalidConfiguration.exit_code(), 7);
-        assert_eq!(ErrorKind::Unimplemented.exit_code(), 9);
         // MVP-17: the next unused code — `8` stays reserved (see the comment on `exit_code`).
         assert_eq!(ErrorKind::StorageCollision.exit_code(), 10);
 

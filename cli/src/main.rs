@@ -11,6 +11,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use msvclsp::cli::{self, Cli, Envelope, Outcome, Render};
+use msvclsp::toolchain::vswhere::VsWhereToolchain;
 use msvclsp::{Diagnostic, Error, Reporter};
 
 fn main() -> ExitCode {
@@ -21,7 +22,7 @@ fn main() -> ExitCode {
     // Progress goes to the reporter's own channel as it happens; warnings accumulate and are
     // attached below, to whichever envelope the run produces.
     let mut reporter = Reporter::new(cli.verbose);
-    let outcome = cli::run(&cli, &mut reporter);
+    let outcome = cli::run(&cli, &mut reporter, &VsWhereToolchain);
     let warnings = reporter.into_warnings();
 
     // Before either branch: a warning explains a result, so it has to precede it, and it must

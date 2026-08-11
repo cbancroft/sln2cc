@@ -1101,7 +1101,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   and a unit test in `cli.rs` proving the handler reaches `sln::parse_sln` rather than
   short-circuiting.
 
-- [ ] **MVP-22 — `generate` subcommand**
+- [x] **MVP-22 — `generate` subcommand**
   `feat/cmd-generate` · ~5h
 
   **Summary:** Generate `compile_commands.json` for a given solution and
@@ -1119,9 +1119,37 @@ Goal: one solution, one manually selected configuration/platform, producing a
   Configuration Manager, and whether its files are still worth indexing for clangd is a decision this
   issue owns — see [ADR 05](adr/05-sln-configuration-mapping.md).
 
+  **Outcome:** `build: false` projects are indexed too — an unchecked-in-Configuration-Manager
+  project still needs real completions when its files are open, which is closer to CLAUDE.md's
+  stated goal than mirroring exactly what the last build touched. `cli::run`/`generate` take the
+  discovered toolchain as a `&dyn ToolchainProvider` argument rather than constructing
+  `VsWhereToolchain` internally — `main.rs` supplies the real one, tests supply `FakeToolchain` —
+  which is what makes the pipeline testable at all on Linux CI or a machine with no Visual Studio
+  install; nothing before this issue had a reachable caller forcing that question. `EvaluatedProject`
+  gained a `dependencies: Vec<PathBuf>` field carrying `imports::ProjectTree::files`, previously
+  computed and discarded inside `msbuild::evaluate`, which `generate` unions across every evaluated
+  project plus the `.sln` itself before calling `Store::record_dependencies` — so editing an imported
+  `.props`, or the solution file, invalidates the cache, not only the `.vcxproj` that names them.
+  `Store::set_active_config` runs on every successful call, cache hit or not, so `list-configs`'s
+  `active` always reflects the last configuration actually asked for. This issue also retires
+  `Error::Unimplemented`, `ErrorKind::Unimplemented`, and exit code `9` outright, per ADR 03's
+  closing clause — code `9` is left unassigned rather than reserved the way `8` was, since nothing
+  shipped ever depended on it. Full reasoning in [ADR 24](adr/24-generate-wiring.md).
+
   **Tests:** Integration test generating from the `simple` fixture and comparing against its
   golden file; tests covering an invalid configuration, `--force` overriding the cache, and a
   second run being a no-op.
+
+  The golden-file test **could not be written as specified**: `fixtures/simple` and its golden
+  don't exist yet (MVP-23/24), so `cli/tests/generate.rs`'s two golden tests stay the `#[ignore]`d
+  placeholders they already were, unchanged. The other three, plus two more this issue's own
+  decisions call for, are written against a hand-authored `TempProject` tree local to
+  `generate.rs` (a real, importless `.vcxproj` + `.cpp`, evaluated for real under `FakeToolchain`)
+  rather than the compiled binary, since `generate` now needs a toolchain no subprocess test can
+  fake: an invalid configuration (also covered against the real binary in `cli_surface.rs`, since
+  that path never reaches toolchain discovery), `--force` overriding the cache, a no-op second run,
+  an unbuilt project still being indexed, and both the `.vcxproj` and the `.sln` itself
+  invalidating the cache when touched.
 
 ## Fixtures and test harness
 

@@ -14,7 +14,12 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::{ConfigPlatform, Diagnostic, Error, Reporter, db, progress, sln};
+use crate::toolchain::ToolchainProvider;
+use crate::{
+    ConfigPlatform, Diagnostic, Error, Reporter, compdb, db,
+    msbuild::{self, ProjectScope},
+    progress, sln,
+};
 
 /// Version of the envelope shape below. Bumped when a change would break a plugin
 /// that decoded the previous version. No change needed if we are just adding a field.
@@ -115,7 +120,11 @@ impl Render for GenerateResult {
 /// Takes `&Cli` rather than consuming it so `main.rs` can still read the `--json` and `--verbose`
 /// flags when deciding how to render whatever comes back. `reporter` is borrowed rather than
 /// returned because warnings have to survive a failure — see [`Reporter`].
-pub fn run(cli: &Cli, reporter: &mut Reporter) -> crate::Result<Outcome> {
+pub fn run(
+    cli: &Cli,
+    reporter: &mut Reporter,
+    toolchain: &dyn ToolchainProvider,
+) -> crate::Result<Outcome> {
     let args = cli.command.solution_args();
     progress!(
         reporter,
@@ -138,7 +147,7 @@ pub fn run(cli: &Cli, reporter: &mut Reporter) -> crate::Result<Outcome> {
                 configuration: configuration.clone(),
                 platform: platform.clone(),
             };
-            generate(solution, &requested, *force, reporter).map(Outcome::Generate)
+            generate(solution, &requested, *force, toolchain, reporter).map(Outcome::Generate)
         }
     }
 }
@@ -160,13 +169,60 @@ fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<S
 
 /// MVP-22 implements this.
 fn generate(
-    _args: &SolutionArgs,
-    _requested: &ConfigPlatform,
-    _force: bool,
-    _reporter: &mut Reporter,
+    args: &SolutionArgs,
+    requested: &ConfigPlatform,
+    force: bool,
+    toolchain: &dyn ToolchainProvider,
+    reporter: &mut Reporter,
 ) -> crate::Result<GenerateResult> {
-    Err(Error::Unimplemented {
-        feature: "generate".to_string(),
+    let solution = sln::parse_sln(&args.solution, reporter)?;
+
+    if !solution.configurations.contains(requested) {
+        return Err(Error::InvalidConfiguration {
+            requested: requested.clone(),
+            available: solution.configurations.clone(),
+        });
+    }
+
+    let msvclsp_dir = args.root().join(".msvclsp");
+    let mut store = db::Store::open(&msvclsp_dir)?;
+    let output_dir = compdb::resolve_output_dir(&msvclsp_dir, &solution.path)?;
+    let database = output_dir.join("compile_commands.json");
+
+    let regenerated = if !force && store.is_up_to_date(&solution.path)? {
+        false
+    } else {
+        let discovered = toolchain.discover()?;
+        let mut evaluated = Vec::new();
+        let mut dependencies = vec![solution.path.clone()];
+
+        for project in &solution.projects {
+            let Some(mapping) = project.config_for(requested) else {
+                continue;
+            };
+
+            let scope = ProjectScope {
+                solution: solution.path.clone(),
+                project: project.path.clone(),
+                config: mapping.project.clone(),
+                toolchain: Some(discovered.clone()),
+            };
+            let result = msbuild::evaluate(&scope, reporter)?;
+            dependencies.extend(result.dependencies.iter().cloned());
+            evaluated.push(result);
+        }
+
+        let commands = compdb::build(&evaluated, &discovered)?;
+        compdb::write(&commands, &output_dir)?;
+        store.record_dependencies(&solution.path, &dependencies)?;
+        true
+    };
+
+    store.set_active_config(&solution.path, requested)?;
+
+    Ok(GenerateResult {
+        database,
+        regenerated,
     })
 }
 
@@ -388,6 +444,22 @@ mod tests {
         }
     }
 
+    /// A deterministic toolchain for tests that need `run`'s `&dyn ToolchainProvider` argument but
+    /// never actually reach evaluation — mirrors `compdb.rs`'s own local `toolchain()` helper.
+    fn fake_toolchain() -> crate::toolchain::FakeToolchain {
+        crate::toolchain::FakeToolchain(crate::toolchain::Toolchain {
+            install_path: PathBuf::from(if cfg!(windows) { r"D:\vs" } else { "/vs" }),
+            vc_targets_path: PathBuf::from(if cfg!(windows) {
+                r"D:\vs\MSBuild\Microsoft\VC\v170"
+            } else {
+                "/vs/MSBuild/Microsoft/VC/v170"
+            }),
+            include_paths: Vec::new(),
+            toolset_version: "14.38.33130".to_string(),
+            sdk_version: "10.0.22621.0".to_string(),
+        })
+    }
+
     /// clap's own consistency check over the derived definition. Catches duplicate flags,
     /// conflicting short options, and malformed help before any of them reach a user.
     #[test]
@@ -500,16 +572,18 @@ mod tests {
         assert_eq!(solution_args("app.sln", None).root(), PathBuf::from("."));
     }
 
-    /// `generate` is still the stub; MVP-21 gave `list-configs` a real handler, so asserting it
-    /// stays `Unimplemented` would be testing behavior this issue removed. Per ADR 03, whichever
-    /// of MVP-21/MVP-22 lands second retires the variant, the kind, and exit code `9` entirely —
-    /// this narrows rather than deletes the test because `generate` still needs it until then.
+    /// Proves `generate` actually reaches `sln::parse_sln` rather than short-circuiting on
+    /// `Error::Unimplemented` — MVP-22 retires that variant entirely (per ADR 03, "whichever of
+    /// MVP-21/MVP-22 lands second"), so a nonexistent solution must surface as `SolutionNotFound`.
+    /// `run` takes the toolchain provider as its third argument as of this issue — see
+    /// [ADR 24](../../docs/adr/24-generate-wiring.md) — and this reaches `FakeToolchain` never
+    /// getting called at all, since parsing fails before evaluation would need it.
     #[test]
-    fn generate_reports_itself_unimplemented() {
+    fn generate_propagates_a_missing_solution() {
         let cli = Cli::try_parse_from([
             "msvclsp",
             "generate",
-            "a.sln",
+            "no-such-solution.sln",
             "--configuration",
             "Debug",
             "--platform",
@@ -517,11 +591,10 @@ mod tests {
         ])
         .expect("parses");
         let mut reporter = Reporter::new(false);
-        let error = run(&cli, &mut reporter).expect_err("generate has no handler yet");
+        let toolchain = fake_toolchain();
+        let error = run(&cli, &mut reporter, &toolchain).expect_err("the solution does not exist");
 
-        assert_eq!(error.kind(), crate::ErrorKind::Unimplemented);
-        assert_eq!(error.to_string(), "generate is not implemented yet");
-        assert_eq!(error.kind().exit_code(), 9);
+        assert_eq!(error.kind(), crate::ErrorKind::SolutionNotFound);
     }
 
     /// Proves `list_configs` actually reaches `sln::parse_sln` rather than short-circuiting: a
@@ -531,7 +604,8 @@ mod tests {
         let cli = Cli::try_parse_from(["msvclsp", "list-configs", "no-such-solution.sln"])
             .expect("parses");
         let mut reporter = Reporter::new(false);
-        let error = run(&cli, &mut reporter).expect_err("the solution does not exist");
+        let toolchain = fake_toolchain();
+        let error = run(&cli, &mut reporter, &toolchain).expect_err("the solution does not exist");
 
         assert_eq!(error.kind(), crate::ErrorKind::SolutionNotFound);
     }
@@ -607,8 +681,8 @@ mod tests {
         assert_eq!(ok["warnings"], expected);
 
         let err = serde_json::to_value(
-            Envelope::<&str>::err(&Error::Unimplemented {
-                feature: "generate".to_string(),
+            Envelope::<&str>::err(&Error::SolutionNotFound {
+                path: PathBuf::from(r"C:\proj\missing.sln"),
             })
             .with_warnings(vec![warning()]),
         )

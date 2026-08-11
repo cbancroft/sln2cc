@@ -189,10 +189,12 @@ fn usage_errors_exit_two_and_leave_stdout_empty() {
     }
 }
 
+/// `generate` against a solution that does not exist must surface a structured error, not the
+/// retired `Error::Unimplemented` placeholder — `solution-not-found`, exit code `3`, matching
+/// `list_configs_against_a_missing_solution_is_a_structured_error`'s pattern. `generate` never
+/// reaches toolchain discovery on this path, so it needs no real Visual Studio install to test.
 #[test]
-fn unimplemented_subcommands_emit_an_envelope_under_json() {
-    // `list-configs` is no longer one of these as of MVP-21; `generate` is the only subcommand
-    // still behind `Error::Unimplemented` until MVP-22 lands.
+fn generate_against_a_missing_solution_emits_an_envelope_under_json() {
     let output = run(&[
         "generate",
         "missing.sln",
@@ -203,25 +205,25 @@ fn unimplemented_subcommands_emit_an_envelope_under_json() {
         "--json",
     ]);
 
-    assert_eq!(code(&output), 9);
+    assert_eq!(code(&output), 3);
     // Asserted as an exact string rather than a parsed value: this pins the key set, the key
     // order, and the wire strings in one place, and needs no JSON parser in the test crate.
     assert_eq!(
         stdout(&output),
         concat!(
             r#"{"schema_version":1,"has_error":true,"result":null,"#,
-            r#""error":{"kind":"unimplemented","#,
-            r#""message":"generate is not implemented yet","causes":[]},"#,
+            r#""error":{"kind":"solution-not-found","#,
+            r#""message":"solution not found: missing.sln","causes":[]},"#,
             r#""warnings":[]}"#,
             "\n"
         )
     );
     // The human message is on stderr in both modes — MVP-28 folds it into the plugin's error.
-    assert!(stderr(&output).contains("not implemented yet"));
+    assert!(stderr(&output).contains("solution not found"));
 }
 
 #[test]
-fn unimplemented_subcommands_leave_stdout_empty_without_json() {
+fn generate_against_a_missing_solution_leaves_stdout_empty_without_json() {
     let output = run(&[
         "generate",
         "missing.sln",
@@ -231,9 +233,9 @@ fn unimplemented_subcommands_leave_stdout_empty_without_json() {
         "x64",
     ]);
 
-    assert_eq!(code(&output), 9);
+    assert_eq!(code(&output), 3);
     assert_eq!(stdout(&output), "");
-    assert!(stderr(&output).contains("generate is not implemented yet"));
+    assert!(stderr(&output).contains("solution not found"));
 }
 
 /// Every `--json` invocation the tool accepts, checked against the one-object rule in one place.
@@ -457,6 +459,40 @@ fn list_configs_against_a_missing_solution_is_a_structured_error() {
         )
     );
     assert!(stderr(&output).contains("solution not found"));
+}
+
+/// `generate` against a configuration/platform pair the solution never declares must fail with
+/// `Error::InvalidConfiguration` (exit code `7`) listing the valid pairs, reachable via the real
+/// binary since validation happens before toolchain discovery — no Visual Studio install needed.
+#[test]
+fn generate_against_an_invalid_configuration_is_a_structured_error() {
+    let solution = TempSolution::new("invalid-configuration", &minimal_sln());
+    let sln_str = solution.sln();
+    let sln_str = sln_str.to_str().expect("temp path is valid UTF-8");
+
+    let output = run(&[
+        "generate",
+        sln_str,
+        "--configuration",
+        "Release",
+        "--platform",
+        "ARM64",
+        "--json",
+    ]);
+
+    assert_eq!(code(&output), 7);
+    let out = stdout(&output);
+    assert!(
+        out.contains(r#""kind":"invalid-configuration""#),
+        "stdout was: {out}"
+    );
+    assert!(out.contains("Debug|x64"), "stdout was: {out}");
+    assert!(out.contains("Release|x64"), "stdout was: {out}");
+    assert!(
+        stderr(&output).contains("is not a configuration of this solution"),
+        "stderr was: {}",
+        stderr(&output)
+    );
 }
 
 #[test]

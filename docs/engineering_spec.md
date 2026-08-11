@@ -408,7 +408,16 @@ Rough module breakdown implied by the parsing pipeline:
   record, not by re-evaluating to discover it. See [ADR 22](adr/22-staleness-mtime-comparison.md).
   `known_configs` remains unpopulated (no owning issue yet).
 - **CLI/subcommand layer** — the contract the Neovim plugin drives, defined in full under
-  "CLI Surface" below.
+  "CLI Surface" below. `list-configs` (MVP-21) reads `sln::parse_sln` and `Store::active_config`
+  directly; see [ADR 23](adr/23-list-configs-wiring.md). `generate` (MVP-22) is the full pipeline:
+  parse the solution, validate the requested pair against `Solution::configurations`, evaluate every
+  member project `SolutionProject::config_for` maps — including one with no `Build.0` row, since an
+  unbuilt project's files still need indexing for `clangd` — discover the toolchain, build and write
+  the database, and record the selection and every evaluated project's dependency files (plus the
+  `.sln` itself) so the next run can skip unchanged work unless `--force` is passed. The toolchain is
+  supplied to `cli::run`/`generate` as a `&dyn ToolchainProvider` argument rather than constructed
+  inside `generate`, which is what lets the pipeline be exercised under `FakeToolchain` in tests
+  without a Visual Studio install. See [ADR 24](adr/24-generate-wiring.md).
 
 ## CLI Surface
 
@@ -433,7 +442,7 @@ The plugin always spells flags in full; `-c` and `-p` exist for invoking the too
 | `--root <DIR>` | both | Project root to create `.msvclsp/` under. Defaults to the solution's own directory. The plugin passes the root it detected from Neovim's LSP root markers, which often is not where the solution lives. |
 | `--configuration <NAME>`, `-c` | `generate` | Required. Separate from `--platform` so no shell has to quote a pipe character. |
 | `--platform <NAME>`, `-p` | `generate` | Required. |
-| `--force` | `generate` | Regenerate even when the staleness cache is current. Inert until MVP-22. |
+| `--force` | `generate` | Regenerate even when the staleness cache is current. |
 | `--json` | global | Emit the envelope below on stdout instead of human-readable text. |
 | `-v`, `--verbose` | global | Progress on stderr as work proceeds, and absolute rather than root-relative paths in warnings. Never affects stdout. |
 
@@ -578,7 +587,6 @@ variant names, so a refactor cannot silently change them:
 | `invalid-configuration` | The requested configuration/platform isn't one the solution declares. |
 | `state-parse` | The state file is malformed or truncated. |
 | `state-version` | The state file's schema version is unsupported. |
-| `unimplemented` | A subcommand's argument surface exists but its pipeline does not. **Temporary** — removed by MVP-22. |
 
 `ErrorKind::exit_code()` maps kinds onto coarse classes rather than one code per kind — the plugin
 reads the exact kind from JSON, so exit codes only need to be useful from a shell. `2` is never
@@ -593,10 +601,12 @@ indistinguishable from a real failure.
 | 5 | unsupported construct | `unsupported-construct`, `missing-import`, `recursion-limit` |
 | 6 | toolchain unavailable | `toolchain-not-found`, `toolchain-incomplete` |
 | 7 | bad selection | `invalid-configuration` |
-| 9 | not implemented | `unimplemented` (temporary) |
+| 10 | storage collision | `storage-collision` |
 
-`8` is absent rather than reassigned. It belonged to `path-escape`, which ADR 10 removed, and
-reusing it would silently change what a shell script's `exit 8` means for failures that did not
+`8` and `9` are absent rather than reassigned. `8` belonged to `path-escape`, which ADR 10 removed,
+and `9` belonged to `unimplemented`, retired outright once MVP-22 dropped the CLI's last
+`Error::Unimplemented` call site (ADR 24) — reusing either would silently change what a shell
+script's exit code means for failures that did not
 change. It stays reserved.
 
 `ErrorKind` intentionally derives no `serde` traits. The JSON error payload's shape belongs to the

@@ -203,6 +203,7 @@ mod tests {
         EvaluatedProject {
             path: vcxproj,
             files,
+            dependencies: Vec::new(),
         }
     }
 
