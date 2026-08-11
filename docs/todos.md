@@ -1153,7 +1153,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## Fixtures and test harness
 
-- [ ] **MVP-23 — `simple` fixture and golden test harness**
+- [x] **MVP-23 — `simple` fixture and golden test harness**
   `feat/fixture-simple` · ~6h
 
   **Summary:** Author the single-project fixture and the shared harness that compares
@@ -1165,8 +1165,29 @@ Goal: one solution, one manually selected configuration/platform, producing a
   machines, normalizes the repository's absolute path prefix, and offers an opt-in environment
   variable to rewrite goldens. Never regenerate goldens against a real Visual Studio install.
 
+  **Outcome:** `fixtures/simple/` is `App/App.vcxproj` compiling `src/main.cpp` and
+  `src/greet.cpp` against `include/greet.h`, one `Debug|x64` configuration, real
+  `WarningLevel`/`LanguageStandard`/`RuntimeLibrary`/`ExceptionHandling` settings, a define, and
+  an include directory. It deliberately does not import the real `$(VCTargetsPath)`
+  `Microsoft.Cpp.*.props/.targets` — those don't exist under `FakeToolchain`, and CI runs this
+  suite on Linux too — extending the precedent ADR 24 already set for `generate.rs`'s own
+  `TempProject`. The harness lives in `cli/tests/support/mod.rs` (`fake_toolchain`, a `TempRoot`
+  `--root` guard so `cargo test` never writes `.msvclsp/` inside `fixtures/`, and
+  `assert_matches_golden`), shared into `generate.rs` via `mod support;` — the standard Rust
+  idiom for code shared within one integration-test crate, not the lib/test crate boundary ADR 23
+  drew a line around. Normalization is textual: every JSON-escaped path separator becomes `/`,
+  and the fixture's own absolute directory becomes the literal token `<FIXTURE>`, making
+  `cli/tests/golden/simple.json` byte-identical across machines, checkout locations, and
+  Windows/Linux. `MSVCLSP_UPDATE_GOLDEN=1` regenerated it once, by hand, under review. Full
+  reasoning in [ADR 25](adr/25-fixture-simple-and-golden-harness.md), which also resolves
+  `engineering_spec.md`'s open question on the fixture corpus's source and scope.
+
   **Tests:** This issue *is* test infrastructure; success is `cargo test` comparing generated
   output to `cli/tests/golden/simple.json` and failing legibly on mismatch.
+
+  Written as specified — `simple_solution_matches_golden` is no longer `#[ignore]`d and compares
+  real generated output to a real golden file. `props_inheritance_matches_golden` stays the
+  `#[ignore]`d placeholder it already was; its fixture is MVP-24's.
 
 - [ ] **MVP-24 — Remaining fixtures**
   `feat/fixtures-complex` · ~1d

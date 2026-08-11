@@ -77,6 +77,7 @@ msvclsp/
 │   └── tests/
 │       ├── cli_surface.rs        Argument surface, exit codes, stdout/stderr discipline.
 │       ├── generate.rs           Fixture-driven integration tests.
+│       ├── support/              Shared golden-comparison harness (mod.rs), pulled in via `mod support;`.
 │       └── golden/               Expected output per fixture. Never regenerate from a live toolchain.
 │
 ├── nvim/                         Neovim plugin.

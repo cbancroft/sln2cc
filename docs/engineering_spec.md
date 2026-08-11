@@ -695,7 +695,13 @@ MSBuild-evaluation surface area bounded.
   inheritance, multiple configurations/platforms) checked into the repo, with expected
   `compile_commands.json` output asserted against as golden files. This is the primary correctness
   signal for the parsing pipeline, per brainstorm.md's call for "sample MSVC files of varying
-  complexity."
+  complexity." The corpus is hand-authored and schema-realistic rather than sanitized from a real
+  solution, and deliberately does not import the real Visual Studio VC targets — nothing in the
+  pipeline can resolve those without an actual VS install, and CI runs this suite on Linux too. The
+  shared golden-comparison harness (`cli/tests/support::assert_matches_golden`) normalizes each
+  fixture's own absolute path and path-separator style out of the comparison, so one checked-in
+  golden file is byte-identical across machines and platforms; set `MSVCLSP_UPDATE_GOLDEN=1` to
+  regenerate one by hand. See [ADR 25](adr/25-fixture-simple-and-golden-harness.md).
 - **Manual end-to-end verification against real `clangd`** for now: actually launching `clangd`
   against generated output and confirming completion/diagnostics behave correctly is a manual smoke
   test rather than an automated one, given the pivot away from an LSP-proxy architecture reduces the
@@ -752,8 +758,6 @@ MSBuild-evaluation surface area bounded.
   but standalone-project support and the multi-solution work both arrive at it. The honest answer may
   be that those properties should be *absent* — and so warn as undefined — rather than pointed at a
   directory no solution occupies. See [ADR 11](adr/11-reserved-property-seeding.md).
-- Source and scope of the fixture corpus for integration tests — hand-authored minimal solutions,
-  sanitized real-world examples, or both.
 - Release/distribution strategy: how the CLI binary is distributed to the Neovim plugin (built from
   source by the plugin, prebuilt GitHub release binaries, `cargo install`) and how the plugin itself
   is distributed/versioned for plugin managers (e.g. `lazy.nvim` spec).

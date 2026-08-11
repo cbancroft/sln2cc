@@ -1,15 +1,12 @@
-//! Fixture-driven integration tests, and — until `fixtures/simple` exists (MVP-23) — tests for
-//! `generate`'s own pipeline behavior against a hand-authored temp-tree project.
+//! Fixture-driven integration tests, plus tests for `generate`'s own pipeline behavior against a
+//! hand-authored temp-tree project.
 //!
-//! The golden-file tests below stay `#[ignore]`d placeholders: `fixtures/` is still README-only
-//! stubs, and per ADR 23's own discussion, authoring a real fixture here would be under-scoped
-//! for what MVP-23 commits to (source files real enough for manual `clangd` verification) and
-//! would either block this issue or get thrown away.
-//!
-//! Everything else here calls [`msvclsp::cli::run`] directly with a [`FakeToolchain`] rather
-//! than spawning the compiled binary — `generate` now discovers a real toolchain to evaluate
-//! projects, and nothing in a subprocess can have that swapped out from outside. See
-//! [ADR 24](../../docs/adr/24-generate-wiring.md).
+//! Everything here calls [`msvclsp::cli::run`] directly with a [`msvclsp::toolchain::
+//! FakeToolchain`] rather than spawning the compiled binary — `generate` now discovers a real
+//! toolchain to evaluate projects, and nothing in a subprocess can have that swapped out from
+//! outside. See [ADR 24](../../docs/adr/24-generate-wiring.md).
+
+mod support;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,19 +15,38 @@ use std::time::{Duration, SystemTime};
 use clap::Parser;
 
 use msvclsp::cli::{Cli, Outcome};
-use msvclsp::toolchain::{FakeToolchain, Toolchain};
 use msvclsp::{Reporter, Result};
 
+/// `fixtures/<name>`, built from `.parent()` rather than a `..` join so the result carries no
+/// literal `..` component — `support::assert_matches_golden` matches this path against
+/// `compile_commands.json`'s own (fully lexically resolved) paths by exact substring, which only
+/// works if this one is equally clean.
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("cli/ has a parent directory")
+        .join("fixtures")
+        .join(name)
+}
+
+fn golden(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(name)
+}
+
 #[test]
-#[ignore = "not yet implemented"]
 fn simple_solution_matches_golden() {
-    todo!("parse fixtures/simple, compare against tests/golden/simple.json")
+    support::assert_matches_golden(
+        &fixture("simple").join("simple.sln"),
+        &golden("simple.json"),
+    );
 }
 
 #[test]
 #[ignore = "not yet implemented"]
 fn props_inheritance_matches_golden() {
-    todo!("parse fixtures/props-inheritance, compare against golden")
+    todo!("parse fixtures/props-inheritance, compare against golden — MVP-24's fixture")
 }
 
 /// A GUID stable across every `TempProject`; nothing here needs more than one project, so there
@@ -141,22 +157,6 @@ impl Drop for TempProject {
     }
 }
 
-/// Deterministic toolchain for every test here — nothing asserts on its contents, only that
-/// evaluation completes, so its paths need not exist on disk.
-fn fake_toolchain() -> FakeToolchain {
-    FakeToolchain(Toolchain {
-        install_path: PathBuf::from(if cfg!(windows) { r"D:\vs" } else { "/vs" }),
-        vc_targets_path: PathBuf::from(if cfg!(windows) {
-            r"D:\vs\MSBuild\Microsoft\VC\v170"
-        } else {
-            "/vs/MSBuild/Microsoft/VC/v170"
-        }),
-        include_paths: Vec::new(),
-        toolset_version: "14.38.33130".to_string(),
-        sdk_version: "10.0.22621.0".to_string(),
-    })
-}
-
 fn generate(sln: &Path) -> Result<Outcome> {
     let cli = Cli::try_parse_from([
         "msvclsp",
@@ -169,7 +169,7 @@ fn generate(sln: &Path) -> Result<Outcome> {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    msvclsp::cli::run(&cli, &mut reporter, &fake_toolchain())
+    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
 fn generate_forced(sln: &Path) -> Result<Outcome> {
@@ -185,7 +185,7 @@ fn generate_forced(sln: &Path) -> Result<Outcome> {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    msvclsp::cli::run(&cli, &mut reporter, &fake_toolchain())
+    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
 fn database_path(outcome: Outcome) -> (PathBuf, bool) {
