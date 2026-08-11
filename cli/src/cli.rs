@@ -14,7 +14,7 @@ use std::{
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
-use crate::{ConfigPlatform, Diagnostic, Error, Reporter, progress};
+use crate::{ConfigPlatform, Diagnostic, Error, Reporter, db, progress, sln};
 
 /// Version of the envelope shape below. Bumped when a change would break a plugin
 /// that decoded the previous version. No change needed if we are just adding a field.
@@ -143,11 +143,18 @@ pub fn run(cli: &Cli, reporter: &mut Reporter) -> crate::Result<Outcome> {
     }
 }
 
-/// MVP-21 implements this. It takes the reporter already so that landing the pipeline does not
-/// have to reopen this signature and every caller of it.
-fn list_configs(_args: &SolutionArgs, _reporter: &mut Reporter) -> crate::Result<SolutionConfigs> {
-    Err(Error::Unimplemented {
-        feature: "list-configs".to_string(),
+fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<SolutionConfigs> {
+    let solution = sln::parse_sln(&args.solution, reporter)?;
+
+    // `db::Store::open` wants `.msvclsp` itself, not a per-solution hashed subdirectory.
+    let msvclsp_dir = args.root().join(".msvclsp");
+    let store = db::Store::open(&msvclsp_dir)?;
+    let active = store.active_config(&solution.path)?;
+
+    Ok(SolutionConfigs {
+        solution: solution.path,
+        available: solution.configurations,
+        active,
     })
 }
 
@@ -493,36 +500,40 @@ mod tests {
         assert_eq!(solution_args("app.sln", None).root(), PathBuf::from("."));
     }
 
+    /// `generate` is still the stub; MVP-21 gave `list-configs` a real handler, so asserting it
+    /// stays `Unimplemented` would be testing behavior this issue removed. Per ADR 03, whichever
+    /// of MVP-21/MVP-22 lands second retires the variant, the kind, and exit code `9` entirely —
+    /// this narrows rather than deletes the test because `generate` still needs it until then.
     #[test]
-    fn handlers_report_themselves_unimplemented() {
-        let cases: [(&[&str], &str); 2] = [
-            (&["msvclsp", "list-configs", "a.sln"], "list-configs"),
-            (
-                &[
-                    "msvclsp",
-                    "generate",
-                    "a.sln",
-                    "--configuration",
-                    "Debug",
-                    "--platform",
-                    "x64",
-                ],
-                "generate",
-            ),
-        ];
+    fn generate_reports_itself_unimplemented() {
+        let cli = Cli::try_parse_from([
+            "msvclsp",
+            "generate",
+            "a.sln",
+            "--configuration",
+            "Debug",
+            "--platform",
+            "x64",
+        ])
+        .expect("parses");
+        let mut reporter = Reporter::new(false);
+        let error = run(&cli, &mut reporter).expect_err("generate has no handler yet");
 
-        for (args, expected) in cases {
-            let cli = Cli::try_parse_from(args).expect("parses");
-            let mut reporter = Reporter::new(false);
-            let error = run(&cli, &mut reporter).expect_err("no handler is implemented yet");
+        assert_eq!(error.kind(), crate::ErrorKind::Unimplemented);
+        assert_eq!(error.to_string(), "generate is not implemented yet");
+        assert_eq!(error.kind().exit_code(), 9);
+    }
 
-            assert_eq!(error.kind(), crate::ErrorKind::Unimplemented);
-            assert_eq!(
-                error.to_string(),
-                format!("{expected} is not implemented yet")
-            );
-            assert_eq!(error.kind().exit_code(), 9);
-        }
+    /// Proves `list_configs` actually reaches `sln::parse_sln` rather than short-circuiting: a
+    /// nonexistent solution must surface as `SolutionNotFound`, not the retired `Unimplemented`.
+    #[test]
+    fn list_configs_propagates_a_missing_solution() {
+        let cli = Cli::try_parse_from(["msvclsp", "list-configs", "no-such-solution.sln"])
+            .expect("parses");
+        let mut reporter = Reporter::new(false);
+        let error = run(&cli, &mut reporter).expect_err("the solution does not exist");
+
+        assert_eq!(error.kind(), crate::ErrorKind::SolutionNotFound);
     }
 
     #[test]

@@ -19,8 +19,13 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   --configuration <name> --platform <name>`, both accepting `--root` to say where `.msvclsp/`
   should live. `--json` switches stdout to a machine-readable envelope for the Neovim plugin;
   without it you get readable text. Failures exit with a distinct code per class and explain
-  themselves on stderr. The commands parse, validate, and report correctly — the generation
-  pipeline behind them is not built yet, so both currently report that they are unimplemented.
+  themselves on stderr. `generate`'s pipeline is not built yet, so it still reports that it is
+  unimplemented; `list-configs` now actually works — see below.
+
+- `msvclsp list-configs <solution>` lists the configuration/platform pairs (`Debug|x64`,
+  `Release|x64`, and so on) the solution actually declares, in the order the solution lists them,
+  and marks which one you last used with `generate` for it (once `generate` can set one). Nothing
+  to guess or open Visual Studio's Configuration Manager for.
 
 - Warnings about things msvclsp noticed but could work around — an unfamiliar solution format
   version, say — are now reported rather than dropped. They appear on stderr whichever output mode

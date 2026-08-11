@@ -1065,7 +1065,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
 ## CLI subcommands
 
-- [ ] **MVP-21 — `list-configs` subcommand**
+- [x] **MVP-21 — `list-configs` subcommand**
   `feat/cmd-list-configs` · ~4h
 
   **Summary:** Emit a solution's available configuration/platform pairs and its remembered
@@ -1077,8 +1077,29 @@ Goal: one solution, one manually selected configuration/platform, producing a
   validates the error and exit-code plumbing. Keep the JSON shape versioned or at least
   documented, since it is a contract with the plugin.
 
+  **Outcome:** `list_configs` calls `sln::parse_sln`, opens `db::Store` at `args.root().join(
+  ".msvclsp")`, and reads `Store::active_config` — the first reachable caller of `Store::open`.
+  Read-only: nothing in this subcommand records a selection, so `Store` is bound immutably,
+  matching `active_config`'s own `&self` signature (ADR 21). No new `Error`/`ErrorKind` variant —
+  `parse_sln` and `Store::open` already surface everything this path can fail with. Full reasoning
+  in [ADR 23](adr/23-list-configs-wiring.md).
+
+  **The Tests: block below could not be written as specified.** `fixtures/simple` and
+  `fixtures/multi-config` are still README-only stubs — MVP-23 and MVP-24 explicitly own authoring
+  them (see MVP-10's own outcome note). Both tests are instead written against a minimal `.sln`
+  built in a system temp directory at test time (`TempSolution` in `cli/tests/cli_surface.rs`), and
+  the fixture-driven form remains MVP-23/24's to add once those fixtures exist. See ADR 23's
+  discussion for why an under-scoped fixture wasn't authored here instead.
+
   **Tests:** Integration test against the `simple` and `multi-config` fixtures asserting exact
   JSON output; test asserting a nonexistent solution exits non-zero with a structured error.
+
+  Written against a temp-tree `.sln` instead of the named fixtures, per the note above. Also
+  covered: available pairs read back in declaration order, `active` reporting `null` with no
+  recorded selection versus the seeded selection from a hand-written `.msvclsp/state.json`, the
+  `warnings_ride_in_the_envelope` placeholder unblocked with both severities exercised end to end,
+  and a unit test in `cli.rs` proving the handler reaches `sln::parse_sln` rather than
+  short-circuiting.
 
 - [ ] **MVP-22 — `generate` subcommand**
   `feat/cmd-generate` · ~5h
