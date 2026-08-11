@@ -1025,7 +1025,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   second `Store` handle against the same `.msvclsp` directory to prove the write-through actually
   reaches `state.json` rather than only the in-memory copy.
 
-- [ ] **MVP-20 — Modification-time staleness tracking**
+- [x] **MVP-20 — Modification-time staleness tracking**
   `feat/db-staleness` · ~6h
 
   **Summary:** Record the mtimes of every file consumed during evaluation and use them to
@@ -1037,9 +1037,31 @@ Goal: one solution, one manually selected configuration/platform, producing a
   solution is up to date only if every recorded file still exists with an unchanged mtime;
   anything else triggers a full reparse. A deleted dependency counts as stale, not an error.
 
+  **Outcome:** Two methods, not one: `Store::record_dependencies(&mut self, solution, files)`
+  captures the current mtime of every file passed in, **replacing** whatever `SolutionRecord.files`
+  held before rather than merging, since each call represents one complete evaluation's dependency
+  set; `Store::is_up_to_date(&self, solution)` stays a pure read, comparing only the *already-
+  recorded* set against the filesystem. The issue's own fourth test case — adding a new import
+  invalidates the cache — turned out not to need a dependency-set diff: adding an `<Import>` means
+  editing the file that names it, and that file's own recorded mtime already catches the edit,
+  without `is_up_to_date` ever re-evaluating to discover the new file. A missing recorded file, or
+  any other failure reading its mtime, both count as stale in `is_up_to_date`; the same kind of
+  failure inside `record_dependencies` is a real `Error::io`, since every file it's given was just
+  read successfully moments earlier by the evaluation calling it. No new `Error`/`ErrorKind`
+  variants. Full reasoning, including the accepted same-tick mtime-resolution gap, in
+  [ADR 22](adr/22-staleness-mtime-comparison.md). `Store::open` still isn't reachable from the CLI
+  (MVP-22 wires the `generate` pipeline through it), so, matching MVP-16/17/18/19's own precedent,
+  no changelog entry.
+
   **Tests:** Unit tests asserting an untouched solution reports up-to-date, touching any
   dependency reports stale, a deleted dependency reports stale, and adding a new import
   invalidates the cache.
+
+  All four written as specified (the fourth via touching the project file that would have gained
+  the `<Import>`, per the Outcome above), plus three more: a never-recorded solution reports
+  stale, `record_dependencies` replaces rather than merges an existing set, and a
+  `record_dependencies_persists_to_disk` round trip through a second `Store::open`, matching
+  MVP-18/19's own precedent of proving the write-through actually reaches `state.json`.
 
 ## CLI subcommands
 

@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::msbuild::paths::normalize;
 use crate::{ConfigPlatform, Error, Result};
 
 /// Bumped whenever `State`'s shape changes incompatibly. v1 has no migration path. An unrecognized
@@ -135,21 +136,71 @@ impl Store {
             .and_then(|record| record.active_config.clone()))
     }
 
-    /// True when nothing the solution depends on has changed since the last parse.
-    pub fn is_up_to_date(&self, _solution: &Path) -> Result<bool> {
-        todo!("MVP-20")
+    /// True when nothing the solution depends on has changed since the last [`record_dependencies`]
+    /// call. `false` for a solution with no recoded dependency set at all -- nothing has been
+    /// evaluated yet so there is nothing to compare against, and the safe default is "reparse".
+    ///
+    /// Only ever compares the already recorded set against the filesystem. It never re-evaluates to
+    /// discover files that joined the dependency graph without touching a file already being tracked.
+    pub fn is_up_to_date(&self, solution: &Path) -> Result<bool> {
+        let key = self.solution_key(solution);
+        let Some(record) = self.state.solutions.get(&key) else {
+            return Ok(false);
+        };
+
+        for (path, recorded_mtime) in &record.files {
+            match mtime_secs(Path::new(path)) {
+                Ok(current) if current == *recorded_mtime => continue,
+                // Missing file, deleted dependency and any other metadata failure count as stale,
+                // not an error. Anything other than confirmed unchanged means reparse.
+                _ => return Ok(false),
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Record the current mtime of every file `solution`'s evaluation touched, replacing whatever
+    /// was recorded previously. Called once per successful evaluation with the complete dependency
+    /// set.
+    ///
+    /// Unlike `is_up_to_date`, a metadata failure here is an error.
+    pub fn record_dependencies(&mut self, solution: &Path, files: &[PathBuf]) -> Result<()> {
+        let mut recorded = BTreeMap::new();
+        for file in files {
+            let normalized = normalize(file);
+            let mtime = mtime_secs(&normalized)?;
+            recorded.insert(normalized.to_string_lossy().into_owned(), mtime);
+        }
+
+        let key = self.solution_key(solution);
+        self.state.solutions.entry(key).or_default().files = recorded;
+        write_state(&self.path, &self.state)
     }
 
     /// The key `solution` is stored under in `state.solutions`. This is the solution path relative
     /// to `self.root`, lowercased. Relative rather than absolute so relocating the whole workspace
     /// doesn't orphan every entry.
     fn solution_key(&self, solution: &Path) -> String {
-        let root = crate::msbuild::paths::normalize(&self.root);
-        let solution = crate::msbuild::paths::normalize(solution);
+        let root = normalize(&self.root);
+        let solution = normalize(solution);
         relative_to(&root, &solution)
             .to_string_lossy()
             .to_lowercase()
     }
+}
+
+/// `path`'s current mtime, in whole seconds since the Unix epoch. Mod time before the epoch clamps
+/// to 0.
+fn mtime_secs(path: &Path) -> Result<i64> {
+    let metadata = std::fs::metadata(path).map_err(|e| Error::io(path, e))?;
+    let modified = metadata.modified().map_err(|e| Error::io(path, e))?;
+    let secs = modified
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    Ok(secs)
 }
 
 /// Serialize `state` to `path` atomically (temp file then rename).
@@ -517,6 +568,171 @@ mod tests {
             reopened.active_config(&solution).expect("reads"),
             Some(debug_x64()),
             "a fresh Store::open must observe a selection set by a prior handle"
+        );
+    }
+
+    // --- `record_dependencies`/`is_up_to_date`: mtime-based staleness tracking ---
+    //
+    // `is_up_to_date` only ever compares the already-recorded file set against the filesystem —
+    // it never re-evaluates to discover files that joined the dependency graph without touching a
+    // file already being tracked. See ADR 22.
+
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn is_up_to_date_is_false_for_a_solution_never_recorded() {
+        let tree = TempTree::new("is_up_to_date_never_recorded");
+        let store = Store::open(&tree.path(".msvclsp")).expect("opens");
+
+        let result = store
+            .is_up_to_date(&tree.path("App.sln"))
+            .expect("checking an unrecorded solution is not an error");
+
+        assert!(
+            !result,
+            "a solution with no recorded dependency set has nothing to compare against, so it \
+             must report stale"
+        );
+    }
+
+    #[test]
+    fn is_up_to_date_is_true_when_nothing_recorded_has_changed() {
+        let tree = TempTree::new("is_up_to_date_unchanged");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let project = tree.write("App.vcxproj", "project contents");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+
+        store
+            .record_dependencies(&solution, &[solution.clone(), project])
+            .expect("records the dependency set");
+
+        assert!(
+            store
+                .is_up_to_date(&solution)
+                .expect("checking is not an error"),
+            "nothing changed since record_dependencies, so this must report up to date"
+        );
+    }
+
+    #[test]
+    fn is_up_to_date_is_false_when_a_recorded_file_is_touched() {
+        let tree = TempTree::new("is_up_to_date_touched");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let project = tree.write("App.vcxproj", "project contents");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        store
+            .record_dependencies(&solution, &[solution.clone(), project])
+            .expect("records the dependency set");
+
+        tree.write("App.vcxproj", "changed project contents");
+        tree.set_mtime("App.vcxproj", SystemTime::now() + Duration::from_secs(60));
+
+        assert!(
+            !store
+                .is_up_to_date(&solution)
+                .expect("checking is not an error"),
+            "a recorded file whose mtime moved forward must report stale"
+        );
+    }
+
+    #[test]
+    fn is_up_to_date_is_false_when_a_recorded_file_is_deleted() {
+        let tree = TempTree::new("is_up_to_date_deleted");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let project = tree.write("App.vcxproj", "project contents");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        store
+            .record_dependencies(&solution, &[solution.clone(), project.clone()])
+            .expect("records the dependency set");
+
+        std::fs::remove_file(&project).expect("the temp tree file is removable");
+
+        let result = store
+            .is_up_to_date(&solution)
+            .expect("a deleted dependency is stale, not an error");
+        assert!(!result, "a deleted dependency must report stale");
+    }
+
+    /// The issue's own fourth case: "adding a new import invalidates the cache." Under this
+    /// design that resolves to the same mechanism as touching a dependency, because adding an
+    /// `<Import>` means editing the file that names it — here, `App.vcxproj` standing in for
+    /// having gained a new `<Import>` line — and that file's own recorded mtime is what catches
+    /// it. See ADR 22's discussion of why a full file-set diff isn't needed.
+    #[test]
+    fn is_up_to_date_is_false_after_a_new_import_is_added() {
+        let tree = TempTree::new("is_up_to_date_new_import");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let project = tree.write("App.vcxproj", "project contents, no imports");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        store
+            .record_dependencies(&solution, &[solution.clone(), project])
+            .expect("records the dependency set from the first evaluation");
+
+        tree.write("App.vcxproj", "project contents, now importing Extra.props");
+        tree.set_mtime("App.vcxproj", SystemTime::now() + Duration::from_secs(60));
+
+        assert!(
+            !store
+                .is_up_to_date(&solution)
+                .expect("checking is not an error"),
+            "editing the project file to add an import must invalidate the cache"
+        );
+    }
+
+    #[test]
+    fn record_dependencies_replaces_rather_than_merges_the_previous_set() {
+        let tree = TempTree::new("record_dependencies_replaces");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let a = tree.write("A.props", "a contents");
+        let b = tree.write("B.props", "b contents");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+
+        store
+            .record_dependencies(&solution, &[solution.clone(), a.clone(), b.clone()])
+            .expect("records the first, larger dependency set");
+        store
+            .record_dependencies(&solution, &[solution.clone(), a])
+            .expect("records the second, smaller dependency set");
+
+        tree.write("B.props", "b contents changed");
+        tree.set_mtime("B.props", SystemTime::now() + Duration::from_secs(60));
+
+        assert!(
+            store
+                .is_up_to_date(&solution)
+                .expect("checking is not an error"),
+            "B.props dropped out of the second, replacing call, so changing it must not affect \
+             staleness"
+        );
+    }
+
+    /// Matches `set_active_config_persists_to_disk`'s existing precedent: proves the write-through
+    /// reaches `state.json` rather than only the in-memory copy.
+    #[test]
+    fn record_dependencies_persists_to_disk() {
+        let tree = TempTree::new("record_dependencies_persists_to_disk");
+        let msvclsp_dir = tree.path(".msvclsp");
+        let solution = tree.path("App.sln");
+        tree.write("App.sln", "sln contents");
+        let project = tree.write("App.vcxproj", "project contents");
+
+        let mut store = Store::open(&msvclsp_dir).expect("opens the first handle");
+        store
+            .record_dependencies(&solution, &[solution.clone(), project])
+            .expect("records the dependency set");
+
+        let reopened = Store::open(&msvclsp_dir).expect("opens a second handle");
+
+        assert!(
+            reopened
+                .is_up_to_date(&solution)
+                .expect("checking is not an error"),
+            "a fresh Store::open must observe a dependency set recorded by a prior handle"
         );
     }
 }

@@ -399,8 +399,14 @@ Rough module breakdown implied by the parsing pipeline:
   migration. See [ADR 20](adr/20-state-file-shape.md). `Store::set_active_config`/`active_config`
   read and write the last-active pair through this shape, keyed by `solution_key`;
   `set_active_config` takes `&mut self` and writes the file through on every call, no batching —
-  see [ADR 21](adr/21-store-mutation-signature.md). `known_configs`/`files` and `is_up_to_date`
-  remain unpopulated/unimplemented (MVP-20).
+  see [ADR 21](adr/21-store-mutation-signature.md). `Store::record_dependencies` records the
+  current mtime of every file an evaluation touched, replacing (not merging) whatever was
+  recorded before; `Store::is_up_to_date` reports whether every recorded file still exists with
+  an unchanged mtime, treating a missing file or any other read failure as stale rather than an
+  error. Both compare only the already-recorded set against the filesystem — an import newly
+  added to the dependency graph is caught because adding it means editing a file already on
+  record, not by re-evaluating to discover it. See [ADR 22](adr/22-staleness-mtime-comparison.md).
+  `known_configs` remains unpopulated (no owning issue yet).
 - **CLI/subcommand layer** — the contract the Neovim plugin drives, defined in full under
   "CLI Surface" below.
 

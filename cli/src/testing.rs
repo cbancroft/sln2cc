@@ -60,6 +60,18 @@ impl TempTree {
     pub(crate) fn root(&self) -> &Path {
         &self.0
     }
+
+    /// Force `relative`'s mtime to an exact value, for tests asserting staleness detection. Two
+    /// successive `write` calls can land within the same filesystem timestamp tick, which would
+    /// make a "touch and expect staleness" test flaky without this.
+    pub(crate) fn set_mtime(&self, relative: &str, time: std::time::SystemTime) {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(self.path(relative))
+            .expect("the temp tree file exists and is writable");
+        file.set_modified(time)
+            .expect("set_modified is supported on the test platform");
+    }
 }
 
 impl Drop for TempTree {
