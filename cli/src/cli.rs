@@ -167,7 +167,6 @@ fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<S
     })
 }
 
-/// MVP-22 implements this.
 fn generate(
     args: &SolutionArgs,
     requested: &ConfigPlatform,
