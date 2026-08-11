@@ -1189,7 +1189,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   real generated output to a real golden file. `props_inheritance_matches_golden` stays the
   `#[ignore]`d placeholder it already was; its fixture is MVP-24's.
 
-- [ ] **MVP-24 — Remaining fixtures**
+- [x] **MVP-24 — Remaining fixtures**
   `feat/fixtures-complex` · ~1d
 
   **Summary:** Author the `multi-project`, `props-inheritance`, and `multi-config` fixtures
@@ -1202,8 +1202,32 @@ Goal: one solution, one manually selected configuration/platform, producing a
   sheet imported by two projects. Keep them small enough to read in full when a golden diff
   needs explaining.
 
+  **Outcome:** All three extend `fixtures/simple`'s precedent unchanged — no `<Import>` of the
+  real VC targets, schema-realistic minimal XML — and needed no harness changes at all, per ADR
+  25's own prediction. `multi-project` is `App`/`Lib`, each with a different `WarningLevel`,
+  define, and include directory, so a leaking property bag shows up directly as a golden
+  mismatch. `props-inheritance` is a solution-level `common.props` imported by both `App` and
+  `Widget`; `App` additionally imports `overrides.props` (redefining `WarningLevel`) and adds its
+  own `ExceptionHandling`, while `Widget` imports only `common.props` — the golden file has to
+  show `App` at `/W4`/`/EHsc` and `Widget` at `/W3` with no `/EHsc`, proving both override
+  precedence *and* that one importer's override doesn't leak into another importer of the same
+  shared sheet. `multi-config` declares `Debug|x64`/`Release|x64`; `App` maps both pairs
+  straight across, `Tool` maps solution `Debug|x64` onto project `Debug|Win32` (the differing
+  pair [ADR 05](adr/05-sln-configuration-mapping.md)'s Consequences asked for) and carries no
+  `Build.0` row for `Release|x64` at all. Each fixture gets one `#[test]` in `generate.rs`,
+  matching `simple_solution_matches_golden`'s shape exactly; `props_inheritance_matches_golden`'s
+  `#[ignore]`/`todo!()` placeholder is gone. `cli/tests/generate.rs` is now 10 tests, 0 ignored.
+  Full reasoning in [ADR 26](adr/26-remaining-fixtures.md).
+
   **Tests:** Golden-file integration tests per fixture, plus assertions that per-project
   settings don't bleed and that overrides win over inherited values.
+
+  Written as specified. "Settings don't bleed" and "overrides win" need no separate assertion
+  code beyond the golden comparison itself — `assert_matches_golden` does an exact-content
+  comparison, so a leaked or wrongly-ordered property shows up as a golden mismatch directly.
+  `multi-config`'s golden test covers `Debug|x64` only; `Tool`'s `Release|x64` exclusion is real
+  fixture content per ADR 05's ask, not separately asserted on — see ADR 26's discussion for why
+  a second golden file for it was rejected.
 
 ## Neovim plugin
 

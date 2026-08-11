@@ -1,0 +1,26 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/main.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/App/include",
+      "/DAPP_DEBUG",
+      "/W3",
+      "<FIXTURE>/App/src/main.cpp"
+    ]
+  },
+  {
+    "directory": "<FIXTURE>/Lib",
+    "file": "<FIXTURE>/Lib/src/lib.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/Lib/inc",
+      "/DLIB_DEBUG",
+      "/W4",
+      "<FIXTURE>/Lib/src/lib.cpp"
+    ]
+  }
+]

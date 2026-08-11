@@ -1,0 +1,25 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/main.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/App/shared",
+      "/EHsc",
+      "/W4",
+      "<FIXTURE>/App/src/main.cpp"
+    ]
+  },
+  {
+    "directory": "<FIXTURE>/Widget",
+    "file": "<FIXTURE>/Widget/src/widget.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/Widget/shared",
+      "/W3",
+      "<FIXTURE>/Widget/src/widget.cpp"
+    ]
+  }
+]

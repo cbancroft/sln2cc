@@ -44,9 +44,27 @@ fn simple_solution_matches_golden() {
 }
 
 #[test]
-#[ignore = "not yet implemented"]
 fn props_inheritance_matches_golden() {
-    todo!("parse fixtures/props-inheritance, compare against golden — MVP-24's fixture")
+    support::assert_matches_golden(
+        &fixture("props-inheritance").join("props-inheritance.sln"),
+        &golden("props-inheritance.json"),
+    );
+}
+
+#[test]
+fn multi_project_matches_golden() {
+    support::assert_matches_golden(
+        &fixture("multi-project").join("multi-project.sln"),
+        &golden("multi-project.json"),
+    );
+}
+
+#[test]
+fn multi_config_matches_golden() {
+    support::assert_matches_golden(
+        &fixture("multi-config").join("multi-config.sln"),
+        &golden("multi-config.json"),
+    );
 }
 
 /// A GUID stable across every `TempProject`; nothing here needs more than one project, so there

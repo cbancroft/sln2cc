@@ -21,5 +21,7 @@ has something to index.
 Running the tool against these will create `.msvclsp/` directories inside them; those are
 gitignored.
 
-Where these come from — hand-authored minimal solutions, sanitized real-world examples, or
-both — is still an open question.
+All four are hand-authored, schema-realistic solutions rather than sanitized real-world examples —
+none import the real Visual Studio VC targets, so they evaluate under `FakeToolchain` on CI, which
+has no Visual Studio installed (see
+[ADR 25](../docs/adr/25-fixture-simple-and-golden-harness.md)).

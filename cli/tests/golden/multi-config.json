@@ -1,0 +1,24 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/main.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/DAPP_DEBUG",
+      "/W4",
+      "<FIXTURE>/App/src/main.cpp"
+    ]
+  },
+  {
+    "directory": "<FIXTURE>/Tool",
+    "file": "<FIXTURE>/Tool/src/tool.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/DTOOL_DEBUG",
+      "/W3",
+      "<FIXTURE>/Tool/src/tool.cpp"
+    ]
+  }
+]
