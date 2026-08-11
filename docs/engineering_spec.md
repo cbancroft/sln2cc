@@ -396,7 +396,11 @@ Rough module breakdown implied by the parsing pipeline:
   last-active configuration/platform, and file modification timestamps used to detect when a
   reparse is needed. Written atomically (temp file + rename) so a crash or a concurrent run
   cannot leave a torn file. An unrecognized schema version is a hard error for v1, not a
-  migration. See [ADR 20](adr/20-state-file-shape.md).
+  migration. See [ADR 20](adr/20-state-file-shape.md). `Store::set_active_config`/`active_config`
+  read and write the last-active pair through this shape, keyed by `solution_key`;
+  `set_active_config` takes `&mut self` and writes the file through on every call, no batching —
+  see [ADR 21](adr/21-store-mutation-signature.md). `known_configs`/`files` and `is_up_to_date`
+  remain unpopulated/unimplemented (MVP-20).
 - **CLI/subcommand layer** — the contract the Neovim plugin drives, defined in full under
   "CLI Surface" below.
 

@@ -993,7 +993,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   in ADR 20. Nothing in the CLI's reachable surface calls `Store::open` yet, so no changelog
   entry, matching MVP-16/17's own precedent.
 
-- [ ] **MVP-19 — Persist active configuration/platform per solution**
+- [x] **MVP-19 — Persist active configuration/platform per solution**
   `feat/db-active-config` · ~3h
 
   **Summary:** Implement `set_active_config`/`active_config` keyed on the solution.
@@ -1004,8 +1004,26 @@ Goal: one solution, one manually selected configuration/platform, producing a
   recorded selection returns `None` rather than a default, letting the caller prompt. Solution
   identity should survive the working directory changing.
 
+  **Outcome:** Both bodies turned out to be a handful of lines each, since ADR 20 already settled
+  the shape and `solution_key`: `set_active_config` looks up or inserts a `SolutionRecord` via
+  `self.state.solutions.entry(key).or_default()`, sets `active_config`, and calls the existing
+  `write_state` to rewrite the file atomically; `active_config` reads the in-memory copy `open()`
+  already loaded. The one real decision was **`set_active_config` becomes `&mut self`** — the stub
+  was `&self`, which can't mutate or persist anything — write-through on every call, no batching,
+  matching `write_state`'s existing per-call atomic-rewrite precedent. Nothing in the CLI calls
+  `Store` yet, so this broke no published caller; **MVP-20's `is_up_to_date` may face the same
+  question** if it ever updates `files` as a byproduct of checking staleness, left open rather than
+  decided here. No new `Error`/`ErrorKind` variants — `write_state`'s existing `Error::io` path
+  already covers a failed rewrite. See [ADR 21](adr/21-store-mutation-signature.md) and
+  "Persistence" in `engineering_spec.md`. `Store::open` still isn't reachable from the CLI
+  (MVP-21/22 wire it up), so, matching MVP-16/17/18's own precedent, no changelog entry.
+
   **Tests:** Unit tests for set-then-get round trip, `None` for an unknown solution,
   overwriting an existing selection, and two solutions holding independent selections.
+
+  All four written as specified, plus a fifth: `set_active_config_persists_to_disk`, opening a
+  second `Store` handle against the same `.msvclsp` directory to prove the write-through actually
+  reaches `state.json` rather than only the in-memory copy.
 
 - [ ] **MVP-20 — Modification-time staleness tracking**
   `feat/db-staleness` · ~6h

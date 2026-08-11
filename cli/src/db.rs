@@ -69,12 +69,7 @@ pub struct Store {
     pub path: PathBuf,
     /// The workspace root. This is `.msvclsp`'s own parent, and used to key solutions by
     /// root-relative path rather than absolute. See [`solution_key`].
-    // MVP-19/20 read this through `solution_key`; unread until those wire up.
-    #[allow(dead_code)]
     root: PathBuf,
-    // MVP-19/20 read and mutate this through set_active_config/active_config/is_up_to_date;
-    // unread until those bodies stop being todo!().
-    #[allow(dead_code)]
     state: State,
 }
 
@@ -119,13 +114,25 @@ impl Store {
     }
 
     /// Record the last-used configuration/platform for a solution.
-    pub fn set_active_config(&self, _solution: &Path, _config: &ConfigPlatform) -> Result<()> {
-        todo!("MVP-19")
+    ///
+    /// Overwrites any existing selection. Written through immediately (no batching). The state file
+    /// is a small cache, not a log.
+    pub fn set_active_config(&mut self, solution: &Path, config: &ConfigPlatform) -> Result<()> {
+        let key = self.solution_key(solution);
+        self.state.solutions.entry(key).or_default().active_config = Some(config.clone());
+        write_state(&self.path, &self.state)
     }
 
-    /// Fetch a solution's own last-used configuration/platform, if recorded.
-    pub fn active_config(&self, _solution: &Path) -> Result<Option<ConfigPlatform>> {
-        todo!("MVP-19")
+    /// Fetch a solution's own last-used configuration/platform, if recorded. Reads the in-memory
+    /// copy loaded at `open()`. Per ADR 20, `Store` is the only writer within a process so there is
+    /// nothing on disk this copy could be stale against.
+    pub fn active_config(&self, solution: &Path) -> Result<Option<ConfigPlatform>> {
+        let key = self.solution_key(solution);
+        Ok(self
+            .state
+            .solutions
+            .get(&key)
+            .and_then(|record| record.active_config.clone()))
     }
 
     /// True when nothing the solution depends on has changed since the last parse.
@@ -136,8 +143,6 @@ impl Store {
     /// The key `solution` is stored under in `state.solutions`. This is the solution path relative
     /// to `self.root`, lowercased. Relative rather than absolute so relocating the whole workspace
     /// doesn't orphan every entry.
-    // MVP-19/20 call this from set_active_config/active_config/is_up_to_date; unused until then.
-    #[allow(dead_code)]
     fn solution_key(&self, solution: &Path) -> String {
         let root = crate::msbuild::paths::normalize(&self.root);
         let solution = crate::msbuild::paths::normalize(solution);
@@ -163,8 +168,6 @@ fn write_state(path: &Path, state: &State) -> Result<()> {
 /// final joined string regardless, so components are pushed in their original case here.
 ///
 /// Handrolled because this is the one place that needs it.
-// Only called from `solution_key`, which is itself unused until MVP-19/20.
-#[allow(dead_code)]
 fn relative_to(base: &Path, target: &Path) -> PathBuf {
     let base_components: Vec<_> = base.components().collect();
     let target_components: Vec<_> = target.components().collect();
@@ -401,5 +404,119 @@ mod tests {
         let upper_key = store.solution_key(&tree.root().join("SUB").join("APP.SLN"));
 
         assert_eq!(lower_key, upper_key);
+    }
+
+    // --- `set_active_config`/`active_config`: per-solution round trip ---
+
+    fn debug_x64() -> ConfigPlatform {
+        ConfigPlatform {
+            configuration: "Debug".to_string(),
+            platform: "x64".to_string(),
+        }
+    }
+
+    fn release_win32() -> ConfigPlatform {
+        ConfigPlatform {
+            configuration: "Release".to_string(),
+            platform: "Win32".to_string(),
+        }
+    }
+
+    #[test]
+    fn set_then_get_round_trips() {
+        let tree = TempTree::new("set_then_get_round_trips");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let solution = tree.path("App.sln");
+        let config = debug_x64();
+
+        store
+            .set_active_config(&solution, &config)
+            .expect("sets the active config");
+
+        assert_eq!(store.active_config(&solution).expect("reads"), Some(config));
+    }
+
+    #[test]
+    fn active_config_is_none_for_an_unknown_solution() {
+        let tree = TempTree::new("active_config_unknown_solution");
+        let store = Store::open(&tree.path(".msvclsp")).expect("opens");
+
+        let result = store
+            .active_config(&tree.path("Never.sln"))
+            .expect("reading an unset solution is not an error");
+
+        assert_eq!(
+            result, None,
+            "a solution with no recorded selection must read back None, not a default"
+        );
+    }
+
+    #[test]
+    fn set_active_config_overwrites_an_existing_selection() {
+        let tree = TempTree::new("set_active_config_overwrites");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let solution = tree.path("App.sln");
+
+        store
+            .set_active_config(&solution, &debug_x64())
+            .expect("sets the first selection");
+        store
+            .set_active_config(&solution, &release_win32())
+            .expect("sets the second selection");
+
+        assert_eq!(
+            store.active_config(&solution).expect("reads"),
+            Some(release_win32()),
+            "the most recent selection must win"
+        );
+    }
+
+    #[test]
+    fn two_solutions_hold_independent_selections() {
+        let tree = TempTree::new("two_solutions_independent_selections");
+        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let first = tree.path("First.sln");
+        let second = tree.path("Second.sln");
+
+        store
+            .set_active_config(&first, &debug_x64())
+            .expect("sets the first solution's selection");
+        store
+            .set_active_config(&second, &release_win32())
+            .expect("sets the second solution's selection");
+
+        assert_eq!(
+            store.active_config(&first).expect("reads"),
+            Some(debug_x64()),
+            "setting the second solution must not disturb the first"
+        );
+        assert_eq!(
+            store.active_config(&second).expect("reads"),
+            Some(release_win32()),
+            "setting the first solution must not disturb the second"
+        );
+    }
+
+    /// Not in the issue's own test list, but proves the write-through actually reaches
+    /// `state.json` rather than only updating the in-memory copy — a second `Store::open`
+    /// against the same `.msvclsp` directory has no way to see the selection otherwise.
+    #[test]
+    fn set_active_config_persists_to_disk() {
+        let tree = TempTree::new("set_active_config_persists_to_disk");
+        let msvclsp_dir = tree.path(".msvclsp");
+        let solution = tree.path("App.sln");
+
+        let mut store = Store::open(&msvclsp_dir).expect("opens the first handle");
+        store
+            .set_active_config(&solution, &debug_x64())
+            .expect("sets the active config");
+
+        let reopened = Store::open(&msvclsp_dir).expect("opens a second handle");
+
+        assert_eq!(
+            reopened.active_config(&solution).expect("reads"),
+            Some(debug_x64()),
+            "a fresh Store::open must observe a selection set by a prior handle"
+        );
     }
 }
