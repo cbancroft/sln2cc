@@ -236,8 +236,13 @@ Rough module breakdown implied by the parsing pipeline:
 
   `Condition` evaluation is settled by MVP-09 and sits beside expansion in `msbuild/eval.rs`: a
   tokenizer and recursive-descent evaluator over quoted and unquoted operand comparison (`==`,
-  `!=`), `And`/`Or`/`!`, parentheses, `Exists()`, and a lone operand as a boolean literal. Anything
-  else in MSBuild's much larger grammar is out of scope. The shape of the design is that
+  `!=`), `And`/`Or`/`!`, parentheses, `Exists()`, `HasTrailingSlash()` (added by MVP-42, see
+  [ADR 31](adr/31-has-trailing-slash-condition-function.md)), and a lone operand as a boolean
+  literal. Anything else in MSBuild's much larger grammar is out of scope — including the
+  version-comparison family (`$([MSBuild]::VersionGreaterThanOrEquals(...))` and its siblings),
+  which are property functions reached through `$(...)` rather than bare condition functions, and
+  a materially larger addition than `HasTrailingSlash`'s single-operand shape. The shape of the
+  design is that
   "unsupported" means two different things: an expression that cannot reduce to a boolean is a fatal
   `Error::UnsupportedConstruct`, because inventing one would either drop a `PropertyGroup` carrying
   every include path or apply flags the file never asked for; whereas an unsupported `$(...)` inside
