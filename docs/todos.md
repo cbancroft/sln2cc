@@ -789,7 +789,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `additional_options_with_a_quoted_argument_warns` in `msbuild/flags.rs` rather than leaving it
   asserting the corruption this removes.
 
-- [ ] **MVP-41 — Expand wildcard `<Import>` `Project` specs**
+- [x] **MVP-41 — Expand wildcard `<Import>` `Project` specs**
   `feat/import-globbing` · ~5h
 
   **Summary:** Resolve a wildcarded `<Import Project="...\*.props" />` to every matching file,
@@ -820,6 +820,22 @@ Goal: one solution, one manually selected configuration/platform, producing a
   order asserted, not just membership), a wildcard matching nothing, a wildcard whose directory
   does not exist, and a cyclic import reached only through a wildcard match (ADR 10's dedup must
   still apply per matched file, not per spec).
+
+  **Outcome:** `Walk::import` detects `*`/`?` in the macro-expanded `Project` value the same way
+  `items.rs::specs` already does, and on a match delegates to a new `Walk::import_wildcard`, which
+  calls `glob::expand` and loops `self.enter` over the sorted matches — one call per file, no new
+  traversal logic. That reuse is the point: MSB4011 dedup, the recursion-depth cap, and
+  `MSBuildThisFile*` scoping all already do the right thing for a sequence of files entered one
+  after another, so a cycle reached only through a wildcard match is caught by the ordinary
+  duplicate rule with no extra code. The open question came out **against** MVP-37's precedent:
+  zero matches warns rather than staying silent, because a literal `Project` target that fails to
+  resolve is already `Error::MissingImport` in this module — "wildcard matched nothing" is the
+  wildcard analogue of a case `imports.rs` has never treated as unremarkable, not of an empty
+  `ClCompile` list. Semicolon-delimited multi-target `Project` specs stayed out of scope; nothing
+  in this module split on `;` before and the issue didn't ask for it. MVP-36 (toolchain
+  unsupported-condition leniency) still owns the follow-up for a real `ImportBefore`/`ImportAfter`
+  file's own `Condition`s, untouched by this change. See
+  [ADR 30](adr/30-wildcard-import-expansion.md).
 
 ## Toolchain discovery
 

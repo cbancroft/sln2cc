@@ -130,6 +130,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Fixed
 
+- A wildcarded `<Import Project="...">`, such as `$(VCTargetsPath)\ImportBefore\Default\*.props` —
+  the way Visual Studio's own extension-hook directories are consumed — no longer fails generation
+  outright when nothing is registered there. It now expands to every matching file, same as a
+  wildcarded `ClCompile` item already does; a wildcard that matches nothing warns instead of
+  erroring.
+
 - The same problem is no longer reported over and over. One mistake in a property sheet shared by
   several projects used to produce one identical message per project that imported it; now it is
   reported once.

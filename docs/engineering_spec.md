@@ -266,7 +266,15 @@ Rough module breakdown implied by the parsing pipeline:
   refused, since a shared sheet one directory up is how multi-project solutions are laid out, and
   there is consequently no root left to escape from. A condition is evaluated before its path is
   expanded, so a guarded optional import never reports a missing file the project allows for; one
-  whose condition holds and whose file is absent is `Error::MissingImport`, naming the referrer.
+  whose condition holds and whose file is absent is `Error::MissingImport`, naming the referrer. A
+  `Project` spec containing `*`/`?` expands through `msbuild/glob.rs` the same way a wildcarded item
+  spec does, importing every matched file in sorted order through the ordinary per-file walk — so
+  MSB4011 dedup, the depth cap, and `MSBuildThisFile*` scoping all apply exactly as they do for a
+  literal import. Zero matches warns rather than staying silent, since a literal target that fails
+  to resolve is already fatal here; this is the toolchain's own
+  `ImportBefore`/`ImportAfter`-directory idiom (`$(VCTargetsPath)\ImportBefore\Default\*.props`,
+  gated behind `Exists(...)`), which the literal-only resolver turned into a hard failure. See
+  [ADR 30](adr/30-wildcard-import-expansion.md).
   This is also where MVP-08's and MVP-09's recorded findings finally become `Reporter` warnings,
   this being the first code that holds both a finding and the file and line it came from. See
   [ADR 10](adr/10-import-resolution.md).
@@ -511,6 +519,7 @@ The catalogue below is the whole of it. A new call site is expected to add a row
 | A file already imported, not imported again (MSB4011) | Note | `msbuild/imports.rs` |
 | An assignment to a reserved property, ignored | Warning | `msbuild/imports.rs` |
 | An `<Import>` whose path expanded to nothing, skipped | Warning | `msbuild/imports.rs` |
+| An `<Import>` wildcard matching no files, skipped | Warning | `msbuild/imports.rs` |
 | `$(X)` is not defined and expanded to nothing | Warning | `msbuild/eval.rs` |
 | A construct outside the supported subset, left as written | Warning | `msbuild/eval.rs` |
 | A source file declared twice; the second is dropped | Warning | `msbuild/items.rs` |

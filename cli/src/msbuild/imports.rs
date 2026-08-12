@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::msbuild::eval::{self, Properties};
+use crate::msbuild::glob;
 use crate::msbuild::paths::normalize;
 use crate::msbuild::project::{self, Element, Import, PropertyGroup};
 use crate::msbuild::reserved;
@@ -220,6 +221,10 @@ impl Walk<'_> {
 
         // Parsing happens relative to the importing files own directory as resolved and not the root's.
         let base = file.parent().unwrap_or(Path::new(""));
+
+        if target.contains('*') || target.contains('?') {
+            return self.import_wildcard(target, base, file, import.line);
+        }
         self.enter(&normalize(&base.join(target)), Some(file))
     }
 
@@ -236,6 +241,36 @@ impl Walk<'_> {
                 line,
             ),
         )
+    }
+
+    /// Import every file a wildcarded `Project` spec names, in [`glob::expand`]'s order.
+    ///
+    /// Reuses `enter` per match rather than a custom loop. Unlike a literal target, a wildcard
+    /// resolving to zero matches is not `Error::MissingImport`. It is just a warning because we
+    /// still want to let the user know that a Condition gated import resolved to nothing.
+    fn import_wildcard(
+        &mut self,
+        target: &str,
+        base: &Path,
+        file: &Path,
+        line: usize,
+    ) -> Result<()> {
+        let matched = glob::expand(base, target)?;
+
+        if matched.is_empty() {
+            self.reporter.warn_at(
+                file,
+                Some(line),
+                format!("`<Import Project=\"{target}\">` matched no files"),
+            );
+            return Ok(());
+        }
+
+        for path in matched {
+            self.enter(&path, Some(file))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -777,6 +812,99 @@ mod tests {
         let resolved = tree(&dir.path("p0.props"));
 
         assert_eq!(resolved.files.len(), MAX_IMPORT_DEPTH);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-41 — wildcard `<Import Project="...">` expansion
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_wildcard_import_matches_several_files_in_order() {
+        // Order asserted, not just membership: `glob::expand`'s filesystem-sorted order is what
+        // MSBuild itself uses for a wildcard import, and a diamond-style dedup bug could still
+        // pass a membership-only check.
+        let dir = TempTree::new("wildcard-import-order");
+        let root = dir.project("root.vcxproj", r#"  <Import Project="hooks\*.props" />"#);
+        dir.project("hooks/c.props", "  <PropertyGroup />");
+        dir.project("hooks/a.props", "  <PropertyGroup />");
+        dir.project("hooks/b.props", "  <PropertyGroup />");
+
+        let resolved = tree(&root);
+
+        assert_eq!(
+            names(&resolved, &dir),
+            [
+                "root.vcxproj",
+                "hooks/a.props",
+                "hooks/b.props",
+                "hooks/c.props",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wildcard_import_matching_nothing_warns() {
+        // Unlike a literal target, a wildcard matching zero files is not `Error::MissingImport` —
+        // nothing in the graph named one specific missing file. It still warns: a
+        // `Condition="Exists(...)"`-gated hook directory that resolved to nothing is a real
+        // signal worth surfacing, per MVP-41's decision.
+        let dir = TempTree::new("wildcard-import-empty");
+        let root = dir.project("root.vcxproj", r#"  <Import Project="hooks\*.props" />"#);
+        dir.write("hooks/readme.txt", ""); // present, but nothing matches `*.props`
+
+        let (result, reporter) = tree_reporting(&root);
+        let resolved = result.expect("a zero-match wildcard is not an error");
+
+        assert_eq!(names(&resolved, &dir), ["root.vcxproj"]);
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
+        };
+        assert!(
+            finding.message.contains("hooks") && finding.message.contains("*.props"),
+            "names the spec that matched nothing: {}",
+            finding.message
+        );
+        assert_eq!(finding.severity, crate::Severity::Warning);
+    }
+
+    #[test]
+    fn a_wildcard_import_whose_directory_does_not_exist_does_not_error() {
+        // Mirrors `glob.rs`'s own `a_wildcard_naming_a_missing_directory_expands_to_nothing`,
+        // exercised through the import path: a wildcard whose directory is entirely absent must
+        // not be confused with a real I/O failure, matching ADR 29's "missing directory expands
+        // to nothing" rule reused here rather than reimplemented.
+        let dir = TempTree::new("wildcard-import-missing-dir");
+        let root = dir.project("root.vcxproj", r#"  <Import Project="nowhere\*.props" />"#);
+
+        let (result, reporter) = tree_reporting(&root);
+        let resolved = result.expect("a missing directory is not an error");
+
+        assert_eq!(names(&resolved, &dir), ["root.vcxproj"]);
+        assert_eq!(reporter.warnings().len(), 1, "{:?}", reporter.warnings());
+    }
+
+    #[test]
+    fn a_cycle_reached_only_through_a_wildcard_import_is_deduped() {
+        // ADR 10's MSB4011 dedup applies per matched file, not per spec: `hooks/a.props` imports
+        // `root.vcxproj` back, but `root.vcxproj` is already in `self.files` by the time the
+        // wildcard reaches it, so the walk terminates rather than looping or erroring.
+        let dir = TempTree::new("wildcard-import-cycle");
+        let root = dir.project("root.vcxproj", r#"  <Import Project="hooks\*.props" />"#);
+        dir.project("hooks/a.props", r#"  <Import Project="..\root.vcxproj" />"#);
+
+        let (result, reporter) = tree_reporting(&root);
+        let resolved = result.expect("must terminate rather than erroring");
+
+        assert_eq!(names(&resolved, &dir), ["root.vcxproj", "hooks/a.props"]);
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
+        };
+        assert!(
+            finding.message.contains("already imported"),
+            "says why it was skipped: {}",
+            finding.message
+        );
+        assert_eq!(finding.severity, crate::Severity::Note);
     }
 
     #[test]
