@@ -247,9 +247,24 @@ Rough module breakdown implied by the parsing pipeline:
   around it. `And`/`Or` deliberately do not short-circuit, so a construct on the dead side is still
   reported. Comparison is case-insensitive as MSBuild's is, an empty condition holds as an absent
   one does, `Exists()` resolves against the directory of the file the condition is written in, and
-  nesting is capped at 32 to keep recursive descent off a stack-overflow path. MVP-10 inherits the
-  fatal-error policy and owns whether to downgrade it for the Visual Studio installation's own
-  `.targets`. See [ADR 09](adr/09-condition-evaluation-subset.md).
+  nesting is capped at 32 to keep recursive descent off a stack-overflow path. See
+  [ADR 09](adr/09-condition-evaluation-subset.md).
+
+  MVP-36 downgrades that fatal policy for files under the discovered Visual Studio installation's
+  `install_path`: an unsupported `Condition` there is a warning and evaluates as `false` rather
+  than failing generation, and an `<Import>` whose *path* still carries an unsupported construct
+  after expansion is warned about and skipped rather than resolved against the filesystem (which
+  would otherwise surface as a confusing `Error::MissingImport` naming a garbled path). A file
+  outside `install_path` — the user's own project tree — keeps ADR 09's fatal policy unchanged, and
+  a toolchain file whose import resolves cleanly but is genuinely absent still fails, since that
+  signals a broken or unexpected installation rather than an unsupported construct.
+
+  `Properties` also tracks which keys' stored values still carry an unsupported construct copied
+  through verbatim (`is_tainted`), because the real Visual Studio toolset assigns one to an
+  intermediate property before an `<Import>` references it — the reference itself is otherwise
+  indistinguishable from an ordinary, well-formed one. `expand()` flags a reference to a tainted
+  key as unsupported too, which is what lets the `<Import>` downgrade above see it. See
+  [ADR 32](adr/32-toolchain-unsupported-construct-policy.md).
 
   Import resolution is settled by MVP-10 and lives in `msbuild/imports.rs`. Because an import's path
   is macro-expanded and its `Condition` gates whether the path is resolved at all, resolution cannot

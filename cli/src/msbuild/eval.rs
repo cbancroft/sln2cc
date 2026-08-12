@@ -30,6 +30,13 @@ pub struct Properties {
     values: HashMap<String, String>,
     /// Keys that cannot be overwritten by project configuration data.
     locked: HashSet<String>,
+    /// Keys whose *stored* value still carries an unsupported construct copied through verbatim
+    /// by [`expand`] -- e.g. `<_PlatformFolder>$(VCTargetsPath)$([MSBuild]::Unescape(...))</_...>`.
+    /// Tracked so a later `$(_PlatformFolder)` reference is itself flagged unsupported, even though
+    /// by itself it is an ordinary, well-formed property reference. Without this, one hop through
+    /// an intermediate property is enough to make an untrustworthy value look clean again -- which
+    /// is exactly how the real `Microsoft.Cpp.ToolsetLocation.props` reaches `<Import>`.
+    tainted: HashSet<String>,
 }
 
 impl Properties {
@@ -77,6 +84,12 @@ impl Properties {
         self.locked.contains(&name.to_ascii_lowercase())
     }
 
+    /// Whether `name`'s stored value still carries an unsupported construct, copied through
+    /// verbatim by an earlier [`Properties::assign`]. See the field doc on `tainted`.
+    pub fn is_tainted(&self, name: &str) -> bool {
+        self.tainted.contains(&name.to_ascii_lowercase())
+    }
+
     /// Expand `value` against the contents of the bag at this moment, then store the result.
     ///
     /// The returned [`Expansion`] carries what could not be resolved, for the caller to report
@@ -87,6 +100,13 @@ impl Properties {
         if self.is_reserved(name) {
             expansion.refused = true;
             return Ok(expansion);
+        }
+
+        let key = name.to_ascii_lowercase();
+        if expansion.unsupported.is_empty() {
+            self.tainted.remove(&key);
+        } else {
+            self.tainted.insert(key);
         }
         self.set(name, expansion.value.clone());
         Ok(expansion)
@@ -244,7 +264,15 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
 
         if is_property_name(body) {
             match props.get(body) {
-                Some(value) => out.value.push_str(value),
+                Some(value) => {
+                    out.value.push_str(value);
+                    // The reference itself is well-formed; what it resolves to is not. Recording
+                    // it here is what lets an unsupported construct survive being copied through
+                    // an intermediate property rather than looking clean again one hop later.
+                    if props.is_tainted(body) {
+                        out.record_unsupported(reference);
+                    }
+                }
                 // Expands to nothing, as MSBuild does, but recorded because an unset property in
                 // the include path is a likely cause of a database that looks good but isn't
                 // functioning properly.
@@ -1094,6 +1122,83 @@ mod tests {
         let expansion = expand("$(A.B);$(A.B)", &Properties::new()).expect("expands");
 
         assert_eq!(expansion.unsupported, ["$(A.B)"]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-36 — taint propagation through an intermediate property
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_property_assigned_from_an_unsupported_construct_is_tainted() {
+        let mut props = Properties::new();
+
+        let expansion = props
+            .assign("Folder", "$([System.IO.Path]::GetTempPath())")
+            .expect("expands anyway");
+
+        assert_eq!(
+            expansion.unsupported,
+            ["$([System.IO.Path]::GetTempPath())"]
+        );
+        assert!(props.is_tainted("Folder"));
+        assert!(props.is_tainted("folder"), "matched case-insensitively");
+    }
+
+    #[test]
+    fn referencing_a_tainted_property_is_itself_recorded_as_unsupported() {
+        // The gap the real `Microsoft.Cpp.ToolsetLocation.props` exposed: a value built from an
+        // unsupported construct is stored as literal, garbled text (ADR 08). One hop later,
+        // `$(Folder)` is a perfectly well-formed property reference — nothing about *this*
+        // expansion looks unsupported unless the bag remembers where the value came from.
+        let mut props = Properties::new();
+        assign(&mut props, "Folder", "$([System.IO.Path]::GetTempPath())");
+
+        let expansion = expand("$(Folder)Platform.props", &props).expect("expands anyway");
+
+        assert_eq!(
+            expansion.value, "$([System.IO.Path]::GetTempPath())Platform.props",
+            "the tainted value's literal text still comes through, same as any other reference"
+        );
+        assert_eq!(expansion.unsupported, ["$(Folder)"]);
+        assert!(expansion.undefined.is_empty());
+    }
+
+    #[test]
+    fn taint_is_transitive_across_several_hops() {
+        let mut props = Properties::new();
+        assign(&mut props, "Inner", "$([Fake]::Root())");
+        assign(&mut props, "Outer", "$(Inner)\\sub");
+
+        assert!(props.is_tainted("Outer"), "taint propagates through assign");
+
+        let expansion = expand("$(Outer)\\Platform.props", &props).expect("expands anyway");
+        assert_eq!(expansion.unsupported, ["$(Outer)"]);
+    }
+
+    #[test]
+    fn reassigning_a_tainted_property_from_a_clean_value_clears_the_taint() {
+        let mut props = Properties::new();
+        assign(&mut props, "Folder", "$([Fake]::Root())");
+        assert!(props.is_tainted("Folder"));
+
+        assign(&mut props, "Folder", "clean");
+
+        assert!(!props.is_tainted("Folder"));
+        let expansion = expand("$(Folder)", &props).expect("expands");
+        assert!(expansion.unsupported.is_empty());
+    }
+
+    #[test]
+    fn a_property_seeded_raw_is_never_tainted() {
+        // `set`/`set_reserved` are the trusted-seed path (MVP-11): a reserved property's literal
+        // value may itself contain `$(` characters with nothing to expand, and that must not read
+        // as "unsupported" the way a project file's own unresolved construct does.
+        let mut props = Properties::new();
+        props.set_reserved("MSBuildThisFileFullPath", r"C:\proj\$literal$\app.vcxproj");
+
+        assert!(!props.is_tainted("MSBuildThisFileFullPath"));
+        let expansion = expand("$(MSBuildThisFileFullPath)", &props).expect("expands");
+        assert!(expansion.unsupported.is_empty());
     }
 
     #[test]

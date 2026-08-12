@@ -147,6 +147,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 - A property value with XML elements inside it no longer loses them without saying so. It is not
   valid MSBuild and msvclsp still keeps just the text, but it now names the value and the line.
 
+- Generating against a real Visual Studio solution no longer fails outright the moment evaluation
+  reaches the VS installation's own `.props`/`.targets`. Those files use MSBuild constructs well
+  outside what msvclsp evaluates; a `Condition` or `<Import>` it cannot resolve there is now
+  skipped with a warning instead of stopping generation, while the same construct in your own
+  project files is still reported as a hard failure.
+
 ### Security
 
 - A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB
