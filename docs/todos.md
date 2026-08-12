@@ -1261,7 +1261,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   -c "lua MiniTest.run()"`, with a clean exit code, both locally and via the reworded CI job.
   Full reasoning in [ADR 15](adr/15-migrate-nvim-test-harness.md).
 
-- [ ] **MVP-25 — Configuration defaults and `setup()`**
+- [x] **MVP-25 — Configuration defaults and `setup()`**
   `feat/nvim-config` · ~3h
 
   **Summary:** Implement option merging with validation over the defaults in `config.lua`.
@@ -1273,6 +1273,17 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs for default values, user overrides, deep-merge of nested tables,
   rejection of an unknown key and of a wrong-typed value.
+
+  **Outcome:** `setup()` validates by walking `M.defaults` itself rather than a hand-authored
+  schema, so every configurable value's shape is declared exactly once. List-valued options
+  (`root_markers`) replace wholesale instead of index-merging — `vim.tbl_deep_extend` merges
+  Lua arrays position-by-position, which silently keeps trailing default entries when a user's
+  override is shorter. A validation failure is atomic: every problem found is reported in one
+  `vim.notify(..., ERROR)` call, `M.options` is left exactly as it was, and `setup()` returns
+  `nil` — no partial application of a partially-bad config. `M.options` starts as a deep copy
+  of `M.defaults` at module load so a read before `setup()` runs sees usable values. Full
+  reasoning in [ADR 27](adr/27-nvim-config-merge-and-validation.md). MVP-26 onward can read
+  `M.options` trusting it is always fully-defaulted, never partially applied.
 
 - [ ] **MVP-26 — Project root detection**
   `feat/nvim-root-detection` · ~3h

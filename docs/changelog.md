@@ -108,6 +108,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   and picking the newest one. Toolset and Windows SDK include paths, which is what actually makes
   `#include <windows.h>` resolve, are the next piece.
 
+- The Neovim plugin's `setup()` now validates the options you pass it: an unrecognized key or a
+  value of the wrong type is reported once, in full, via `vim.notify`, and nothing is applied — so
+  a typo in your config surfaces immediately instead of causing confusing behavior later. Calling
+  `setup()` more than once is safe.
+
 ### Fixed
 
 - The same problem is no longer reported over and over. One mistake in a property sheet shared by
