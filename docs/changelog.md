@@ -118,6 +118,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   do, and falls back to your current working directory if nothing matches. `.msvclsp/` will be
   created there.
 
+- Wildcards in a `ClCompile` `Include`, `Update`, `Remove`, or `Exclude` — `src\*.cpp`, a single
+  `?`, or MSBuild's recursive `src\**\*.cpp` — now actually expand to the real files they match,
+  instead of being skipped with a warning. A directory a wildcard names that does not exist
+  simply contributes nothing, matching what MSBuild itself does.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
@@ -128,13 +133,6 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 - The same problem is no longer reported over and over. One mistake in a property sheet shared by
   several projects used to produce one identical message per project that imported it; now it is
   reported once.
-
-- A wildcard in an `Exclude` no longer warns when it could not have cost you anything. Paired with a
-  wildcard `Include` — the usual way it is written — there was nothing for it to remove in the first
-  place, so it is a note now. Paired with a *literal* `Include` it still warns, because there the
-  files it names really do stay in the database when the build would have dropped them, and the
-  message now says so rather than claiming they are missing. A wildcard in an `Include` or `Update`
-  still warns; that one does cost you files or settings.
 
 - `AdditionalOptions` containing a quoted argument, such as `/DBANNER="hello world"`, now warns. It
   is still split on spaces and still reaches clangd as two flags, which is wrong — but it no longer

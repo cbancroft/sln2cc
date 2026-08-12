@@ -321,11 +321,15 @@ Rough module breakdown implied by the parsing pipeline:
   rather than the declaring file's, which is why a shared sheet meaning its own directory has to spell
   `$(MSBuildThisFileDirectory)`; because pass 1 restores that family on the way out of each import,
   pass 2 re-enters each deferred element's file against a clone of the bag, or a sheet's own include
-  directory silently becomes one beside the project. Wildcard `Include` specs warn and contribute
-  nothing, with expansion deferred to MVP-37 — chosen over refusing a legal construct and over
-  building a globber, and it replaces the previous behaviour of producing no source files in silence.
-  Only settings that change how a file *parses* are translated, so the include directories, defines,
-  language standard and the switches that move a predefined macro are all mapped, while codegen and
+  directory silently becomes one beside the project. Wildcard `*`/`?` specs, plus MSBuild's `**`
+  recursive form, expand against the real filesystem in `msbuild/glob.rs` — the only place
+  evaluation reads real directories rather than the parsed graph. Expansion applies to
+  `Include`, `Update`, `Remove`, and `Exclude` alike, which is what finally gives `Exclude`
+  something real to subtract from; a directory a wildcard passes through that does not exist
+  expands to nothing, matching MSBuild, while any other I/O failure is a real error. See
+  [ADR 29](adr/29-wildcard-item-expansion.md). Only settings that change how a file *parses* are
+  translated, so the include directories, defines, language standard and the switches that move a
+  predefined macro are all mapped, while codegen and
   link settings are skipped along with `/WX` (clang's warning set is not MSVC's, so it would turn
   diagnostics the build never emits into editor errors), `/Yu` (injects nothing, and points clangd at
   a `.pch` that does not exist), `/Za` (clang-cl rejects it) and `CharacterSet` (arrives through
@@ -511,9 +515,6 @@ The catalogue below is the whole of it. A new call site is expected to add a row
 | A construct outside the supported subset, left as written | Warning | `msbuild/eval.rs` |
 | A source file declared twice; the second is dropped | Warning | `msbuild/items.rs` |
 | An `Update` naming a file the project does not compile | Warning | `msbuild/items.rs` |
-| A wildcard in an `Include` or `Update`, not expanded — what it names is missing | Warning | `msbuild/items.rs` |
-| A wildcard in an `Exclude` with a literal `Include`, not expanded — what it names was not removed | Warning | `msbuild/items.rs` |
-| A wildcard in an `Exclude`/`Remove` with nothing in reach, not expanded | Note | `msbuild/items.rs` |
 | A settled value still holding `$(` or `%(` | Warning | `msbuild/flags.rs` |
 | An enumerated setting whose value is not recognized | Warning | `msbuild/flags.rs` |
 | `AdditionalOptions` holding a quoted argument (see MVP-38) | Warning | `msbuild/flags.rs` |
@@ -746,12 +747,6 @@ MSBuild-evaluation surface area bounded.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.
-- Whether wildcard `Include` attributes are ever *expanded*. MVP-12 settled that they are neither
-  refused nor silently dropped: a wildcard warns naming the spec it skipped and contributes nothing,
-  which closes the silent-no-sources hole without taking on MSBuild's globbing semantics. What is
-  still open is whether the expansion itself is worth building — MVP-37 holds the work, and a project
-  written this way gets an incomplete database until it lands. See
-  [ADR 12](adr/12-clcompile-flag-extraction.md).
 - Whether `AdditionalOptions` needs real shell-style argument splitting. MVP-12 splits on whitespace,
   which is correct for every switch a project is likely to carry there and wrong for a quoted path
   containing a space. MVP-13 declined to fix it here and made it *visible* instead — a value holding

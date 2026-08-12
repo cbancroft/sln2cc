@@ -118,6 +118,12 @@ never received the files it would have removed, and nothing is lost on input msv
 correctly. It needed the severity split to fix properly, because the right answer is not silence —
 the construct really was not modelled, and MVP-37 may one day change what it means.
 
+> **Resolved by [ADR 29](29-wildcard-item-expansion.md).** MVP-37 expanded wildcards for real,
+> which made every case below moot at once: `Wildcard`, `include_item`'s `exclusion` reading,
+> and the `Remove` gap two paragraphs down all went away together, since a real match makes the
+> "what does an unexpanded wildcard cost" question stop applying. Left in place rather than
+> edited, per the house rule that a superseded ADR keeps its original argument.
+
 But "an `Exclude` wildcard is harmless" is only true when its `Include` put nothing within reach.
 `Include="main.cpp;foo.generated.cpp" Exclude="*.generated.cpp"` has real files to subtract from,
 and not expanding the `Exclude` leaves `foo.generated.cpp` in the database — clangd is then handed a

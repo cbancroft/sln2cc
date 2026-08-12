@@ -9,6 +9,7 @@
 
 pub mod eval;
 pub mod flags;
+pub mod glob;
 pub mod imports;
 pub mod items;
 pub mod paths;

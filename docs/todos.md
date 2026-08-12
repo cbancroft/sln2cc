@@ -706,7 +706,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   a toolchain-provided file produces the chosen behaviour plus a warning naming the file, and an
   integration test that a real-shaped project importing a stub `Microsoft.Cpp.props` generates.
 
-- [ ] **MVP-37 — Expand wildcard `ClCompile` includes**
+- [x] **MVP-37 — Expand wildcard `ClCompile` includes**
   `feat/item-globbing` · ~6h
 
   **Summary:** Turn `<ClCompile Include="src\*.cpp" />` into the source files it names, instead of
@@ -745,6 +745,20 @@ Goal: one solution, one manually selected configuration/platform, producing a
   unconditionally `Harmless` with a latent hole the ADR records. See
   [ADR 13](adr/13-diagnostic-severity-and-wording.md).
 
+  **Outcome:** A new `msbuild/glob.rs` owns the walk — `pub(crate) fn expand(dir, spec) ->
+  Result<Vec<PathBuf>>` — rather than folding it into `items.rs`, which was already dense enough
+  to earn its own `Scope` struct. `*`/`?` match one directory segment; `**` matches zero or more
+  levels by trying the rest of the pattern at the current level and recursing into every real
+  subdirectory. A `NotFound` from `read_dir` is the one I/O error swallowed into "no matches,"
+  matching MSBuild; anything else is a real `Error::Io`, on the reasoning ADR 29 records. Single-
+  segment matching uses the standard two-pointer algorithm rather than naive recursion, since the
+  naive version is exponential on a pattern with many adjacent `*` and a `.vcxproj` is untrusted
+  input. `Wildcard`, `include_item`'s `exclusion` reading, and every severity-split wildcard test
+  are gone, exactly as the plan called for — an unmatched wildcard is now silent, the same as a
+  literal spec naming a file that does not exist always was. `Exclude` does real work for the
+  first time. `FileCompilation`/`EvaluatedProject` untouched. See
+  [ADR 29](adr/29-wildcard-item-expansion.md).
+
 - [ ] **MVP-38 — Shell-style `AdditionalOptions` splitting**
   `fix/additional-options-splitting` · ~4h
 
@@ -774,6 +788,38 @@ Goal: one solution, one manually selected configuration/platform, producing a
   drop the rest of the line), an embedded escaped quote, and an empty value. Replace MVP-13's
   `additional_options_with_a_quoted_argument_warns` in `msbuild/flags.rs` rather than leaving it
   asserting the corruption this removes.
+
+- [ ] **MVP-41 — Expand wildcard `<Import>` `Project` specs**
+  `feat/import-globbing` · ~5h
+
+  **Summary:** Resolve a wildcarded `<Import Project="...\*.props" />` to every matching file,
+  instead of `imports.rs` treating the spec as one literal path that (almost always) doesn't
+  exist.
+
+  **Description:** Surfaced while reviewing MVP-37, which was scoped to `ClCompile` item specs
+  only and never wired `msbuild/glob.rs` into import resolution. `<Import>` accepts the same
+  `*`/`?`/`**` wildcards MSBuild items do, and it is not a hypothetical: the toolset's own
+  `ImportBefore`/`ImportAfter` extension-hook directories are conventionally consumed with a
+  spec shaped exactly like `$(VCTargetsPath)\ImportBefore\Default\*.props`, gated behind an
+  `Exists(...)` condition so the import is silently skipped on installations with nothing
+  registered there. Today that spec resolves as a literal path to a file named `*.props`, which
+  essentially never exists, and — if the enclosing `Condition` happens to be true — fails the
+  whole evaluation with `Error::MissingImport` over a construct that is not user error.
+
+  Reusing `msbuild/glob.rs::expand` (MVP-37) for the matching itself should be straightforward;
+  the real work is `imports.rs::Walk::import` importing **every** matched file in order rather
+  than one. MSBuild's own ordering for a wildcard import is filesystem-sorted, same as MVP-37
+  settled on for items — but unlike an item spec, an empty match here is not silently fine by
+  precedent; decide whether zero matches should warn (a hook directory that `Exists()` gated true
+  but resolved to nothing is more suspicious than an empty item list) or stay silent for
+  consistency with MVP-37. Likely intersects **MVP-36**: a toolchain `ImportBefore`/`ImportAfter`
+  file matched this way is exactly the kind of file whose `Condition`s the unsupported-condition
+  policy needs to be lenient about.
+
+  **Tests:** Unit tests over a temp tree for a wildcard `<Import>` matching several files (import
+  order asserted, not just membership), a wildcard matching nothing, a wildcard whose directory
+  does not exist, and a cyclic import reached only through a wildcard match (ADR 10's dedup must
+  still apply per matched file, not per spec).
 
 ## Toolchain discovery
 
