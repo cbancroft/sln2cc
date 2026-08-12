@@ -17,7 +17,7 @@ use crate::msbuild::glob;
 use crate::msbuild::paths::normalize;
 use crate::msbuild::project::{self, Element, Import, PropertyGroup};
 use crate::msbuild::reserved;
-use crate::{Error, Reporter, Result, progress};
+use crate::{Error, ErrorKind, Reporter, Result, progress};
 
 /// How deep an import chain may go before it is refused.
 ///
@@ -57,11 +57,20 @@ pub struct Deferred {
 /// bag is also a valid starting point — a reference nothing seeded expands to nothing, which is
 /// still what `$(VCTargetsPath)` does until MVP-15 supplies the Visual Studio paths.
 ///
+/// `toolchain_root` is the discovered Visual Studio installation's directory, when there is one.
+/// A `Condition` or `<Import>` this evaluator cannot resolve is fatal for a file outside it (a
+/// user's own project or property sheet), but merely skipped-with-a-warning for a file underneath
+/// it — Microsoft's own `.props`/`.targets` use constructs well outside the supported subset, and
+/// msvclsp does not need what they would have computed anyway: MVP-15 resolves toolset include
+/// paths directly rather than by evaluating MSBuild's own resolution logic. See MVP-36 and
+/// [ADR 32](../../../docs/adr/32-toolchain-unsupported-construct-policy.md).
+///
 /// The one property family this function does own is `MSBuildThisFile*`, which is a function of the
 /// file being read rather than of the project, and so has to follow the walk.
 pub fn resolve(
     root: &Path,
     properties: Properties,
+    toolchain_root: Option<&Path>,
     reporter: &mut Reporter,
 ) -> Result<ProjectTree> {
     let mut walk = Walk {
@@ -69,6 +78,7 @@ pub fn resolve(
         deferred: Vec::new(),
         properties,
         depth: 0,
+        toolchain_root: toolchain_root.map(Path::to_path_buf),
         reporter,
     };
 
@@ -89,6 +99,7 @@ struct Walk<'a> {
     deferred: Vec<Deferred>,
     properties: Properties,
     depth: usize,
+    toolchain_root: Option<PathBuf>,
     reporter: &'a mut Reporter,
 }
 
@@ -203,11 +214,26 @@ impl Walk<'_> {
             return Ok(());
         }
 
-        let value = eval::expand(&import.project, &self.properties)?.report(
-            self.reporter,
-            file,
-            import.line,
-        );
+        let expansion = eval::expand(&import.project, &self.properties)?;
+        let unresolved = !expansion.unsupported.is_empty();
+        let value = expansion.report(self.reporter, file, import.line);
+
+        if unresolved && self.in_toolchain(file) {
+            // The path is untrustworthy -- part of it is verbatim, unexpanded text -- so it is
+            // skipped outright rather than risked against the filesystem. Distinct from the empty-
+            // path case below: that one is a resolved, known-empty value, this one is a value we
+            // cannot vouch for at all.
+            self.reporter.warn_at(
+                file,
+                Some(import.line),
+                format!(
+                    "`<Import Project=\"{}\">` could not be fully resolved in a Visual Studio \
+                     toolchain file and was skipped",
+                    import.project
+                ),
+            );
+            return Ok(());
+        }
 
         let target = value.trim();
         if target.is_empty() {
@@ -229,18 +255,41 @@ impl Walk<'_> {
     }
 
     /// Evaluate a `Condition`, reporting what it could not resolve. An absent condition still holds.
+    ///
+    /// A construct outside the supported subset is fatal, per ADR 09 -- unless `file` is under
+    /// [`Walk::toolchain_root`], in which case it is downgraded to a warning and treated as
+    /// `false`. See [`resolve`] for why the toolchain gets this leniency and the user's own
+    /// project tree does not.
     fn holds(&mut self, condition: Option<&str>, file: &Path, line: usize) -> Result<bool> {
         let Some(condition) = condition else {
             return Ok(true);
         };
 
-        Ok(
-            eval::condition_holds(condition, &self.properties, file, line)?.report(
-                self.reporter,
-                file,
-                line,
-            ),
-        )
+        match eval::condition_holds(condition, &self.properties, file, line) {
+            Ok(evaluation) => Ok(evaluation.report(self.reporter, file, line)),
+            Err(error)
+                if error.kind() == ErrorKind::UnsupportedConstruct && self.in_toolchain(file) =>
+            {
+                self.reporter.warn_at(
+                    file,
+                    Some(line),
+                    format!(
+                        "condition `{condition}` uses a construct outside the supported subset \
+                         in a Visual Studio toolchain file and was treated as false"
+                    ),
+                );
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Whether `file` sits under the discovered Visual Studio installation, as opposed to the
+    /// user's own project tree.
+    fn in_toolchain(&self, file: &Path) -> bool {
+        self.toolchain_root
+            .as_deref()
+            .is_some_and(|root| file.starts_with(root))
     }
 
     /// Import every file a wildcarded `Project` spec names, in [`glob::expand`]'s order.
@@ -292,13 +341,13 @@ mod tests {
 
     /// Resolve from an empty bag with a quiet reporter, for the cases asserting on the walk.
     fn tree(root: &Path) -> ProjectTree {
-        resolve(root, Properties::new(), &mut Reporter::new(false)).expect("resolves")
+        resolve(root, Properties::new(), None, &mut Reporter::new(false)).expect("resolves")
     }
 
     /// Resolve and hand back the reporter, for the cases asserting on what was warned about.
     fn tree_reporting(root: &Path) -> (Result<ProjectTree>, Reporter) {
         let mut reporter = Reporter::new(false);
-        let result = resolve(root, Properties::new(), &mut reporter);
+        let result = resolve(root, Properties::new(), None, &mut reporter);
         (result, reporter)
     }
 
@@ -318,14 +367,14 @@ mod tests {
     /// Resolve from a seeded bag, for the cases about the reserved properties.
     fn tree_seeded(dir: &TempTree, root: &Path) -> ProjectTree {
         let properties = seeded(dir, root);
-        resolve(root, properties, &mut Reporter::new(false)).expect("resolves")
+        resolve(root, properties, None, &mut Reporter::new(false)).expect("resolves")
     }
 
     /// Resolve from a seeded bag and hand back the reporter.
     fn tree_seeded_reporting(dir: &TempTree, root: &Path) -> (Result<ProjectTree>, Reporter) {
         let properties = seeded(dir, root);
         let mut reporter = Reporter::new(false);
-        let result = resolve(root, properties, &mut reporter);
+        let result = resolve(root, properties, None, &mut reporter);
         (result, reporter)
     }
 
@@ -349,7 +398,8 @@ mod tests {
     }
 
     fn refuse(root: &Path) -> Error {
-        resolve(root, Properties::new(), &mut Reporter::new(false)).expect_err("must not resolve")
+        resolve(root, Properties::new(), None, &mut Reporter::new(false))
+            .expect_err("must not resolve")
     }
 
     /// The visited files, relative to the tree root and with `/` separators, so assertions read
@@ -921,6 +971,220 @@ mod tests {
         let error = refuse(&root);
 
         assert_eq!(error.kind(), ErrorKind::UnsupportedConstruct);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-36 — unsupported-construct policy for toolchain files
+    // -------------------------------------------------------------------------------------------
+
+    /// Resolve with `toolchain` as the toolchain root, for the cases distinguishing a Visual
+    /// Studio file from the user's own tree.
+    ///
+    /// `toolchain` is normalized the same way [`Walk::enter`] normalizes every file it visits, so
+    /// `Walk::in_toolchain`'s `starts_with` compares two paths built the same way.
+    fn tree_with_toolchain(root: &Path, toolchain: &Path) -> (Result<ProjectTree>, Reporter) {
+        let mut reporter = Reporter::new(false);
+        let toolchain = normalize(toolchain);
+        let result = resolve(root, Properties::new(), Some(&toolchain), &mut reporter);
+        (result, reporter)
+    }
+
+    #[test]
+    fn an_unsupported_condition_in_a_toolchain_file_is_a_warning_not_an_error() {
+        // The scenario ADR 09 named and MVP-36 exists to answer: Microsoft's own `.props` use
+        // constructs this evaluator does not support, and the file did not come from the user.
+        let dir = TempTree::new("toolchain-condition");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="../vs/Toolset.props" />"#,
+        );
+        dir.project(
+            "vs/Toolset.props",
+            r#"  <PropertyGroup Condition="'1' &lt; '2'">
+    <FromToolset>set</FromToolset>
+  </PropertyGroup>"#,
+        );
+
+        let (result, reporter) = tree_with_toolchain(&root, &toolchain);
+        let resolved = result.expect("a toolchain file's unsupported condition must not be fatal");
+
+        assert_eq!(
+            resolved.properties.get("FromToolset"),
+            None,
+            "the gated group was treated as false, not silently applied"
+        );
+        let [finding] = reporter.warnings() else {
+            panic!("expected exactly one finding: {:?}", reporter.warnings());
+        };
+        assert!(
+            finding.message.contains("'1' &lt; '2'") || finding.message.contains("'1' < '2'"),
+            "names the condition: {}",
+            finding.message
+        );
+        assert_eq!(finding.severity, crate::Severity::Warning);
+    }
+
+    #[test]
+    fn the_same_unsupported_condition_in_the_users_tree_stays_fatal() {
+        // The regression this policy must not introduce: only a file under the toolchain root
+        // gets leniency. Same content as the toolchain case above, written by the project itself.
+        let dir = TempTree::new("user-tree-condition");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <PropertyGroup Condition="'1' &lt; '2'">
+    <FromRoot>set</FromRoot>
+  </PropertyGroup>"#,
+        );
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        assert_eq!(
+            result.expect_err("must not resolve").kind(),
+            ErrorKind::UnsupportedConstruct
+        );
+    }
+
+    #[test]
+    fn a_recursion_limit_inside_a_toolchain_file_still_propagates() {
+        // Proves the downgrade is specific to `UnsupportedConstruct`. A condition nested past the
+        // cap is a resource-exhaustion guard, not a grammar gap, and must stay fatal everywhere.
+        let dir = TempTree::new("toolchain-recursion");
+        let toolchain = dir.path("vs");
+        let nested = "(".repeat(40) + "'a'=='a'" + &")".repeat(40);
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="../vs/Toolset.props" />"#,
+        );
+        dir.project(
+            "vs/Toolset.props",
+            &format!(r#"  <PropertyGroup Condition="{nested}"><X>y</X></PropertyGroup>"#),
+        );
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        assert_eq!(
+            result.expect_err("must not resolve").kind(),
+            ErrorKind::RecursionLimit
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_import_path_in_a_toolchain_file_is_skipped_with_a_warning() {
+        // The failure shape the bug report actually hit: an `<Import>` whose *path* -- not its
+        // `Condition` -- carries an unsupported construct. `expand()` already leaves it verbatim
+        // (ADR 08); this is what stops the garbled result from being tried as a literal filename.
+        let dir = TempTree::new("toolchain-import-path");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="../vs/ToolsetLocation.props" />"#,
+        );
+        dir.project(
+            "vs/ToolsetLocation.props",
+            r#"  <Import Project="$([MSBuild]::Unescape($([Fake]::Root())))\Platform.props" />"#,
+        );
+
+        let (result, reporter) = tree_with_toolchain(&root, &toolchain);
+        let resolved = result.expect("an unresolvable toolchain import must not be fatal");
+
+        assert_eq!(
+            resolved.files.len(),
+            2,
+            "only the project and Toolset.props were entered: {:?}",
+            resolved.files
+        );
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|warning| warning.message.contains("could not be fully resolved")),
+            "{:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn an_import_path_built_from_a_tainted_intermediate_property_is_skipped_too() {
+        // The shape the bug report actually turned out to be: real `Microsoft.Cpp.
+        // ToolsetLocation.props` doesn't put the unsupported construct directly in an `<Import>`'s
+        // `Project` attribute -- it assigns it to an intermediate property first
+        // (`<_PlatformFolder>$(VCTargetsPath)$([MSBuild]::Unescape(...))</_PlatformFolder>`), then
+        // imports `$(_PlatformFolder)Platform.props`. That second step is, on its own, an ordinary
+        // well-formed property reference -- it only reads as unsupported because `Properties`
+        // remembers the construct through the assignment (MVP-36's taint tracking in `eval.rs`).
+        let dir = TempTree::new("toolchain-import-path-indirect");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="../vs/ToolsetLocation.props" />"#,
+        );
+        dir.project(
+            "vs/ToolsetLocation.props",
+            r#"  <PropertyGroup>
+    <_PlatformFolder>$([MSBuild]::Unescape($([Fake]::Root())))</_PlatformFolder>
+  </PropertyGroup>
+  <Import Project="$(_PlatformFolder)\Platform.props" />"#,
+        );
+
+        let (result, reporter) = tree_with_toolchain(&root, &toolchain);
+        let resolved = result.expect("an unresolvable toolchain import must not be fatal");
+
+        assert_eq!(
+            resolved.files.len(),
+            2,
+            "only the project and ToolsetLocation.props were entered: {:?}",
+            resolved.files
+        );
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|warning| warning.message.contains("could not be fully resolved")),
+            "{:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn the_same_import_path_construct_in_the_users_tree_still_fails() {
+        // The regression this policy must not introduce, for the import-path case.
+        let dir = TempTree::new("user-tree-import-path");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <Import Project="$([MSBuild]::Unescape($([Fake]::Root())))\Platform.props" />"#,
+        );
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        assert_eq!(
+            result.expect_err("must not resolve").kind(),
+            ErrorKind::MissingImport
+        );
+    }
+
+    #[test]
+    fn a_genuinely_missing_import_in_a_toolchain_file_still_fails() {
+        // The downgrade is keyed on "the path could not be trusted," not on "the file is under
+        // the toolchain root." A cleanly-resolved path that is simply absent is a different
+        // problem -- a broken or unexpected VS installation -- and stays exactly as loud as
+        // `MissingImport` already is, matching ADR 17's `ToolchainIncomplete` philosophy.
+        let dir = TempTree::new("toolchain-genuinely-missing");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="../vs/Toolset.props" />"#,
+        );
+        dir.project("vs/Toolset.props", r#"  <Import Project="Absent.props" />"#);
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        assert_eq!(
+            result.expect_err("must not resolve").kind(),
+            ErrorKind::MissingImport
+        );
     }
 
     #[test]

@@ -134,7 +134,9 @@ empty path, rather than seeding an empty string that `Condition="'$(X)' != ''"` 
 - **MVP-16** consumes `Toolchain::include_paths` directly when assembling `compile_commands.json`
   entries — ordered project includes first, these appended after, per its own scope.
 - **MVP-36** (unsupported-condition policy for toolchain-derived imports) can now be worked: the
-  three properties it needs seeded are seeded whenever a `Toolchain` is discovered.
+  three properties it needs seeded are seeded whenever a `Toolchain` is discovered. **Update:**
+  landed, using `Toolchain::install_path` as the provenance signal. See
+  [ADR 32](32-toolchain-unsupported-construct-policy.md).
 - **No changes to `error.rs`.** `Error::ToolchainIncomplete` already covered every failure shape
   this issue raises.
 - **No new dependencies.** The SDK's well-known path reuses the exact pattern `vswhere_path()`

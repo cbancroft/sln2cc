@@ -134,6 +134,8 @@ the grammar, and nothing needs the tree once the boolean is known. If MVP-13 lat
 - **MVP-10 inherits the fatal-error policy** and owns whether to catch `UnsupportedConstruct` and
   degrade to a warning for files that came from the Visual Studio installation rather than the
   user's tree. This is the decision most likely to be revisited, and it is expected to be.
+  **Update:** settled by MVP-36 once MVP-15 supplied toolchain provenance — a downgraded condition
+  is treated as `false`. See [ADR 32](32-toolchain-unsupported-construct-policy.md).
 - **MVP-12 evaluates a group's condition and its children's separately**, which is what ADR 07 kept
   them apart for.
 - **MVP-13 consumes `Evaluation::undefined` and `Evaluation::unsupported`** alongside `Expansion`'s,

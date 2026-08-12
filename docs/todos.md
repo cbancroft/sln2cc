@@ -678,33 +678,62 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `ErrorKind`, if one fits, or a new one if not) rather than attempting the read; a file at or
   under the cap reads normally.
 
-- [ ] **MVP-36 — Unsupported-condition policy for toolchain files**
+- [x] **MVP-36 — Unsupported-construct policy for toolchain files**
   `fix/unsupported-condition-policy` · ~5h
 
-  **Summary:** Decide whether an unsupported `Condition` stays fatal once the Visual Studio
-  installation's own `.props`/`.targets` start being imported.
+  **Summary:** Stop treating an MSBuild construct outside the supported subset as fatal when it
+  originates from the Visual Studio installation's own `.props`/`.targets` rather than the user's
+  project tree — covering both an unsupported `Condition` and an `<Import>` whose *path* contains
+  one.
 
   **Description:** MVP-09 made a condition outside the supported subset an
   `Error::UnsupportedConstruct`, on the grounds that inventing a boolean either drops a
   `PropertyGroup` carrying every include path or applies flags the file never asked for. That is
-  right for a *user's* project file. It is likely untenable for Microsoft's, which use
-  `$([MSBuild]::VersionGreaterThanOrEquals(...))`, `HasTrailingSlash`, and numeric comparison
-  freely — taken literally, the policy fails on every real solution.
+  right for a *user's* project file. It was untenable for Microsoft's: real installations reach
+  `Microsoft.Cpp.ToolsetLocation.props`, which builds an `<Import>` path from
+  `$([MSBuild]::Unescape($([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist(...))))`
+  — taken literally, the policy failed on every real solution, either as a fatal `Condition` or
+  (the shape actually hit first) as a fatal `Error::MissingImport` once the unresolved construct
+  was left verbatim in an import path and treated as a literal, nonexistent filename.
 
   [ADR 09](adr/09-condition-evaluation-subset.md) handed the question to MVP-10, and
   [ADR 10](adr/10-import-resolution.md) could not answer it: the signal it needs — whether a file
-  came from the user's tree or from the toolchain — does not exist until MVP-15 supplies the
-  Visual Studio paths, and `$(VCTargetsPath)` is undefined until then so those imports are never
-  reached. `Error::kind()` survives propagation (ADR 02), so catching and downgrading at the
-  import boundary is mechanical once provenance exists; what needs deciding is whether downgrading
-  is right, and whether a downgraded condition should be treated as true or false.
+  came from the user's tree or from the toolchain — did not exist until MVP-15 supplied the Visual
+  Studio paths. MVP-15 has landed, unblocking this. `imports::resolve` now takes the discovered
+  toolchain's `install_path` as `toolchain_root: Option<&Path>`; a `Condition` that fails as
+  `UnsupportedConstruct` from a file under it is downgraded to a warning and treated as **false**
+  (skip the gated group), and an `<Import>` whose expanded path still carries an unsupported
+  construct is warned about and skipped outright rather than resolved against the filesystem. A
+  toolchain file whose import path resolves *cleanly* but is genuinely absent still fails as
+  `Error::MissingImport`, unchanged — the downgrade is keyed on "this value cannot be trusted," not
+  on "this file is under the toolchain root."
 
-  Blocked on MVP-15. Numbered 36 rather than slotted into sequence because numbers are assigned in
-  order and never reused.
+  The real `Microsoft.Cpp.ToolsetLocation.props` made "this value cannot be trusted" harder to
+  detect than it first looked: the unsupported construct is assigned to an intermediate property
+  (`<_PlatformFolder>...</_PlatformFolder>`) before the `<Import>` references it, so the reference
+  itself is an ordinary, well-formed `$(_PlatformFolder)` with nothing unsupported written at that
+  site. `Properties` (`eval.rs`) now tracks which keys' *stored* values still carry a construct
+  copied through verbatim, and `expand()` flags a reference to one of those keys as unsupported
+  too — propagating transitively through however many properties it's copied through. See
+  [ADR 32](adr/32-toolchain-unsupported-construct-policy.md) for the full reasoning, including why
+  `false` was chosen over `true` and why no property-function grammar was added.
 
-  **Tests:** Unit tests that an unsupported condition in a user-tree file still fails, that one in
-  a toolchain-provided file produces the chosen behaviour plus a warning naming the file, and an
-  integration test that a real-shaped project importing a stub `Microsoft.Cpp.props` generates.
+  Numbered 36 rather than slotted into sequence because numbers are assigned in order and never
+  reused.
+
+  **Tests:** Unit tests in `msbuild/imports.rs` that an unsupported condition/import-path in a
+  user-tree file still fails, that the same construct in a toolchain-provided file warns and is
+  skipped instead, that the same holds when the construct is reached through an intermediate
+  property rather than written directly in the `Project` attribute, that a `RecursionLimit` inside
+  a toolchain file still propagates (the downgrade is specific to `UnsupportedConstruct`), and that
+  a toolchain file's genuinely-missing (but cleanly-resolved) import still fails. Unit tests in
+  `msbuild/eval.rs` for taint tracking itself: a property assigned from an unsupported construct is
+  tainted, referencing it elsewhere is recorded as unsupported, taint propagates transitively
+  through several hops, a clean reassignment clears it, and a raw-seeded (`set`/`set_reserved`)
+  property is never tainted. An integration-shaped test in `msbuild.rs` evaluates a real-shaped
+  project importing a stub `Microsoft.Cpp.Default.props`/`ToolsetLocation.props` chain — built with
+  the intermediate-property indirection the real file uses — and confirms generation still
+  produces the project's own files.
 
 - [x] **MVP-37 — Expand wildcard `ClCompile` includes**
   `feat/item-globbing` · ~6h

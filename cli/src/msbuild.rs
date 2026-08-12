@@ -49,7 +49,16 @@ pub struct EvaluatedProject {
 /// spelling.
 pub fn evaluate(scope: &ProjectScope, reporter: &mut Reporter) -> Result<EvaluatedProject> {
     // Pass 1: the import graph, over the bag `reserved` seeds.
-    let tree = imports::resolve(&scope.project, reserved::seed(scope), reporter)?;
+    let toolchain_root = scope
+        .toolchain
+        .as_ref()
+        .map(|toolchain| toolchain.install_path.as_path());
+    let tree = imports::resolve(
+        &scope.project,
+        reserved::seed(scope),
+        toolchain_root,
+        reporter,
+    )?;
 
     // Warn if the project is not built in this configuration, as it will yield an empty
     // file/configuration list.
@@ -442,5 +451,84 @@ mod tests {
         let error = evaluate(&scope, &mut Reporter::new(false)).expect_err("must not evaluate");
 
         assert_eq!(error.kind(), crate::ErrorKind::Io);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-36 — a real-shaped project reaching a stub of the Visual Studio toolset chain
+    // -------------------------------------------------------------------------------------------
+
+    /// A `Toolchain` whose `install_path` is a real, on-disk directory under `dir` — unlike
+    /// `cli/tests/support::fake_toolchain()`, which points `install_path` at a fixed, non-existent
+    /// path purely to seed properties. This one has to actually exist and hold files, since the
+    /// point of the test is a real import chain reaching it.
+    fn stub_toolchain(dir: &TempTree) -> crate::toolchain::Toolchain {
+        crate::toolchain::Toolchain {
+            install_path: dir.path("vs"),
+            vc_targets_path: dir.path("vs/MSBuild/Microsoft/VC/v170"),
+            include_paths: Vec::new(),
+            toolset_version: "14.38.33130".to_string(),
+            sdk_version: "10.0.22621.0".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_real_shaped_project_imports_a_stub_toolset_chain_without_failing() {
+        // The bug this issue fixes: `Microsoft.Cpp.Default.props` unconditionally imports
+        // `Microsoft.Cpp.ToolsetLocation.props`, which real Visual Studio installations build with
+        // property functions (`$([MSBuild]::Unescape(...))`,
+        // `$([...ToolLocationHelper]::FindRootFolderWhereAllFilesExist(...))`) this evaluator does
+        // not support. Generation used to fail outright the moment it reached that file; it must
+        // not once the file is recognized as toolchain-provided.
+        let dir = TempTree::new("real-shaped-toolset-chain");
+        let toolchain = stub_toolchain(&dir);
+
+        let project_path = dir.project(
+            "app/App.vcxproj",
+            r#"  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+  </ItemGroup>"#,
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.Cpp.Default.props",
+            "<Project>\n  <Import Project=\"Microsoft.Cpp.ToolsetLocation.props\" />\n</Project>\n",
+        );
+        // A stub of the real file's actual shape: the property function isn't in the `<Import>`'s
+        // `Project` attribute directly, it's assigned to an intermediate property first and the
+        // import references *that* -- an ordinary, well-formed property reference on its own,
+        // which only reads as unsupported because `Properties` remembers the taint through the
+        // assignment (see `eval.rs`'s taint-propagation tests).
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.Cpp.ToolsetLocation.props",
+            "<Project>\n  \
+             <PropertyGroup>\n    \
+             <_PlatformFolder>$([MSBuild]::Unescape($([Fake.ToolLocationHelper]::Find())))</_PlatformFolder>\n  \
+             </PropertyGroup>\n  \
+             <Import Project=\"$(_PlatformFolder)\\Platform.props\" />\n\
+             </Project>\n",
+        );
+
+        let scope = ProjectScope {
+            solution: dir.path("App.sln"),
+            project: project_path,
+            config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: Some(toolchain),
+        };
+
+        let (project, reporter) = evaluated_reporting(&scope);
+
+        assert_eq!(
+            names(&project),
+            ["main.cpp"],
+            "the project's own source still evaluates"
+        );
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|warning| warning.message.contains("could not be fully resolved")),
+            "the unresolvable toolset import is named rather than silently dropped: {:?}",
+            reporter.warnings()
+        );
     }
 }
