@@ -16,6 +16,18 @@ M.defaults = {
 
   --- Restart clangd automatically after regenerating the compilation database.
   auto_restart_clangd = true,
+
+  --- Directory names skipped while scanning for `.sln` files below the project root. Matched
+  --- by name, not path — a directory called `bin` is skipped everywhere in the tree, not just
+  --- at the root. Scanning never descends into these, so a huge `node_modules` costs nothing.
+  scan_ignore_dirs = {
+    ".git", ".msvclsp", "node_modules", "bin", "obj", "packages",
+    "Debug", "Release", "x64", "x86", "Win32",
+  },
+
+  --- Maximum directory levels descended below the project root while scanning for `.sln`
+  --- files. Bounds worst-case scan cost on a deep or unexpectedly large tree.
+  scan_max_depth = 6,
 }
 
 M.options = vim.deepcopy(M.defaults)
