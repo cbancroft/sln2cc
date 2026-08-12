@@ -118,6 +118,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   do, and falls back to your current working directory if nothing matches. `.msvclsp/` will be
   created there.
 
+- The Neovim plugin can now find `.sln` files under your project root on its own, skipping
+  directories that are never worth descending into (`.git`, `node_modules`, build output) and
+  bounded by a configurable scan depth (`scan_ignore_dirs`, `scan_max_depth`). Results are
+  cached rather than rescanned on every command.
+
 - Wildcards in a `ClCompile` `Include`, `Update`, `Remove`, or `Exclude` — `src\*.cpp`, a single
   `?`, or MSBuild's recursive `src\**\*.cpp` — now actually expand to the real files they match,
   instead of being skipped with a warning. A directory a wildcard names that does not exist

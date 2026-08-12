@@ -28,13 +28,28 @@ local function named_buffer(path)
   return buf
 end
 
+--- Creates an empty `.sln` file at `tree .. "/" .. rel_path`, making parent directories as
+--- needed. Content is irrelevant — solution discovery matches by filename only.
+--- @param tree string
+--- @param rel_path string
+local function make_sln(tree, rel_path)
+  local full = tree .. "/" .. rel_path
+  local dir = vim.fs.dirname(full)
+  vim.fn.mkdir(dir, "p")
+  local fd = assert(io.open(full, "w"))
+  fd:close()
+end
+
 describe("msvclsp.discovery", function()
   local discovery
 
   before_each(function()
-    -- Fresh module state per test: the root cache persists across setup() calls, so a
-    -- previous test's cached root must not leak into the next one's assertions.
+    -- Fresh module state per test: the root cache and solutions cache both persist across
+    -- calls, so a previous test's cached values must not leak into the next one's assertions.
+    -- config is reset too, since a test overriding scan_max_depth must not bleed into the
+    -- next test's default-depth expectations.
     package.loaded["msvclsp.discovery"] = nil
+    package.loaded["msvclsp.config"] = nil
     discovery = require("msvclsp.discovery")
   end)
 
@@ -123,14 +138,109 @@ describe("msvclsp.discovery", function()
   end)
 
   it("caches discovered solutions instead of rescanning", function()
-    MiniTest.skip("not yet implemented")
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      local first = discovery.solutions(tree)
+      MiniTest.expect.equality(first, { tree .. "/App.sln" })
+
+      -- A solution added after the first scan must not appear without an explicit rescan.
+      make_sln(tree, "Other.sln")
+      local second = discovery.solutions(tree)
+      MiniTest.expect.equality(second, first)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
   end)
 
   it("rescan refreshes the cache", function()
-    MiniTest.skip("not yet implemented")
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      discovery.solutions(tree)
+
+      make_sln(tree, "Other.sln")
+      local refreshed = discovery.rescan(tree)
+      MiniTest.expect.equality(refreshed, { tree .. "/App.sln", tree .. "/Other.sln" })
+      MiniTest.expect.equality(discovery.solutions(tree), refreshed)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
   end)
 
   it("remembers the active solution per project root", function()
-    MiniTest.skip("not yet implemented")
+    local tree_a, cleanup_a = make_tree()
+    local tree_b, cleanup_b = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree_a, "App.sln")
+      make_sln(tree_a, "Other.sln")
+      make_sln(tree_b, "Different.sln")
+
+      -- Sorted ascending: "App.sln" precedes "Other.sln" lexically.
+      MiniTest.expect.equality(discovery.active_solution(tree_a), tree_a .. "/App.sln")
+      MiniTest.expect.equality(discovery.active_solution(tree_a), tree_a .. "/App.sln")
+      MiniTest.expect.equality(discovery.active_solution(tree_b), tree_b .. "/Different.sln")
+    end)
+    cleanup_a()
+    cleanup_b()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("finds a nested solution several levels below the root", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "a/b/c/App.sln")
+      MiniTest.expect.equality(discovery.solutions(tree), { tree .. "/a/b/c/App.sln" })
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("skips configured ignore directories", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      -- Both a default-ignored VCS directory and one holding an actual, findable solution.
+      make_sln(tree, "node_modules/Vendored.sln")
+      make_sln(tree, "src/App.sln")
+      MiniTest.expect.equality(discovery.solutions(tree), { tree .. "/src/App.sln" })
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("returns an empty list when no solution is found", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      MiniTest.expect.equality(discovery.solutions(tree), {})
+      MiniTest.expect.equality(discovery.active_solution(tree), nil)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("does not descend past the configured max depth", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      require("msvclsp.config").setup({ scan_max_depth = 1 })
+      -- Two levels below tree: deeper than the configured max_depth of 1.
+      make_sln(tree, "a/b/TooDeep.sln")
+      MiniTest.expect.equality(discovery.solutions(tree), {})
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
   end)
 end)

@@ -651,8 +651,14 @@ belongs to `main.rs`.
   root marker (`.git` by default), falling back to the current working directory when nothing
   matches or the buffer is unnamed. Resolved per buffer and cached, since every command calls it.
   See [ADR 28](adr/28-nvim-root-detection.md).
-- Solution discovery: invoke the CLI to find `.sln` files under the project root, cache results,
-  expose a manual rescan command.
+- Solution discovery: `discovery.lua`'s `M.solutions(root?)` scans downward from the project root
+  in Lua — the CLI has no `discover` subcommand for the MVP (see [ADR 03](adr/03-cli-surface-and-json-contract.md))
+  — skipping directories named in `config.options.scan_ignore_dirs` and never descending past
+  `scan_max_depth` levels, both configurable with defaults in `config.lua`. Results are cached per
+  project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
+  `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns the first
+  (deterministically sorted) discovered solution — MVP assumes a single solution; the picker
+  arrives in V1. See [ADR 33](adr/33-nvim-solution-discovery.md).
 - Active solution/config selection: interactive picker, persisted per workspace (project root,
   detected via standard LSP root markers like `.git`), with an explicit switch command.
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into

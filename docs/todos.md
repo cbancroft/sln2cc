@@ -1423,7 +1423,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   that cache and this one may or may not want to share an invalidation trigger. Full reasoning in
   [ADR 28](adr/28-nvim-root-detection.md).
 
-- [ ] **MVP-27 — Solution discovery**
+- [x] **MVP-27 — Solution discovery**
   `feat/nvim-solution-discovery` · ~5h
 
   **Summary:** Scan the project tree for `.sln` files and cache the results in memory.
@@ -1438,6 +1438,23 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** mini.test specs over a temporary tree covering one solution, a nested solution,
   ignored directories being skipped, no solutions found, and the second call hitting the
   cache.
+
+  **Outcome:** `M.solutions(root?)` scans synchronously — a bounded, ignore-pruned, depth-limited
+  walk is closer in cost to `M.project_root()`'s existing `vim.fs.root()` call than to a real
+  subprocess invocation, so it doesn't need `cli.lua`'s async callback shape. Two new
+  `config.lua` defaults, `scan_ignore_dirs` and `scan_max_depth`, bound the walk. `M.rescan(root?)`
+  is the single cache-invalidation entry point, deliberately kept independent of
+  `M.project_root()`'s per-buffer cache — closing the open question ADR 28 left for this issue,
+  since nothing today ties "a buffer's cached root going stale" to "a manual rescan" in practice.
+  `M.active_solution(root?)` is a memoized `M.solutions(root)[1]`, sorted ascending for
+  determinism, with no setter yet — choosing a solution other than "the first one found" belongs
+  to V1's picker (`picker.lua`'s already-stubbed `M.pick_solution`). Full reasoning in
+  [ADR 33](adr/33-nvim-solution-discovery.md).
+
+  `cli.lua` already carried a stray `M.discover(root, on_done)` stub predating ADR 03's decision
+  that the CLI's `discover` subcommand is deliberately absent for MVP (scanning is Lua's job).
+  That stub is now confirmed dead code; **MVP-28 should delete it** rather than fill it in when
+  building out `cli.lua`'s real subcommand invocations.
 
 - [ ] **MVP-28 — Async CLI invocation and JSON decoding**
   `feat/nvim-cli-bridge` · ~6h
