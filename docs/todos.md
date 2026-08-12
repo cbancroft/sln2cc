@@ -594,6 +594,27 @@ Goal: one solution, one manually selected configuration/platform, producing a
   in total silence; and negative cases for the two new checks — an unquoted `AdditionalOptions` and
   the ordinary two-level XML shapes — so neither can be satisfied by always warning.
 
+- [x] **MVP-42 — Support `HasTrailingSlash()` in `Condition` evaluation**
+  `feat/condition-has-trailing-slash` · ~2h
+
+  **Summary:** Add `HasTrailingSlash(operand)` to the `Condition` grammar's `primary` production,
+  narrowing the fatal-`UnsupportedConstruct` example ADR 09 named for it.
+
+  **Description:** ADR 09 scoped `Condition` evaluation to `Exists()` and left every other MSBuild
+  condition function — `HasTrailingSlash` chief among its named examples — as an expression with no
+  truth value, hence fatal. `HasTrailingSlash` needs none of the version-comparison machinery ADR 09
+  also named (`$([MSBuild]::VersionGreaterThanOrEquals(...))`, numeric comparison): it is a second
+  single-operand function occupying the same grammar slot `Exists` already does, tested by whether
+  the expanded operand ends in `/` or `\`. The version-function family stays out of scope — those are
+  property functions reached through `$(...)`, not bare condition functions, and are a materially
+  larger addition MVP-36 will have to weigh separately.
+
+  See [ADR 31](adr/31-has-trailing-slash-condition-function.md).
+
+  **Tests:** Unit tests mirroring the existing `Exists()` coverage in `eval.rs`: a trailing `/`, a
+  trailing `\`, no trailing slash, an empty operand, case-insensitive matching of the function name,
+  and negation (`!HasTrailingSlash(...)`). Confirm `Exists()` behavior is unchanged.
+
 - [x] **MVP-35 — Bound XML nesting depth before parsing**
   `fix/xml-depth-guard` · ~3h
 

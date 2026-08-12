@@ -391,6 +391,13 @@ fn check_size(value: &str, input: &str) -> Result<()> {
     })
 }
 
+/// Whether `value` ends in a path separator, as MSBuild's `HasTrailingSlash` condition function
+/// tests. Both separators count -- `.vcxproj` paths mix `\` (the toolchain's own convention) and
+/// `/` (globs, wildcard specs) freely, and MSBuild itself checks both.
+fn has_trailing_slash(value: &str) -> bool {
+    value.ends_with('/') || value.ends_with('\\')
+}
+
 // Shorten a value for a message.
 fn truncate(input: &str, max_chars: usize) -> String {
     match input.char_indices().nth(max_chars) {
@@ -624,6 +631,7 @@ fn bare_token_len(rest: &str) -> usize {
 /// unary     := '!' unary | primary
 /// primary   := '(' condition ')'
 ///            | 'Exists' '(' operand ')'
+///            | 'HasTrailingSlash' '(' operand ')'
 ///            | operand ( ('==' | '!=') operand )?     -- a lone operand is a boolean literal
 /// operand   := "'" text "'" | bare-token
 struct Parser<'a> {
@@ -677,7 +685,14 @@ impl Parser<'_> {
                 }
                 Ok(value)
             }
-            Token::Bare(name) if name.eq_ignore_ascii_case("Exists") => self.exists(),
+            Token::Bare(name) if name.eq_ignore_ascii_case("Exists") => {
+                let path = self.single_operand()?;
+                Ok(self.exists(&path))
+            }
+            Token::Bare(name) if name.eq_ignore_ascii_case("HasTrailingSlash") => {
+                let value = self.single_operand()?;
+                Ok(has_trailing_slash(&value))
+            }
             token @ (Token::Quoted(_) | Token::Bare(_)) => self.comparison(token),
             _ => Err(self.unsupported()),
         }
@@ -703,28 +718,32 @@ impl Parser<'_> {
         Ok(left.eq_ignore_ascii_case(&right) == equals)
     }
 
-    /// `Exists ( operand )`
-    fn exists(&mut self) -> Result<bool> {
+    /// `'(' operand ')'` -- the argument list every single-operand condition function shares.
+    fn single_operand(&mut self) -> Result<String> {
         if !self.take(&Token::Open) {
             return Err(self.unsupported());
         }
         let token = self.bump()?;
-        let path = self.operand(token)?;
+        let value = self.operand(token)?;
         if !self.take(&Token::Close) {
             return Err(self.unsupported());
         }
+        Ok(value)
+    }
 
+    /// Whether `path` names something on disk, relative to the directory of the file the
+    /// condition is written in -- as MSBuild resolves it, not the process working directory.
+    /// Existence only check. No reading or executing.
+    fn exists(&self, path: &str) -> bool {
         let path = path.trim();
         if path.is_empty() {
             // `Exists('$(Undefined)')` is false, not an error. It is how property sheets ask
             // whether an optional path was configured at all.
-            return Ok(false);
+            return false;
         }
 
-        // Relative to the directory of the file the condition is written in, as MSBuild resolves
-        // it. Existence only check. No reading or executing.
         let base = self.file.parent().unwrap_or(Path::new(""));
-        Ok(base.join(path).exists())
+        base.join(path).exists()
     }
 
     /// Expand an operand and take its findings.
@@ -1602,6 +1621,39 @@ mod tests {
     }
 
     #[test]
+    fn has_trailing_slash_checks_the_last_character() {
+        assert!(holds_bare("HasTrailingSlash('C:\\proj\\')"));
+        assert!(holds_bare("HasTrailingSlash('C:/proj/')"), "`/` counts too");
+        assert!(!holds_bare("HasTrailingSlash('C:\\proj')"));
+        assert!(
+            holds_bare("hastrailingslash('C:\\proj\\')"),
+            "the name is a keyword"
+        );
+    }
+
+    #[test]
+    fn has_trailing_slash_is_false_for_an_empty_operand() {
+        // `HasTrailingSlash('$(Undefined)')` is how a property sheet asks whether an optional,
+        // possibly-unset path was written with a trailing separator. Empty is not an error.
+        let evaluation = condition_holds(
+            "HasTrailingSlash('$(Undefined)')",
+            &Properties::new(),
+            &site(),
+            12,
+        )
+        .expect("evaluates");
+
+        assert!(!evaluation.holds);
+        assert_eq!(evaluation.undefined, ["Undefined"]);
+    }
+
+    #[test]
+    fn has_trailing_slash_can_be_negated() {
+        assert!(holds_bare("!HasTrailingSlash('C:\\proj')"));
+        assert!(!holds_bare("!HasTrailingSlash('C:\\proj\\')"));
+    }
+
+    #[test]
     fn a_quoted_operand_cannot_inject_operators() {
         // The reason the condition is parsed *before* any operand is expanded. Project files are
         // untrusted input (CLAUDE.md §5): expanding first would splice this property's value into
@@ -1637,12 +1689,14 @@ mod tests {
 
     #[test]
     fn an_unsupported_function_is_an_error() {
-        // `Exists` is the only condition function in the subset. The rest are real MSBuild and
-        // will turn up the moment MVP-10 starts importing the Visual Studio installation's own
-        // `.targets` — which is that issue's problem to weigh, not this one's to guess at.
+        // `Exists` and `HasTrailingSlash` are the only condition functions in the subset (MVP-42).
+        // The version-comparison family is real MSBuild and will turn up the moment MVP-10 starts
+        // importing the Visual Studio installation's own `.targets` — which is MVP-36's problem to
+        // weigh, not this one's to guess at: those are property functions reached through `$(...)`,
+        // a materially larger addition than a second single-operand condition function.
         for condition in [
-            "HasTrailingSlash('$(OutDir)')",
             "$([MSBuild]::VersionGreaterThanOrEquals('17.0', '16.0'))",
+            "HasTrailingSlash('a', 'b')",
         ] {
             assert_eq!(
                 refuse(condition).kind(),

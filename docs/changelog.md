@@ -123,6 +123,9 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   instead of being skipped with a warning. A directory a wildcard names that does not exist
   simply contributes nothing, matching what MSBuild itself does.
 
+- `Condition` attributes can now use `HasTrailingSlash(...)`, alongside `Exists(...)`, instead of
+  failing generation outright.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
