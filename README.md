@@ -38,7 +38,7 @@ installed, since toolchain and Windows SDK discovery depend on it.
 | Tool                     | Needed for                                              |
 | ------------------------ | -------------------------------------------------------- |
 | Rust 1.85+ + Cargo       | Building and testing the CLI.                             |
-| Neovim 0.9+              | Running the plugin and its tests.                         |
+| Neovim 0.12+             | Running the plugin and its tests.                         |
 | [mini.test]               | The plugin test harness.                                  |
 | clangd                   | Manual end-to-end verification only.                      |
 | Visual Studio 2019/2022  | Manual end-to-end verification only (Windows).            |

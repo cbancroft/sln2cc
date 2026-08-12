@@ -113,6 +113,16 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   a typo in your config surfaces immediately instead of causing confusing behavior later. Calling
   `setup()` more than once is safe.
 
+- The Neovim plugin can now find your project root: it walks up from the buffer you're editing
+  looking for a configured marker (`.git` by default), the same way Neovim's built-in LSP clients
+  do, and falls back to your current working directory if nothing matches. `.msvclsp/` will be
+  created there.
+
+### Changed
+
+- The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
+  uses `vim.fs.root()`.
+
 ### Fixed
 
 - The same problem is no longer reported over and over. One mistake in a property sheet shared by

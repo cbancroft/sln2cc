@@ -1285,7 +1285,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   reasoning in [ADR 27](adr/27-nvim-config-merge-and-validation.md). MVP-26 onward can read
   `M.options` trusting it is always fully-defaulted, never partially applied.
 
-- [ ] **MVP-26 — Project root detection**
+- [x] **MVP-26 — Project root detection**
   `feat/nvim-root-detection` · ~3h
 
   **Summary:** Locate the project root by walking up from the current buffer for the
@@ -1299,6 +1299,17 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs over a temporary directory tree covering a marker at the root, a
   marker several levels up, no marker present, and an unnamed buffer.
+
+  **Outcome:** `M.project_root(bufnr?)` calls `vim.fs.root()` — the same stdlib function
+  Neovim's own LSP clients use for root detection — rather than reimplementing its upward walk,
+  which raises the plugin's stated floor from Neovim 0.9+ to 0.12+ (already implied by
+  `README.md`'s `vim.pack` install path). `vim.fs.root()` already never throws on an unnamed
+  buffer and already returns `nil` rather than erroring when no marker matches; `project_root()`
+  turns that `nil` into a `vim.fn.getcwd()` fallback and caches the result in a module-local
+  table keyed by buffer number. The cache has no eviction policy yet — a stale entry for a
+  reused `bufnr` is left as an open question for whoever implements MVP-27's `M.rescan()`, since
+  that cache and this one may or may not want to share an invalidation trigger. Full reasoning in
+  [ADR 28](adr/28-nvim-root-detection.md).
 
 - [ ] **MVP-27 — Solution discovery**
   `feat/nvim-solution-discovery` · ~5h

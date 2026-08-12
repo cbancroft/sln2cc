@@ -616,6 +616,11 @@ belongs to `main.rs`.
 
 ## Neovim Plugin — Responsibilities
 
+- Project root detection: `discovery.lua`'s `M.project_root(bufnr?)` walks upward from a buffer
+  via `vim.fs.root()` — the same function Neovim's built-in LSP clients use — for a configured
+  root marker (`.git` by default), falling back to the current working directory when nothing
+  matches or the buffer is unnamed. Resolved per buffer and cached, since every command calls it.
+  See [ADR 28](adr/28-nvim-root-detection.md).
 - Solution discovery: invoke the CLI to find `.sln` files under the project root, cache results,
   expose a manual rescan command.
 - Active solution/config selection: interactive picker, persisted per workspace (project root,
@@ -630,7 +635,8 @@ belongs to `main.rs`.
 
 ## Storage Layout
 
-- `.msvclsp/` at the project root (project root = same root markers Neovim's LSP clients use).
+- `.msvclsp/` at the project root (project root = same root markers Neovim's LSP clients use; see
+  [ADR 28](adr/28-nvim-root-detection.md) for how the plugin resolves it).
 - Namespaced by solution: `.msvclsp/<solution-name>-<hash>/compile_commands.json`, where
   `<solution-name>` is the `.sln` file's stem and `<hash>` is the low 32 bits of a 64-bit FNV-1a
   hash of the lowercased, lexically-normalized absolute path of the directory containing the
