@@ -28,6 +28,13 @@ M.defaults = {
   --- Maximum directory levels descended below the project root while scanning for `.sln`
   --- files. Bounds worst-case scan cost on a deep or unexpectedly large tree.
   scan_max_depth = 6,
+
+  --- Command used to launch clangd. Can add any other arguments after this if you want to customize
+  --- the execution. We always append the `--compile-commands-dir=<dir>`.
+  clangd_cmd = { "clangd" },
+
+  --- Filetypes clangd is started for.
+  filetypes = { "c", "cpp" },
 }
 
 M.options = vim.deepcopy(M.defaults)
