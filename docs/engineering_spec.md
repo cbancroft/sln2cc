@@ -685,11 +685,32 @@ belongs to `main.rs`.
   two are documented to diverge. See [ADR 34](adr/34-nvim-cli-invocation.md).
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into
   `.msvclsp/<solution-name>-<hash>/`.
-- `clangd` lifecycle: start/restart `clangd` pointed explicitly at
-  `.msvclsp/<solution-name>-<hash>/compile_commands.json` (not relying on `clangd`'s own
-  directory-walk discovery), re-launching when the database is regenerated or the active
-  solution/config changes. The plugin never constructs this path itself — `generate`'s JSON envelope
-  (`GenerateResult.database`, `cli.rs`) always carries the absolute path it actually wrote.
+- `clangd` lifecycle: `lsp.lua`'s `M.start(database, root)` / `M.restart(database, root)` point
+  `clangd` explicitly at `database` — the absolute `compile_commands.json` path from `generate`'s
+  JSON envelope (`GenerateResult.database`, `cli.rs`); the plugin never constructs this path
+  itself. Built on Neovim's own `vim.lsp.config`/`vim.lsp.enable` (0.11+) rather than a private
+  client: both functions merge `{ cmd, root_dir, filetypes }` into the current
+  `vim.lsp.config.clangd` — preserving any `on_attach`/`capabilities`/`settings` a user or another
+  plugin already set for it — with `cmd` built from `config.options.clangd_cmd` plus a trailing
+  `--compile-commands-dir=<dir>` (never `clangd`'s own directory-walk discovery), then call
+  `vim.lsp.enable("clangd")`, whose built-in `FileType` autocmd starts and attaches the client for
+  every matching buffer, present or future. **`root_dir` is a function, not a static string** —
+  `function(bufnr, on_dir)` calls `on_dir(root)` only for a buffer at or under `root` (a
+  normalized-path prefix check), so overriding the single shared `"clangd"` config name only ever
+  affects buffers inside this solution; any other buffer — a second solution, an unrelated CMake
+  project, a stray file elsewhere — is left to whatever other `clangd` config/client already
+  applies to it, if any. `M.restart` mirrors this on the stop side: it stops only running
+  `"clangd"`-named clients whose own resolved `client.root_dir == root`
+  (`vim.lsp.get_clients({ name = "clangd" })`, filtered), never a client belonging to some other
+  project, so the subsequent re-enable starts fresh ones pointed at the new database for this
+  solution's buffers without disturbing anyone else's. `nil` database → `vim.notify` (WARN) and
+  neither function touches LSP state. Four module fields (`M._get_config`, `M._set_config`,
+  `M._enable`, `M._get_clients`) default to the real `vim.lsp` calls, overridable for tests
+  (mirrors `cli.lua`'s `M._system`, ADR 34). `root` and `database` are threaded in explicitly by
+  the caller — `lsp.lua` depends on `config.lua` only, not `discovery.lua`, the same pattern
+  `cli.lua`/`picker.lua` already establish. Deciding *when* to call `M.restart` (on
+  `GenerateResult.regenerated`, gated by `config.options.auto_restart_clangd`) is left to whichever
+  module wires this in — not yet done. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
 
 ## Storage Layout
 

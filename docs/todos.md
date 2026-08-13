@@ -1515,7 +1515,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `pick_config` into a keybinding yet, so there is no changelog entry for this issue, mirroring
   MVP-28's own Outcome. See [ADR 35](adr/35-nvim-config-picker.md).
 
-- [ ] **MVP-30 — clangd lifecycle**
+- [x] **MVP-30 — clangd lifecycle**
   `feat/nvim-clangd-lifecycle` · ~5h
 
   **Summary:** Start and restart clangd pointed explicitly at the generated database.
@@ -1529,6 +1529,31 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** mini.test specs asserting the correct `--compile-commands-dir` argument, restart
   stopping the previous client, buffers reattaching, and a missing database producing a
   notification rather than a start attempt.
+
+  **Outcome:** `M.start(database, root)` / `M.restart(database, root)` build on Neovim's own
+  `vim.lsp.config`/`vim.lsp.enable` (0.11+) instead of a hand-rolled `vim.lsp.start()` client — an
+  initial design that tracked a private-named client and its `attached_buffers` by hand was
+  written up and then rejected precisely because it stopped clangd "just working" the way opening
+  any other LSP-configured buffer already does. Both functions merge `{ cmd, root_dir, filetypes }`
+  into the current `vim.lsp.config.clangd` (preserving `on_attach`/`capabilities`/`settings` a user
+  or another plugin already set — confirmed with the user rather than assumed) and call
+  `vim.lsp.enable("clangd")`, whose built-in `FileType` autocmd starts and reattaches every
+  matching buffer for free. **`root_dir` is a function, not a static string** — scoped to only call
+  `on_dir` for buffers under `root`, caught in review after the static-string version would have
+  pointed *every* `clangd`-eligible buffer in the session at this one solution's database the
+  moment a second solution or unrelated project shared the session. `M.restart` mirrors that on the
+  stop side, filtering `M._get_clients({ name = "clangd" })` down to clients whose own
+  `root_dir == root` before stopping them, so restarting never touches another project's clangd.
+  "Buffers reattaching" (this item's own Tests: line) is verified indirectly — the specs assert
+  `M._enable("clangd")` is called after the stop loop, which is what triggers Neovim's own
+  `FileType` re-trigger to reattach; the reattachment itself is `$VIMRUNTIME/lua/vim/lsp.lua`'s
+  behavior, not this module's, so there is nothing of msvclsp's own to simulate reattaching.
+  `lsp.lua` depends on `config.lua` only (`clangd_cmd`, `filetypes` — two new defaults), mirroring
+  `cli.lua`/`picker.lua`'s explicit-parameter precedent for `database`/`root` rather than resolving
+  either itself. No changelog entry: nothing calls `M.start`/`M.restart` yet, and `pick_config`'s
+  `on_choice` still only returns the picked config, not `GenerateResult.database` — wiring the two
+  together, and deciding when `config.options.auto_restart_clangd` triggers a restart, is MVP-31's
+  problem, per ADR 35's own Consequences. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
 
 - [ ] **MVP-31 — User commands**
   `feat/nvim-commands` · ~3h
