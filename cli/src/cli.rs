@@ -539,6 +539,54 @@ mod tests {
         );
     }
 
+    /// MVP-28's `cli.lua` builds this exact argv for every call: solution, `--root`, and
+    /// `--json`, plus `--configuration`/`--platform` for `generate`. Pinning it here means a
+    /// rename on either side of the plugin/binary boundary breaks a test instead of shipping
+    /// a plugin that silently stops parsing.
+    #[test]
+    fn matches_the_argv_cli_lua_builds() {
+        let cli = Cli::try_parse_from([
+            "msvclsp",
+            "list-configs",
+            "app.sln",
+            "--root",
+            "C:/proj",
+            "--json",
+        ])
+        .expect("parses");
+        assert_eq!(
+            cli.command,
+            Command::ListConfigs {
+                solution: solution_args("app.sln", Some("C:/proj")),
+            }
+        );
+        assert!(cli.json);
+
+        let cli = Cli::try_parse_from([
+            "msvclsp",
+            "generate",
+            "app.sln",
+            "--configuration",
+            "Debug",
+            "--platform",
+            "x64",
+            "--root",
+            "C:/proj",
+            "--json",
+        ])
+        .expect("parses");
+        assert_eq!(
+            cli.command,
+            Command::Generate {
+                solution: solution_args("app.sln", Some("C:/proj")),
+                configuration: "Debug".to_string(),
+                platform: "x64".to_string(),
+                force: false,
+            }
+        );
+        assert!(cli.json);
+    }
+
     #[test]
     fn missing_required_arguments_are_usage_errors() {
         let cases: [&[&str]; 3] = [

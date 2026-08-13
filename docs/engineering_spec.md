@@ -661,6 +661,18 @@ belongs to `main.rs`.
   arrives in V1. See [ADR 33](adr/33-nvim-solution-discovery.md).
 - Active solution/config selection: interactive picker, persisted per workspace (project root,
   detected via standard LSP root markers like `.git`), with an explicit switch command.
+- CLI invocation: `cli.lua`'s `M.run(args, on_done)` spawns the binary via `vim.system()` (behind
+  an overridable `M._system` field, so `cli.lua`'s own tests can stub the spawn without a real
+  binary), always appends `--json`, and decodes stdout on exit. On success it hands the whole
+  decoded envelope to `on_done(envelope, nil)` — `warnings` survives alongside `result`, since
+  V2-04 owns rendering them and shouldn't need to touch this module to reach them. On any failure
+  (non-zero exit, undecodable stdout, or a spawn failure like a missing binary) it hands back a
+  structured error whose `message` is stderr's text and whose `kind` is `envelope.error.kind` when
+  the envelope decoded. `M.list_configs(solution, root, on_done)` and
+  `M.generate(solution, config, root, on_done)` build on `M.run`, unwrap to `envelope.result`, and
+  always pass `--root` — the plugin resolves `root` itself (see project root detection above) and
+  passes it through explicitly rather than defaulting to the solution's own directory, since the
+  two are documented to diverge. See [ADR 34](adr/34-nvim-cli-invocation.md).
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into
   `.msvclsp/<solution-name>-<hash>/`.
 - `clangd` lifecycle: start/restart `clangd` pointed explicitly at

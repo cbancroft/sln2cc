@@ -1456,7 +1456,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   That stub is now confirmed dead code; **MVP-28 should delete it** rather than fill it in when
   building out `cli.lua`'s real subcommand invocations.
 
-- [ ] **MVP-28 — Async CLI invocation and JSON decoding**
+- [x] **MVP-28 — Async CLI invocation and JSON decoding**
   `feat/nvim-cli-bridge` · ~6h
 
   **Summary:** Implement `cli.lua` as the single, stubbable boundary between the plugin and
@@ -1470,6 +1470,25 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs with a stubbed job runner covering successful decode, non-zero
   exit, malformed JSON, and a missing binary — no spec invokes the real binary.
+
+  **Outcome:** `M.run(args, on_done)` spawns via `vim.system()` behind an overridable `M._system`
+  field — a seam distinct from the `package.loaded` swap every *other* module's tests use to stub
+  `cli.lua` wholesale, since these are `cli.lua`'s own tests and have to intercept the actual
+  spawn. It hands back the *whole* decoded envelope on success, not just `.result`, so `warnings`
+  survives for V2-04 to render without this module changing again; `M.list_configs`/`M.generate`
+  unwrap to `.result` for their own callers. A missing binary is caught with `pcall` around the
+  `_system` call, since `vim.system()` raises synchronously on a spawn failure rather than
+  reaching `on_exit`. The structured error folds stderr's text into `message` and carries `kind`
+  when the envelope decoded with `has_error = true`. `schema_version` still goes unread here,
+  leaving the spec's open question about it open. `M.list_configs`/`M.generate` both gained an
+  explicit `root` parameter (widening their stubbed
+  signatures), appended as `--root` — `cli.lua` does not depend on `discovery.lua`, so whichever
+  issue builds `commands.lua` owns resolving the root and passing it through. `M.discover` is
+  deleted per ADR 33. `cli/src/cli.rs` gained `matches_the_argv_cli_lua_builds`, extending
+  `both_subcommands_accept_json` per ADR 03's own note, so a rename on either side of the
+  plugin/binary boundary fails a test instead of shipping silently. No command wires
+  `list_configs`/`generate` into a keybinding or user-visible action yet, so there is no
+  changelog entry for this issue. See [ADR 34](adr/34-nvim-cli-invocation.md).
 
 - [ ] **MVP-29 — Configuration/platform picker**
   `feat/nvim-config-picker` · ~4h
