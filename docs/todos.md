@@ -1490,7 +1490,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `list_configs`/`generate` into a keybinding or user-visible action yet, so there is no
   changelog entry for this issue. See [ADR 34](adr/34-nvim-cli-invocation.md).
 
-- [ ] **MVP-29 — Configuration/platform picker**
+- [x] **MVP-29 — Configuration/platform picker**
   `feat/nvim-config-picker` · ~4h
 
   **Summary:** Present the solution's configuration/platform options via `vim.ui.select` and
@@ -1503,6 +1503,17 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs with stubbed CLI covering options passed to `vim.ui.select`, the
   active entry being marked, selection triggering generation, and cancellation doing nothing.
+
+  **Outcome:** `M.pick_config(solution, root, on_choice)` — an explicit `root` parameter,
+  following ADR 34's precedent so `picker.lua` depends only on `cli.lua`, not `discovery.lua`.
+  `vim.ui.select`'s `format_item` mirrors `SolutionConfigs::render_human`'s own
+  `Configuration|Platform  (active)` rendering exactly. Every failure path — a failed
+  `list-configs`, an empty configuration list, cancellation, or a failed `generate` after
+  selection — converges on `on_choice(nil)`, notified via `vim.notify` for the three that are
+  actual failures, so every future caller's branching is a single `if not config then return
+  end`. `M.pick_solution` stays stubbed; it remains V1-03's scope per ADR 33. No command wires
+  `pick_config` into a keybinding yet, so there is no changelog entry for this issue, mirroring
+  MVP-28's own Outcome. See [ADR 35](adr/35-nvim-config-picker.md).
 
 - [ ] **MVP-30 — clangd lifecycle**
   `feat/nvim-clangd-lifecycle` · ~5h

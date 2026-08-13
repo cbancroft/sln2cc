@@ -657,10 +657,20 @@ belongs to `main.rs`.
   `scan_max_depth` levels, both configurable with defaults in `config.lua`. Results are cached per
   project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
   `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns the first
-  (deterministically sorted) discovered solution — MVP assumes a single solution; the picker
-  arrives in V1. See [ADR 33](adr/33-nvim-solution-discovery.md).
-- Active solution/config selection: interactive picker, persisted per workspace (project root,
-  detected via standard LSP root markers like `.git`), with an explicit switch command.
+  (deterministically sorted) discovered solution — MVP assumes a single solution; an interactive
+  *solution* picker (choosing something other than "the first one found") arrives in V1. See
+  [ADR 33](adr/33-nvim-solution-discovery.md).
+- Configuration/platform selection: `picker.lua`'s `M.pick_config(solution, root, on_choice)` calls
+  `cli.list_configs`, presents the results via `vim.ui.select` with the active pair marked
+  `"  (active)"` (matching `SolutionConfigs::render_human`'s own marker), and on selection calls
+  `cli.generate` to bring the database up to date before invoking `on_choice`. Every failure path —
+  a failed `list-configs`, an empty configuration list, cancellation, or a failed `generate` —
+  converges on `on_choice(nil)` after a `vim.notify`, so callers only ever branch on "got a config
+  back, or didn't." `picker.lua` depends only on `cli.lua`, not `discovery.lua`, mirroring
+  [ADR 34](adr/34-nvim-cli-invocation.md)'s `--root` precedent; whichever module wires this into a
+  user command resolves `root` and passes it through. Persisting a picked config across restarts is
+  `db.rs`'s job on the CLI side already (`active_config`); nothing further is added here. See
+  [ADR 35](adr/35-nvim-config-picker.md).
 - CLI invocation: `cli.lua`'s `M.run(args, on_done)` spawns the binary via `vim.system()` (behind
   an overridable `M._system` field, so `cli.lua`'s own tests can stub the spawn without a real
   binary), always appends `--json`, and decodes stdout on exit. On success it hands the whole
