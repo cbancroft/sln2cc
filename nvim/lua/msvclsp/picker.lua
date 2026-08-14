@@ -29,18 +29,18 @@ end
 --- Every failure path is handled by `on_choice(nil)`.
 --- @param solution string absolute path to the .sln file
 --- @param root string project root passed through to CLI calls
---- @param on_choice fun(config: { configuration: string, platform: string }|nil)
+--- @param on_choice fun(config: { configuration: string, platform: string }|nil, database: string|nil)
 function M.pick_config(solution, root, on_choice)
   cli.list_configs(solution, root, function(configs, err)
     if err then
       vim.notify("msvclsp: " .. err.message, vim.log.levels.ERROR)
-      on_choice(nil)
+      on_choice(nil, nil)
       return
     end
 
     if #configs.available == 0 then
       vim.notify("msvclsp: no configurations declared in " .. solution, vim.log.levels.WARN)
-      on_choice(nil)
+      on_choice(nil, nil)
       return
     end
 
@@ -51,18 +51,18 @@ function M.pick_config(solution, root, on_choice)
       end,
     }, function(chosen)
       if not chosen then
-        on_choice(nil)
+        on_choice(nil, nil)
         return
       end
 
       vim.notify("msvclsp: generating compile_commands.json...", vim.log.levels.INFO)
-      cli.generate(solution, chosen, root, function(_, gen_err)
+      cli.generate(solution, chosen, root, function(gen_result, gen_err)
         if gen_err then
           vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
-          on_choice(nil)
+          on_choice(nil, nil)
           return
         end
-        on_choice(chosen)
+        on_choice(chosen, gen_result.database)
       end)
     end)
   end)

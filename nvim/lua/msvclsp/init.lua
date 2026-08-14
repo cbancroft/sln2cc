@@ -6,8 +6,11 @@ local M = {}
 --- Entry point called by the user's plugin configuration.
 ---@param opts table|nil user configuration, merged over defaults
 function M.setup(opts)
-  require("msvclsp.config").setup(opts)
-  require("msvclsp.commands").register()
+  local resolved = require("msvclsp.config").setup(opts)
+  if resolved then
+    require("msvclsp.commands").mark_ready()
+  end
+  return resolved
 end
 
 return M

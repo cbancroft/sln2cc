@@ -663,14 +663,16 @@ belongs to `main.rs`.
 - Configuration/platform selection: `picker.lua`'s `M.pick_config(solution, root, on_choice)` calls
   `cli.list_configs`, presents the results via `vim.ui.select` with the active pair marked
   `"  (active)"` (matching `SolutionConfigs::render_human`'s own marker), and on selection calls
-  `cli.generate` to bring the database up to date before invoking `on_choice`. Every failure path —
-  a failed `list-configs`, an empty configuration list, cancellation, or a failed `generate` —
-  converges on `on_choice(nil)` after a `vim.notify`, so callers only ever branch on "got a config
-  back, or didn't." `picker.lua` depends only on `cli.lua`, not `discovery.lua`, mirroring
-  [ADR 34](adr/34-nvim-cli-invocation.md)'s `--root` precedent; whichever module wires this into a
-  user command resolves `root` and passes it through. Persisting a picked config across restarts is
-  `db.rs`'s job on the CLI side already (`active_config`); nothing further is added here. See
-  [ADR 35](adr/35-nvim-config-picker.md).
+  `cli.generate` to bring the database up to date before invoking `on_choice(config, database)` —
+  `database` is the `GenerateResult.database` from that `generate` call, added by MVP-31 so
+  `commands.lua` can point `lsp.restart` at the right file without a second CLI invocation. Every
+  failure path — a failed `list-configs`, an empty configuration list, cancellation, or a failed
+  `generate` — converges on `on_choice(nil, nil)` after a `vim.notify`, so callers only ever branch
+  on "got a config back, or didn't." `picker.lua` depends only on `cli.lua`, not `discovery.lua`,
+  mirroring [ADR 34](adr/34-nvim-cli-invocation.md)'s `--root` precedent. Persisting a picked config
+  across restarts is `db.rs`'s job on the CLI side already (`active_config`); nothing further is
+  added here. See [ADR 35](adr/35-nvim-config-picker.md) and
+  [ADR 37](adr/37-nvim-user-commands.md).
 - CLI invocation: `cli.lua`'s `M.run(args, on_done)` spawns the binary via `vim.system()` (behind
   an overridable `M._system` field, so `cli.lua`'s own tests can stub the spawn without a real
   binary), always appends `--json`, and decodes stdout on exit. On success it hands the whole
@@ -708,9 +710,24 @@ belongs to `main.rs`.
   `M._enable`, `M._get_clients`) default to the real `vim.lsp` calls, overridable for tests
   (mirrors `cli.lua`'s `M._system`, ADR 34). `root` and `database` are threaded in explicitly by
   the caller — `lsp.lua` depends on `config.lua` only, not `discovery.lua`, the same pattern
-  `cli.lua`/`picker.lua` already establish. Deciding *when* to call `M.restart` (on
-  `GenerateResult.regenerated`, gated by `config.options.auto_restart_clangd`) is left to whichever
-  module wires this in — not yet done. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
+  `cli.lua`/`picker.lua` already establish. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
+- User commands: `commands.lua`'s `M.register()` creates `:MsvclspGenerate`,
+  `:MsvclspSelectConfig`, `:MsvclspRescan`, and `:MsvclspRestart` (`:MsvclspSelectSolution` stays
+  unregistered until V1-03 gives it a `pick_solution` to call). Registration happens
+  unconditionally from `plugin/msvclsp.lua` at Neovim startup, not from `setup()` — cheap enough
+  (five `nvim_create_user_command` calls, no filesystem access) not to violate "never scan the
+  filesystem at startup." Each handler checks an internal `M._ready` flag first, flipped by
+  `init.lua` once `config.setup()` succeeds; before that, invoking any command notifies a specific
+  error rather than either failing silently or being absent from command completion.
+  `MsvclspGenerate` regenerates using `list-configs`' `.active` pair rather than prompting — no
+  active configuration yet notifies the user to run `:MsvclspSelectConfig` instead of guessing one.
+  `MsvclspGenerate`/`MsvclspSelectConfig` both call `lsp.restart` when
+  `config.options.auto_restart_clangd` is set, gated on the option alone rather than
+  `GenerateResult.regenerated` — a no-op generate still means clangd should end up attached, e.g. a
+  fresh session with no client running yet. `MsvclspRestart` has no generate call of its own, so
+  `commands.lua` caches the database path from the last successful generate/select-config per root;
+  with nothing cached it calls `lsp.restart(nil, root)` directly, relying on that call's own
+  warning rather than duplicating it. See [ADR 37](adr/37-nvim-user-commands.md).
 
 ## Storage Layout
 

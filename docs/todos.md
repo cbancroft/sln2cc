@@ -1555,7 +1555,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   together, and deciding when `config.options.auto_restart_clangd` triggers a restart, is MVP-31's
   problem, per ADR 35's own Consequences. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
 
-- [ ] **MVP-31 — User commands**
+- [x] **MVP-31 — User commands**
   `feat/nvim-commands` · ~3h
 
   **Summary:** Register the `:Msvclsp*` commands and wire them to their implementations.
@@ -1568,6 +1568,26 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs asserting each command exists after `setup()`, dispatches to the
   right module, and that invocation before setup produces a clear error.
+
+  **Outcome:** Four commands registered — `MsvclspGenerate`, `MsvclspSelectConfig`,
+  `MsvclspRescan`, `MsvclspRestart` — not five: `MsvclspSelectSolution` stays out until V1-03
+  ships `picker.pick_solution` alongside it (ADR 33), since there's nothing it could do
+  differently from the MVP's automatic first-found solution today. Registration moved to
+  `plugin/msvclsp.lua`'s load guard, called unconditionally at Neovim startup (cheap — five
+  `nvim_create_user_command` calls, no filesystem access) rather than from `init.lua`'s
+  `setup()`; an internal `M._ready` flag, flipped by `init.lua` once `config.setup()` succeeds,
+  is what makes "commands invoked before setup() say so clearly" true without commands failing
+  to exist at all beforehand. `MsvclspGenerate` regenerates using `list-configs`' `.active` pair
+  rather than reprompting; no active configuration yet notifies to run `:MsvclspSelectConfig`.
+  `picker.lua`'s `M.pick_config`'s `on_choice` widened to `(config, database)` — closing the gap
+  ADR 35 and ADR 36 both flagged — so `commands.lua` can restart clangd against the right
+  database without a second CLI invocation. `MsvclspGenerate`/`MsvclspSelectConfig` call
+  `lsp.restart` when `config.options.auto_restart_clangd` is set, gated on the option alone, not
+  `GenerateResult.regenerated` — a no-op generate still means clangd should end up attached in a
+  fresh session. `MsvclspRestart` has no generate call of its own, so `commands.lua` caches the
+  last database per root from a successful generate/select-config; with nothing cached it
+  delegates straight to `lsp.restart(nil, root)`, which already warns on its own. See
+  [ADR 37](adr/37-nvim-user-commands.md).
 
 - [ ] **MVP-32 — `:checkhealth msvclsp`**
   `feat/nvim-health` · ~4h

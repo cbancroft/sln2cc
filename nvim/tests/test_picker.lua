@@ -106,25 +106,27 @@ describe("msvclsp.picker.pick_config", function()
     MiniTest.expect.equality(generate_calls[1].root, "/root")
   end)
 
-  it("a successful generate calls on_choice with the picked config", function()
+  it("a successful generate calls on_choice with the picked config and the database", function()
     local chosen = config("Release", "x64")
     package.loaded["msvclsp.cli"] = fake_cli({
       list_configs = {
         result = { solution = "app.sln", available = { chosen }, active = nil },
       },
+      generate = { result = { database = "/root/.msvclsp/App-abcd1234/compile_commands.json" } },
     })
     picker = require("msvclsp.picker")
     vim.ui.select = select(1, fake_select(chosen))
 
-    local got
-    picker.pick_config("app.sln", "/root", function(c)
-      got = c
+    local got, got_database
+    picker.pick_config("app.sln", "/root", function(c, database)
+      got, got_database = c, database
     end)
 
     MiniTest.expect.equality(got, chosen)
+    MiniTest.expect.equality(got_database, "/root/.msvclsp/App-abcd1234/compile_commands.json")
   end)
 
-  it("cancelling calls on_choice(nil) and never calls generate", function()
+  it("cancelling calls on_choice(nil, nil) and never calls generate", function()
     local available = { config("Debug", "x64") }
     local fake, generate_calls = fake_cli({
       list_configs = { result = { solution = "app.sln", available = available, active = nil } },
@@ -134,17 +136,18 @@ describe("msvclsp.picker.pick_config", function()
     -- vim.ui.select invokes its callback with nil, mirroring a user backing out (<Esc>).
     vim.ui.select = select(1, fake_select(nil))
 
-    local got, called = "sentinel", false
-    picker.pick_config("app.sln", "/root", function(c)
-      got, called = c, true
+    local got, got_database, called = "sentinel", "sentinel", false
+    picker.pick_config("app.sln", "/root", function(c, database)
+      got, got_database, called = c, database, true
     end)
 
     MiniTest.expect.equality(called, true)
     MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(got_database, nil)
     MiniTest.expect.equality(#generate_calls, 0)
   end)
 
-  it("a failed list_configs notifies and calls on_choice(nil) without opening the selector", function()
+  it("a failed list_configs notifies, calls on_choice(nil), never opens the selector", function()
     package.loaded["msvclsp.cli"] = fake_cli({
       list_configs = { err = { message = "boom", kind = nil, code = 1 } },
     })
@@ -155,17 +158,18 @@ describe("msvclsp.picker.pick_config", function()
       select_called = true
     end
 
-    local got, called = "sentinel", false
-    picker.pick_config("app.sln", "/root", function(c)
-      got, called = c, true
+    local got, got_database, called = "sentinel", "sentinel", false
+    picker.pick_config("app.sln", "/root", function(c, database)
+      got, got_database, called = c, database, true
     end)
 
     MiniTest.expect.equality(called, true)
     MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(got_database, nil)
     MiniTest.expect.equality(select_called, false)
   end)
 
-  it("a failed generate after selection notifies and calls on_choice(nil)", function()
+  it("a failed generate after selection notifies and calls on_choice(nil, nil)", function()
     local chosen = config("Release", "x64")
     package.loaded["msvclsp.cli"] = fake_cli({
       list_configs = {
@@ -176,16 +180,17 @@ describe("msvclsp.picker.pick_config", function()
     picker = require("msvclsp.picker")
     vim.ui.select = select(1, fake_select(chosen))
 
-    local got, called = "sentinel", false
-    picker.pick_config("app.sln", "/root", function(c)
-      got, called = c, true
+    local got, got_database, called = "sentinel", "sentinel", false
+    picker.pick_config("app.sln", "/root", function(c, database)
+      got, got_database, called = c, database, true
     end)
 
     MiniTest.expect.equality(called, true)
     MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(got_database, nil)
   end)
 
-  it("an empty available list notifies and calls on_choice(nil) without opening the selector", function()
+  it("an empty available list notifies, calls on_choice(nil), never opens the selector", function()
     package.loaded["msvclsp.cli"] = fake_cli({
       list_configs = { result = { solution = "app.sln", available = {}, active = nil } },
     })
@@ -196,13 +201,14 @@ describe("msvclsp.picker.pick_config", function()
       select_called = true
     end
 
-    local got, called = "sentinel", false
-    picker.pick_config("app.sln", "/root", function(c)
-      got, called = c, true
+    local got, got_database, called = "sentinel", "sentinel", false
+    picker.pick_config("app.sln", "/root", function(c, database)
+      got, got_database, called = c, database, true
     end)
 
     MiniTest.expect.equality(called, true)
     MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(got_database, nil)
     MiniTest.expect.equality(select_called, false)
   end)
 end)

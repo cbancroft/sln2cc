@@ -131,6 +131,15 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 - `Condition` attributes can now use `HasTrailingSlash(...)`, alongside `Exists(...)`, instead of
   failing generation outright.
 
+- The Neovim plugin now has real commands: `:MsvclspGenerate` regenerates
+  `compile_commands.json` for whichever configuration/platform you last picked (and tells you to
+  run `:MsvclspSelectConfig` first if you haven't picked one yet), `:MsvclspSelectConfig` opens the
+  configuration/platform picker, `:MsvclspRescan` re-scans your project tree for `.sln` files, and
+  `:MsvclspRestart` restarts `clangd` against the current database. `:MsvclspGenerate` and
+  `:MsvclspSelectConfig` restart `clangd` automatically afterward unless you've turned that off
+  (`auto_restart_clangd = false`). Running any of these before `require("msvclsp").setup()` tells
+  you so instead of Neovim's generic "not an editor command."
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
