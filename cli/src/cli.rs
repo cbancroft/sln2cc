@@ -40,6 +40,9 @@ pub struct SolutionConfigs {
     pub available: Vec<ConfigPlatform>,
     /// Last-used selection for this solution, if one has been recorded.
     pub active: Option<ConfigPlatform>,
+    /// Resolved output path for the `compile_commands.json` for this solution, whether it has been
+    /// generated or not.
+    pub database: PathBuf,
 }
 
 /// Result of the `generate` subcommand.
@@ -159,11 +162,13 @@ fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<S
     let msvclsp_dir = args.root().join(".msvclsp");
     let store = db::Store::open(&msvclsp_dir)?;
     let active = store.active_config(&solution.path)?;
+    let output_dir = compdb::resolve_output_dir(&msvclsp_dir, &solution.path)?;
 
     Ok(SolutionConfigs {
         solution: solution.path,
         available: solution.configurations,
         active,
+        database: output_dir.join("compile_commands.json"),
     })
 }
 
@@ -792,6 +797,7 @@ mod tests {
             solution: PathBuf::from(r"C:\proj\app.sln"),
             available: vec![config("Debug", "x64"), config("Release", "x64")],
             active: Some(config("Release", "x64")),
+            database: PathBuf::from(r"C:\proj\...\compile_commands.json"),
         };
 
         let mut rendered = Vec::new();

@@ -1634,7 +1634,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   delegates straight to `lsp.restart(nil, root)`, which already warns on its own. See
   [ADR 37](adr/37-nvim-user-commands.md).
 
-- [ ] **MVP-32 — `:checkhealth msvclsp`**
+- [x] **MVP-32 — `:checkhealth msvclsp`**
   `feat/nvim-health` · ~4h
 
   **Summary:** Report on the environment conditions users most often get wrong.
@@ -1647,6 +1647,15 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** mini.test specs with stubbed CLI and filesystem covering all-healthy, missing
   binary, missing clangd, no solution found, and no database generated.
+
+  **Outcome:** The last check — "a database present on disk" — had nowhere to read a database
+  path from: `list-configs`' `SolutionConfigs` reported `active` but never where that
+  configuration's `compile_commands.json` would live, and that path is a Rust-side computation
+  (`compdb::resolve_output_dir`) this issue didn't want duplicated in Lua. `SolutionConfigs`
+  gained a `database: PathBuf` field (additive to the `--json` envelope, no `schema_version`
+  bump) so `health.lua` can `stat` a path the CLI itself resolved. See
+  [ADR 39](adr/39-nvim-checkhealth.md). `nvim/doc/msvclsp.txt`'s troubleshooting section
+  (MVP-33) can now point at real `:checkhealth` behavior instead of a stub.
 
 - [ ] **MVP-33 — User documentation**
   `docs/nvim-user-docs` · ~5h

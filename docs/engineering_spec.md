@@ -603,8 +603,13 @@ omitted, so the plugin decodes one documented structure rather than branching on
 | `error` | `kind` is [`ErrorKind::as_str()`](#error-handling); `message` is the outermost `Display`; `causes` is the `source()` chain, outermost-inward. `null` on success. |
 | `warnings` | Non-fatal diagnostics (`severity`, `message`, `file`, `line`). Always present, empty when there are none. `severity` is `"warning"` or `"note"` — see [Diagnostics](#diagnostics) — and a decoder must treat an unrecognized value as a warning rather than branching exhaustively, since a new level is additive and does not bump `schema_version`. Accumulated by a `Reporter` and attached to the envelope by `main.rs` — including on failure, so a run that warned and *then* failed still reports both. `file` is absolute. |
 
-`result` is `SolutionConfigs` (`solution`, `available`, `active`) for `list-configs` and
-`GenerateResult` (`database`, `regenerated`) for `generate`.
+`result` is `SolutionConfigs` (`solution`, `available`, `active`, `database`) for `list-configs` and
+`GenerateResult` (`database`, `regenerated`) for `generate`. `SolutionConfigs.database` is the
+resolved `compile_commands.json` path for the solution regardless of whether anything has been
+generated yet or a configuration is `active` — namespacing is per-solution, not per-configuration
+(V1-02 owns the latter), so it needs neither. Added by MVP-32 so `health.lua` can check for the
+file's existence without duplicating `compdb::resolve_output_dir`'s naming scheme; see
+[ADR 39](adr/39-nvim-checkhealth.md).
 
 ## Error Handling
 
@@ -745,6 +750,19 @@ belongs to `main.rs`.
   `commands.lua` caches the database path from the last successful generate/select-config per root;
   with nothing cached it calls `lsp.restart(nil, root)` directly, relying on that call's own
   warning rather than duplicating it. See [ADR 37](adr/37-nvim-user-commands.md).
+- `:checkhealth msvclsp`: `health.lua`'s `M.check()` runs five independent checks — the binary
+  present and runnable (reporting its version), `clangd` on `PATH`, a project root detectable via a
+  configured marker (distinct from silently falling back to the current directory), a solution
+  found, and a configuration/platform selected with its `compile_commands.json` present on disk —
+  each reporting `vim.health.ok`/`warn`/`error` with an actionable remedy rather than a bare status.
+  Binary version is read by invoking `<bin> --version` directly rather than through `cli.lua`,
+  since `--version` is `clap`'s own eager flag and never emits the `--json` envelope `cli.lua`
+  expects to decode; the seam is `health.lua`'s own overridable `M._system`, distinct from
+  `cli.lua`'s (ADR 34's pattern, a second instance rather than a shared field). The
+  database-on-disk check blocks on `cli.list_configs` with `vim.wait`, since `:checkhealth`
+  providers report synchronously and have no callback to defer to, and stats
+  `SolutionConfigs.database` (see "CLI Surface" above) rather than recomputing the path. See
+  [ADR 39](adr/39-nvim-checkhealth.md).
 
 ## Storage Layout
 

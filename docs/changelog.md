@@ -144,6 +144,13 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   — the common way a solution brands a subset of projects for special handling — as a `Condition`
   or in an ordinary property value, instead of generation failing outright.
 
+- `:checkhealth msvclsp` now does real checks instead of always erroring: the `msvclsp` binary is
+  present and runnable (its version is reported), `clangd` is on `PATH`, your project root was
+  actually found via a root marker rather than silently falling back to the current directory, a
+  `.sln` was found, and — once a configuration/platform is selected — its `compile_commands.json`
+  really exists on disk. Each failure names what to run next (`:MsvclspSelectConfig`,
+  `:MsvclspRescan`, and so on) instead of leaving you to guess.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection

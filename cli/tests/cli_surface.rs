@@ -403,6 +403,72 @@ fn list_configs_reports_available_configurations_with_no_active_selection() {
     );
 }
 
+/// `database` (MVP-32) is the resolved `compile_commands.json` path for this solution,
+/// independent of whether any configuration is `active` yet — health.lua stats this path rather
+/// than duplicating `compdb::resolve_output_dir`'s naming scheme in Lua. Proven separately from
+/// the declaration-order test above so that test keeps asserting only what it originally set out
+/// to (ADR 39).
+#[test]
+fn list_configs_reports_the_resolved_database_path_even_with_no_active_selection() {
+    let solution = TempSolution::new("database-path-no-active", &minimal_sln());
+    let sln_str = solution.sln();
+    let sln_str = sln_str.to_str().expect("temp path is valid UTF-8");
+    let root_str = solution.root().to_str().expect("temp path is UTF-8");
+
+    let output = run(&["list-configs", sln_str, "--root", root_str, "--json"]);
+
+    assert_eq!(code(&output), 0);
+    let stdout = stdout(&output);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout is one decodable JSON object");
+    let database = envelope["result"]["database"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no string \"database\" field in {stdout}"));
+
+    assert!(
+        database.ends_with("compile_commands.json"),
+        "database path was {database}"
+    );
+    assert!(
+        Path::new(database).starts_with(solution.root().join(".msvclsp")),
+        "database path {database} was not namespaced under .msvclsp"
+    );
+}
+
+/// `resolve_output_dir` creates the per-solution output directory as a side effect of computing
+/// its path (mirroring `db::Store::open`'s own create-on-read behavior for `state.json`) — a
+/// bare `list-configs`, with no `generate` ever run, still leaves the directory (though not the
+/// database file itself) on disk. Pinning this so a future change that makes the computation
+/// lazier doesn't silently break health.lua's assumption that the path is always resolvable.
+#[test]
+fn list_configs_creates_the_output_directory_without_generating_a_database() {
+    let solution = TempSolution::new("database-dir-created-without-generate", &minimal_sln());
+    let sln_str = solution.sln();
+    let sln_str = sln_str.to_str().expect("temp path is valid UTF-8");
+    let root_str = solution.root().to_str().expect("temp path is UTF-8");
+
+    let output = run(&["list-configs", sln_str, "--root", root_str, "--json"]);
+
+    assert_eq!(code(&output), 0);
+    let stdout = stdout(&output);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout is one decodable JSON object");
+    let database = PathBuf::from(
+        envelope["result"]["database"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no string \"database\" field in {stdout}")),
+    );
+
+    assert!(
+        database.parent().expect("has a parent").is_dir(),
+        "list-configs must resolve (and create) the output directory, not just the path string"
+    );
+    assert!(
+        !database.exists(),
+        "list-configs must never write compile_commands.json itself"
+    );
+}
+
 /// Proves `list-configs` actually consults `db::Store` rather than always reporting `active:
 /// null` — `.msvclsp/state.json` is seeded directly (matching the shape `db.rs`'s own tests
 /// write and round-trip) since no working `generate`/`set_active_config` CLI path exists yet to
