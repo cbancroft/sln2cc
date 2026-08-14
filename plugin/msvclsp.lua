@@ -7,3 +7,4 @@ if vim.g.loaded_msvclsp then
   return
 end
 vim.g.loaded_msvclsp = true
+require("msvclsp.commands").register()
