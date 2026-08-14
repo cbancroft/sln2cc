@@ -62,12 +62,11 @@ the time `M.check()` returns.
 5. **Each of the five checks degrades independently rather than short-circuiting the whole run.**
    A missing binary skips the version and database checks (both need to invoke it) but still runs
    the clangd/root/solution checks; no solution found skips the database check (nothing to call
-   `list-configs` on) but still reports root and clangd. Most non-`ok` reports carry a remedy —
-   `:MsvclspSelectConfig`, `:MsvclspRescan`, "install clangd and put it on PATH" — per CLAUDE.md
-   §4's "actionable remedy rather than just a red mark." Two do not: a binary that doesn't respond
-   to `--version` and a `list-configs` invocation that fails both surface only the error text, with
-   no advice line. Known gap, not a deliberate exception — carried over from this ADR's own
-   reference sketch rather than caught during implementation.
+   `list-configs` on) but still reports root and clangd. Every non-`ok` report carries a remedy —
+   `:MsvclspSelectConfig`, `:MsvclspRescan`, "install clangd and put it on PATH," or, for the two
+   checks with no single fix to point at (a binary that doesn't respond to `--version`, a
+   `list-configs` invocation that fails outright), the equivalent CLI invocation to run by hand and
+   see the underlying failure — per CLAUDE.md §4's "actionable remedy rather than just a red mark."
 
 ## Discussion
 

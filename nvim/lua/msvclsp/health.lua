@@ -39,7 +39,10 @@ local function check_binary()
 
   local version = binary_version(bin)
   if not version then
-    vim.health.error(bin .. " did not respond to --version")
+    vim.health.error(
+      bin .. " did not respond to --version",
+      { ("Run `%s --version` by hand to see the underlying failure."):format(bin) }
+    )
     return false
   end
   vim.health.ok(version)
@@ -89,7 +92,16 @@ local function check_database(solution, root)
   end)
 
   if err then
-    vim.health.error("msvclsp list-configs failed: " .. err.message)
+    vim.health.error(
+      "msvclsp list-configs failed: " .. err.message,
+      {
+        ("Run `%s list-configs %s --root %s` by hand to see the underlying failure."):format(
+          config.options.bin,
+          solution,
+          root
+        ),
+      }
+    )
     return
   end
 
