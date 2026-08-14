@@ -278,6 +278,8 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
                 // functioning properly.
                 None => out.record_undefined(body),
             }
+        } else if let Some(value) = property_function(body, props, &mut out) {
+            out.value.push_str(&value);
         } else {
             // Property function, registry read, nested reference or `$()`. Left in verbatim.
             out.record_unsupported(reference);
@@ -404,6 +406,61 @@ fn truncate(input: &str, max_chars: usize) -> String {
         Some((cut, _)) => format!("{}...", &input[..cut]),
         None => input.to_string(),
     }
+}
+
+/// Recognizes `$(Property.Method('literal'))` for a small whitelist of single argument boolean
+/// returning string methods and evaluates it against the property's current value.
+/// Returns `None` for anything outside those supported methods/arguments.
+fn property_function(body: &str, props: &Properties, out: &mut Expansion) -> Option<String> {
+    let (name, rest) = body.split_once('.')?;
+    if !is_property_name(name) {
+        return None;
+    }
+
+    let open = rest.find('(')?;
+    let method = &rest[..open];
+    // Case-sensitive. This is how the .NET methods work. Not our choice
+    if !matches!(method, "StartsWith" | "EndsWith" | "Contains" | "Equals") {
+        return None;
+    }
+    if !rest.ends_with(')') {
+        return None;
+    }
+
+    // Single string-literal argument only. No expansion, no overload.
+    let arg_span = &rest[open + 1..rest.len() - 1];
+    let arg = arg_span.strip_prefix('\'')?;
+    let end = arg.find('\'')?;
+    if end != arg.len() - 1 {
+        // Something follows the closing quote, so this isn't a single literal argument case.
+        return None;
+    }
+    let arg = &arg[..end];
+    let receiver = match props.get(name) {
+        Some(value) => value,
+        None => {
+            out.record_undefined(name);
+            ""
+        }
+    };
+
+    let holds = match method {
+        "StartsWith" => receiver.starts_with(arg),
+        "EndsWith" => receiver.ends_with(arg),
+        "Contains" => receiver.contains(arg),
+        "Equals" => receiver == arg,
+        _ => unreachable!("matched against the whitelist above"),
+    };
+
+    // A tainted receiver's *value* still gets used, best-effort, but the reference still has to be
+    // flagged the same way a normal tainted property reference would be.
+    if props.is_tainted(name) {
+        out.record_unsupported(&format!("$({body})"));
+    }
+
+    // MSBuild's own bool.ToString() casing. Condition's boolean() check is case-insensitive so this
+    // is purely cosmetic, but it's what a real MSBuild property function actually produces.
+    Some(if holds { "True" } else { "False" }.to_string())
 }
 
 /// One evaluated `Condition`, and what could not be resolved while evaluating it.
@@ -1651,6 +1708,170 @@ mod tests {
     fn has_trailing_slash_can_be_negated() {
         assert!(holds_bare("!HasTrailingSlash('C:\\proj')"));
         assert!(!holds_bare("!HasTrailingSlash('C:\\proj\\')"));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-43 — a whitelisted subset of property functions (`$(Property.Method('arg'))`)
+    // ---------------------------------------------------------------------------------------
+    //
+    // Implemented inside `expand()` itself rather than as `Condition` grammar (ADR 38), so these
+    // are exercised both as a bare `Condition` operand (via `holds`/`holds_bare`, matching the
+    // bug report's own shape) and as an ordinary value expansion (via `expanded`/`expand`,
+    // proving the same construct works identically in a metadata or property value).
+
+    #[test]
+    fn starts_with_matches_a_prefix() {
+        let props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+
+        assert!(holds(
+            "$(SolutionName.StartsWith('ContosoUnitTests'))",
+            &props
+        ));
+        assert!(!holds("$(SolutionName.StartsWith('Something'))", &props));
+    }
+
+    #[test]
+    fn ends_with_matches_a_suffix() {
+        let props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+
+        assert!(holds("$(SolutionName.EndsWith('.Core'))", &props));
+        assert!(!holds("$(SolutionName.EndsWith('.Editor'))", &props));
+    }
+
+    #[test]
+    fn contains_matches_a_substring() {
+        let props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+
+        assert!(holds("$(SolutionName.Contains('UnitTests'))", &props));
+        assert!(!holds("$(SolutionName.Contains('Editor'))", &props));
+    }
+
+    #[test]
+    fn equals_matches_the_whole_value() {
+        let props = bag(&[("Configuration", "Debug")]);
+
+        assert!(holds("$(Configuration.Equals('Debug'))", &props));
+        assert!(!holds("$(Configuration.Equals('Release'))", &props));
+    }
+
+    #[test]
+    fn the_match_is_case_sensitive() {
+        // Real MSBuild property functions bind through .NET reflection with the default (ordinal,
+        // case-sensitive) string overloads. Unlike `Condition`'s own `==`/`!=`, which MSBuild
+        // compares case-insensitively, this must not fold case -- a project relying on an exact
+        // check (as the bug report's own `ContosoUnitTests` gate does) would silently widen.
+        let props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+
+        assert!(!holds(
+            "$(SolutionName.StartsWith('contosounittests'))",
+            &props
+        ));
+    }
+
+    #[test]
+    fn the_method_name_is_case_sensitive() {
+        // A lowercase `startswith` is a MissingMethodException in real MSBuild, not a match --
+        // unlike `Exists`/`HasTrailingSlash`, which are this evaluator's own keyword grammar and
+        // match case-insensitively. Falls through to the ordinary unsupported/verbatim path.
+        let props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+        let expansion = expand("$(SolutionName.startswith('ContosoUnitTests'))", &props)
+            .expect("expands anyway");
+
+        assert_eq!(
+            expansion.value,
+            "$(SolutionName.startswith('ContosoUnitTests'))"
+        );
+        assert_eq!(
+            expansion.unsupported,
+            ["$(SolutionName.startswith('ContosoUnitTests'))"]
+        );
+    }
+
+    #[test]
+    fn an_undefined_receiver_behaves_as_an_empty_string() {
+        // Matches ordinary `$(Undefined)` expansion: empty, and recorded as undefined rather than
+        // as a second, unsupported-shaped error path.
+        let expansion =
+            expand("$(Undefined.StartsWith('x'))", &Properties::new()).expect("expands");
+
+        assert_eq!(expansion.value, "False");
+        assert_eq!(expansion.undefined, ["Undefined"]);
+        assert!(expansion.unsupported.is_empty());
+    }
+
+    #[test]
+    fn an_unrecognized_method_is_still_left_verbatim_and_unsupported() {
+        // Pins the existing MVP-08 behavior (`a_construct_outside_the_supported_subset_is_recorded_
+        // and_left_verbatim`'s `$(Foo.Substring(0))` case) is unaffected by this addition -- only
+        // the four whitelisted names are recognized, not property functions in general.
+        let expansion = expand("$(Foo.Substring(0))", &Properties::new()).expect("expands anyway");
+
+        assert_eq!(expansion.value, "$(Foo.Substring(0))");
+        assert_eq!(expansion.unsupported, ["$(Foo.Substring(0))"]);
+    }
+
+    #[test]
+    fn a_non_literal_argument_is_left_verbatim_and_unsupported() {
+        // Out of scope by design (ADR 38): only a plain string literal is recognized as the
+        // argument, so a nested reference falls through rather than being (silently) unexpanded
+        // inside the call.
+        let props = bag(&[("Foo", "ContosoUnitTests"), ("Bar", "Anti")]);
+        let expansion = expand("$(Foo.StartsWith($(Bar)))", &props).expect("expands anyway");
+
+        assert_eq!(expansion.value, "$(Foo.StartsWith($(Bar)))");
+        assert_eq!(expansion.unsupported, ["$(Foo.StartsWith($(Bar)))"]);
+    }
+
+    #[test]
+    fn a_multi_argument_call_is_left_verbatim_and_unsupported() {
+        // Out of scope by design (ADR 38): only the single-string-argument overload of each
+        // method is recognized -- not, e.g., `Equals(string, StringComparison)`.
+        let expansion =
+            expand("$(Foo.Equals('a', 'b'))", &Properties::new()).expect("expands anyway");
+
+        assert_eq!(expansion.value, "$(Foo.Equals('a', 'b'))");
+        assert_eq!(expansion.unsupported, ["$(Foo.Equals('a', 'b'))"]);
+    }
+
+    #[test]
+    fn a_tainted_receiver_still_evaluates_but_is_recorded_unsupported() {
+        // Mirrors expand()'s existing behavior for a plain tainted reference (MVP-36): the value
+        // is substituted best-effort, but the reference itself is flagged so an unsupported
+        // construct copied through an intermediate property cannot look clean one hop later.
+        let mut props = Properties::new();
+        // An unsupported construct assigned raw taints the key (MVP-36's own mechanism) and is
+        // left verbatim -- so the stored value is the literal text below, not "Anti".
+        assign(&mut props, "SolutionName", "$([MSBuild]::Unescape('Anti'))");
+
+        let expansion =
+            expand("$(SolutionName.StartsWith('Anti'))", &props).expect("expands anyway");
+
+        // The tainted value genuinely does not start with "Anti" -- it starts with the
+        // unsupported construct's own verbatim text -- so the honest answer is "False". The
+        // point of this test is that it still gets an answer instead of erroring, and that the
+        // reference is flagged unsupported alongside it.
+        assert_eq!(expansion.value, "False");
+        assert_eq!(
+            expansion.unsupported,
+            ["$(SolutionName.StartsWith('Anti'))"]
+        );
+    }
+
+    #[test]
+    fn the_reported_shape_chains_through_an_assigned_property() {
+        // The bug report's own scenario: a bare boolean property-function `Condition` gates a
+        // `PropertyGroup` assigning a new property, which a second `Condition` then reads --
+        // exercised directly against one `Properties` bag rather than a full XML fixture, the
+        // same placement MVP-36's own taint-tracking tests used for a comparable two-hop case.
+        let mut props = bag(&[("SolutionName", "ContosoUnitTests.Core")]);
+
+        assert!(holds(
+            "$(SolutionName.StartsWith('ContosoUnitTests'))",
+            &props
+        ));
+        assign(&mut props, "IsContosoTests", "true");
+
+        assert!(holds("'$(IsContosoTests)'=='true'", &props));
     }
 
     #[test]

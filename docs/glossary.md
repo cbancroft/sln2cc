@@ -81,7 +81,10 @@ them directly — `$(ProjectDir)inc` has to produce `...\app\inc`.
 **Property function** — a method call inside a reference: `$(Version.Substring(0,2))`,
 `$([System.IO.Path]::Combine(...))`, `$([MSBuild]::VersionGreaterThan(...))`. Real MSBuild, and
 outside msvclsp's supported subset — such a reference is copied through *as written* and warned
-about, so a flag containing it names its own cause instead of silently going missing.
+about, so a flag containing it names its own cause instead of silently going missing. Four
+single-string-argument instance methods are the exception: `$(Property.StartsWith('...'))`,
+`EndsWith`, `Contains`, and `Equals` evaluate rather than falling through, matched case-sensitively
+against the property's current value.
 
 **Eager expansion** — MSBuild's rule that a property's value is expanded at the moment it is
 *assigned*, against the bag as it stood then. It is why `<Defs>$(Defs);_DEBUG</Defs>` appends

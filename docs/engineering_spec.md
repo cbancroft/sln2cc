@@ -234,6 +234,17 @@ Rough module breakdown implied by the parsing pipeline:
   what it could not resolve rather than warning about it, since it knows neither the file nor the
   line and MVP-13 owns the wording. See [ADR 08](adr/08-eager-macro-expansion.md).
 
+  A small, whitelisted exception to "property functions are outside the supported subset": four
+  single-string-argument, boolean-returning instance methods —
+  `StartsWith`/`EndsWith`/`Contains`/`Equals` — are recognized directly inside `expand()` (MVP-43),
+  so `$(Property.StartsWith('literal'))` evaluates rather than falling through to
+  unsupported/verbatim. Matched case-sensitively (real .NET method binding, unlike this evaluator's
+  own case-insensitive keyword grammar); the argument is a plain literal, never itself expanded; an
+  undefined receiver behaves as `""` and is recorded the same way an ordinary undefined reference
+  is. Because this lives in `expand()` rather than `Condition`'s own grammar, it works identically
+  wherever `$(...)` appears — a `Condition` operand, an ordinary property value, or metadata — with
+  no changes to the `Condition` parser at all. See [ADR 38](adr/38-property-function-string-methods.md).
+
   `Condition` evaluation is settled by MVP-09 and sits beside expansion in `msbuild/eval.rs`: a
   tokenizer and recursive-descent evaluator over quoted and unquoted operand comparison (`==`,
   `!=`), `And`/`Or`/`!`, parentheses, `Exists()`, `HasTrailingSlash()` (added by MVP-42, see
@@ -254,6 +265,12 @@ Rough module breakdown implied by the parsing pipeline:
   one does, `Exists()` resolves against the directory of the file the condition is written in, and
   nesting is capped at 32 to keep recursive descent off a stack-overflow path. See
   [ADR 09](adr/09-condition-evaluation-subset.md).
+
+  A bare `Condition` operand like `$(SolutionName.StartsWith('ContosoUnitTests'))` also now
+  evaluates rather than failing as `UnsupportedConstruct`, for the four whitelisted property
+  functions above — no `Condition`-side change was needed for this, since `expand()` already
+  produces `"True"`/`"False"` for a recognized call and the existing lone-operand-as-boolean path
+  (`boolean()`) handles the rest. See [ADR 38](adr/38-property-function-string-methods.md).
 
   MVP-36 downgrades that fatal policy for files under the discovered Visual Studio installation's
   `install_path`: an unsupported `Condition` there is a warning and evaluates as `false` rather

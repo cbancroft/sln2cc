@@ -140,6 +140,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   (`auto_restart_clangd = false`). Running any of these before `require("msvclsp").setup()` tells
   you so instead of Neovim's generic "not an editor command."
 
+- A project file can now use `$(Property.StartsWith('...'))`, `EndsWith`, `Contains`, or `Equals`
+  — the common way a solution brands a subset of projects for special handling — as a `Condition`
+  or in an ordinary property value, instead of generation failing outright.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection

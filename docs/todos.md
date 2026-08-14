@@ -615,6 +615,51 @@ Goal: one solution, one manually selected configuration/platform, producing a
   trailing `\`, no trailing slash, an empty operand, case-insensitive matching of the function name,
   and negation (`!HasTrailingSlash(...)`). Confirm `Exists()` behavior is unchanged.
 
+- [x] **MVP-43 — Support a subset of property functions in property references**
+  `feat/property-function-string-methods` · ~4h
+
+  **Summary:** Recognize `$(Property.Method('arg'))` for a small whitelist of string-predicate
+  methods — `StartsWith`, `EndsWith`, `Contains`, `Equals` — instead of treating the whole
+  reference as an unsupported construct.
+
+  **Description:** Found testing against a real solution: `Condition="$(SolutionName
+  .StartsWith('ContosoUnitTests'))"` gating a `PropertyGroup`, whose property then gated an
+  `ItemDefinitionGroup`'s preprocessor definitions. ADR 09 and ADR 32 both deliberately left
+  property functions — a method call on a property, distinct from the bare condition functions
+  MVP-42 added — out of scope, and for a *user's own* project file (unlike the toolchain-file
+  case MVP-36 downgrades) an unsupported construct in a `Condition` is still fatal by design: this
+  hard-errors instead of silently guessing a boolean. Confirmed with the user rather than assumed
+  — `StartsWith` alone would have covered the reported case, but `EndsWith`/`Contains`/`Equals`
+  are the same string-predicate shape and share the grammar hook, so all four land together.
+
+  Scoped to the single-string-argument overload of each method — `Equals(string)`, not the
+  `StringComparison`-taking overload — matching what a `.vcxproj`/`.sln`-adjacent file actually
+  writes. Comparison is ordinal (byte/char-exact), not .NET's culture-aware default, a documented
+  simplification consistent with how `Condition` already handles string comparison elsewhere in
+  this evaluator.
+
+  **Tests:** Unit tests in `eval.rs` for each of the four methods: a match, a non-match, on an
+  undefined property (empty string receiver), case sensitivity (a differently-cased argument does
+  not match), and an unrecognized method name still recording `unsupported` rather than erroring
+  inside a value (mirrors the existing `$(Foo.Substring(0))` case). A `Condition` test using the
+  reported shape directly — a bare boolean property-function reference gating a `PropertyGroup`,
+  whose assigned property then gates a second group's `Condition`. Confirm the four methods work
+  identically whether reached through a `Condition` or an ordinary value expansion, since both
+  paths share `expand()`.
+
+  **Outcome:** `property_function(body, props, out) -> Option<String>` is tried inside `expand()`'s
+  existing "not a plain property name" branch, before the old unconditional
+  unsupported/left-verbatim fallback — no changes to `Condition`'s own tokenizer or `Parser` at
+  all, since every `$(...)` reference (a `Condition` operand, an ordinary property value, metadata)
+  already funnels through `expand()`. Method names are matched case-sensitively (real .NET
+  reflection binding, unlike `Exists`/`HasTrailingSlash`'s own case-insensitive keyword matching);
+  the argument is a single plain literal, never itself expanded, so `$(Foo.StartsWith($(Bar)))`
+  and any multi-argument call fall through to unsupported/verbatim exactly like an unrecognized
+  method name. An undefined receiver behaves as `""` and is recorded via the same
+  `Expansion::record_undefined` an ordinary undefined reference uses; a tainted receiver (MVP-36)
+  still evaluates best-effort but the reference is recorded unsupported, mirroring `expand()`'s
+  existing tainted-plain-reference behavior. See [ADR 38](adr/38-property-function-string-methods.md).
+
 - [x] **MVP-35 — Bound XML nesting depth before parsing**
   `fix/xml-depth-guard` · ~3h
 
