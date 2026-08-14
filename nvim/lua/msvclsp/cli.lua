@@ -23,7 +23,10 @@ M._system = vim.system
 --- @return table|nil result
 --- @return Msvclsp.CliError|nil error
 local function handle_exit(obj)
-  local decoded_ok, envelope = pcall(vim.json.decode, obj.stdout)
+  -- luanil converts JSON null to real Lua nil (absent key) rather than the vim.NIL sentinel,
+  -- so downstream callers can use plain `if not x then` on optional fields like `active`.
+  local decoded_ok, envelope =
+    pcall(vim.json.decode, obj.stdout, { luanil = { object = true, array = true } })
 
   if obj.code == 0 and decoded_ok and envelope.has_error == false then
     return envelope, nil

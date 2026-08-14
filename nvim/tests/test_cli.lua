@@ -265,6 +265,28 @@ describe("msvclsp.cli", function()
     end)
   end)
 
+  it("decodes a JSON null field to real Lua nil, not the vim.NIL sentinel", function()
+    -- vim.json.decode defaults to vim.NIL for null, since a Lua table can't hold a real nil
+    -- as a value. Every other module relies on cli.lua decoding with `luanil` enabled instead,
+    -- so optional fields like SolutionConfigs.active can be checked with plain `if not x then`
+    -- rather than every caller special-casing the sentinel.
+    local payload = { solution = "app.sln", available = {}, active = vim.NIL }
+    cli._system =
+      fake_system({ code = 0, stdout = vim.json.encode(envelope({ result = payload })), stderr = "" }, {})
+
+    local got_result, got_err
+    cli.run({ "list-configs", "app.sln" }, function(result, err)
+      got_result, got_err = result, err
+    end)
+    wait_for(function()
+      return got_result ~= nil or got_err ~= nil
+    end)
+
+    MiniTest.expect.equality(got_err, nil)
+    MiniTest.expect.equality(got_result.result.active, nil)
+    MiniTest.expect.equality(got_result.result.active ~= vim.NIL, true)
+  end)
+
   it("no longer exposes the dead discover stub", function()
     -- Predates ADR 03's decision that scanning is Lua's job (MVP-27); ADR 33 flagged it as
     -- dead code for this issue to remove.
