@@ -1702,6 +1702,110 @@ Goal: one solution, one manually selected configuration/platform, producing a
   **Tests:** Manual, following the checklist in `CLAUDE.md` section 8. Update the changelog
   and mark the MVP milestone complete once it passes.
 
+  **Progress:** The fixture pass is clean: generated `multi-project`'s `compile_commands.json`
+  with the real toolchain (not `FakeToolchain`), drove real `clangd` headlessly against it —
+  attach succeeds, zero diagnostics, completion round-trips. The real-solution pass surfaced two
+  separate bugs rather than clearing the checklist, both filed rather than fixed here per this
+  issue's own instruction to capture failures rather than patch them inline:
+
+  - **MVP-44** — some real solutions fail `generate` outright with a `missing-import` error;
+    no database is ever written.
+  - **MVP-45** — other real solutions "succeed" but silently write a `compile_commands.json`
+    with none of the project's own defines, include directories, or warning settings — the
+    worse failure mode, since nothing on stderr says anything is wrong.
+
+  MVP-34 stays open and the MVP milestone stays incomplete until both land and the real-solution
+  pass can actually run the rest of the checklist (completion/go-to-definition/diagnostics/
+  config-switch comparison) against output worth trusting.
+
+- [ ] **MVP-44 — Fix `ConfigurationType` resolving to the wrong branch across an `Import` boundary**
+  `fix/property-group-import-order` · ~6h
+
+  **Summary:** A `.vcxproj` that sets `ConfigurationType` in a per-configuration `PropertyGroup`
+  before importing `Microsoft.Cpp.props` — exactly what every real Visual Studio project
+  generates — has that value resolve wrong by the time the import's own `Condition`s run,
+  and `generate` fails outright instead of producing a database.
+
+  **Description:** Found running MVP-34's real-solution pass against a real external Contoso3
+  solution (not committed to this repo, so not reproducible from the fixture corpus) — fails on
+  every configuration/platform pair tried, standalone and as a dependency inside a five-project
+  composite solution. Neither fixture in this repo surfaces it because
+  [ADR 25](adr/25-fixture-simple-and-golden-harness.md) fixtures deliberately skip importing the
+  real `Microsoft.Cpp.*` files.
+
+  Document order in the failing project: `Import Microsoft.Cpp.Default.props` (self-defaults
+  `ConfigurationType` to `Application` via `Condition="'$(ConfigurationType)' == ''"`) → a
+  `PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"` unconditionally
+  setting `ConfigurationType` to `StaticLibrary` → `Import Microsoft.Cpp.props` (branches on
+  `'$(ConfigurationType)' == 'Makefile'`). Nothing in the toolchain or the project ever assigns
+  `Makefile` anywhere, yet `generate` takes the Makefile branch by the time `Microsoft.Cpp.props`'s
+  own imports run, eventually importing `Microsoft.MakeFile.Targets`, which references
+  `$(MSBuildToolsPath)\Microsoft.Common.targets` — a property msvclsp doesn't seed — producing the
+  literal path `C:\Microsoft.Common.Targets` and a hard `missing-import` error.
+
+  The point of failure looks like `PropertyGroup` evaluation across an `<Import>` boundary in
+  `project.rs`/`imports.rs`: the interleaving of a project's own document-ordered `PropertyGroup`s
+  with an `<Import>` positioned between them isn't carrying the local override forward the way
+  real MSBuild does. This description is a report, not a diagnosis — confirming the actual
+  mechanism and fixing it is this issue's own work.
+
+  This blocks MVP-34: the real-solution pass of the manual verification checklist cannot get past
+  `generate`, so the MVP milestone stays open until this lands.
+
+  **Tests:** A new fixture (or an extension of an existing one) reproducing the shape under
+  `FakeToolchain` — a self-defaulting property, a local unconditional override, then a second
+  import branching on the result — since the real VC toolchain files aren't needed to reproduce
+  it, only the *pattern* of self-default-then-override-then-import. Assert the override wins and
+  the second import's `Condition` sees it.
+
+- [ ] **MVP-45 — `ItemDefinitionGroup` metadata is dropped when it shares siblings with `Link`/`Lib`**
+  `fix/item-definition-group-siblings` · ~6h
+
+  **Summary:** A `ClCompile` `ItemDefinitionGroup` that shares its element with sibling
+  `<Link>`/`<Lib>` metadata blocks — normal Visual Studio project shape — settles into *no*
+  metadata at all: no `PreprocessorDefinitions`, no `AdditionalIncludeDirectories`, no
+  `WarningLevel`, nothing. `generate` reports success and writes a `compile_commands.json`, but
+  every entry carries only the toolchain's own system include paths.
+
+  **Description:** Found running MVP-34's real-solution pass against a real external Contoso3
+  solution (not committed to this repo) — reproduces for every source file and every
+  configuration/platform tried against `vendorlib_2022.sln`; confirmed on both `Debug|x64` and
+  `MT-Retail|x64`. Silent, unlike **MVP-44**: no warning, no error, exit code 0, a database gets
+  written, and it looks superficially plausible (right file list, right toolchain include paths)
+  right up until clangd reports every project-specific symbol undefined.
+
+  The project's `ItemDefinitionGroup` for each configuration looks like:
+
+  ```xml
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MT-Retail|x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DISABLE_STRING_ANNOTATION=1;...</PreprocessorDefinitions>
+      <!-- ...WarningLevel, Optimization, etc... -->
+    </ClCompile>
+    <Link> ... </Link>
+    <Lib> ... </Lib>
+  </ItemDefinitionGroup>
+  ```
+
+  Every fixture in this repo's corpus only ever has a lone `<ClCompile>` child per
+  `ItemDefinitionGroup` — never `Link`/`Lib` siblings — so nothing here caught the gap. The
+  `Condition` itself is not the problem: a config-gated `PropertySheets` `ImportGroup` in the
+  same project, using the identical `'$(Configuration)|$(Platform)'=='...'` shape, matched and
+  imported the right props file for the requested config. That narrows it to `ClCompile`
+  metadata settling specifically (`items.rs`) not surviving when its `ItemDefinitionGroup` has
+  `Link`/`Lib` siblings — not the general `Condition` evaluator, and not `ItemDefinitionGroup`
+  matching in general. This description is a report, not a diagnosis — confirming the actual
+  mechanism inside `items.rs` and fixing it is this issue's own work.
+
+  This blocks MVP-34 the same way MVP-44 does: the real-solution pass can produce a database, but
+  not one worth running the rest of the checklist against, so the MVP milestone stays open until
+  this lands too.
+
+  **Tests:** A new fixture with an `ItemDefinitionGroup` containing `ClCompile` alongside `Link`
+  and `Lib` children, asserting the `ClCompile` metadata (a `PreprocessorDefinitions` value in
+  particular) still reaches the generated `compile_commands.json` entry. Also a case with just
+  `ClCompile` and `Link` (no `Lib`), so the fix isn't narrowly keyed to exactly three siblings.
+
 ---
 
 # V1 — Multi-solution and workflow polish

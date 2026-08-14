@@ -21,10 +21,17 @@ projects without hand-converting them to CMake.
 
 MVP in progress: the CLI can parse a real solution and generate a working
 `compile_commands.json` (`generate`, `list-configs`), and the Neovim plugin drives it with
-real commands, config validation, and `:checkhealth`. What's left before the milestone
-closes is mainly MVP-34 — end-to-end verification against a live `clangd` on a real Visual
-Studio solution, not just the fixture corpus — plus a handful of smaller correctness gaps
-found along the way. See [docs/todos.md](docs/todos.md) for the exact list,
+real commands, config validation, and `:checkhealth`. MVP-34's end-to-end verification is
+underway: the fixture pass is clean (real `clangd` attaches, completes, and reports zero
+diagnostics against a fixture-generated database), but the real-solution pass surfaced two
+blockers the fixture corpus doesn't exercise. **MVP-44**: `generate` fails outright against a
+real project that sets `ConfigurationType` per configuration before importing
+`Microsoft.Cpp.props` — the normal shape every real VS project has. **MVP-45**: on projects that
+don't hit MVP-44, `generate` "succeeds" but silently drops every project-specific compiler flag
+(defines, include dirs, warning levels) when a project's `ItemDefinitionGroup` has `Link`/`Lib`
+siblings alongside `ClCompile` — also normal VS project shape. The milestone doesn't close until
+both are fixed and the real-solution pass can run the rest of the checklist against output worth
+trusting. See [docs/todos.md](docs/todos.md) for the exact list,
 [docs/milestones.md](docs/milestones.md) for the full MVP/V1/V2 breakdown, and
 [docs/engineering_spec.md](docs/engineering_spec.md) for how it's built.
 
