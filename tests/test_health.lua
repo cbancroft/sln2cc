@@ -221,6 +221,53 @@ describe("msvclsp.health", function()
     MiniTest.expect.equality(#list_configs_calls, 0)
   end)
 
+  it("binary present but --version fails: an error with a remedy, database check skipped", function()
+    local list_configs_calls
+    local cli
+    cli, list_configs_calls = fake_cli()
+    local health = load_health({
+      discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
+      cli = cli,
+    })
+    health._executable = fake_executable({ "msvclsp", "clangd" })
+    health._system = fake_system({ code = 1, stdout = "", stderr = "panic!" }, {})
+    vim.fs.root = function()
+      return "/root"
+    end
+
+    health.check()
+
+    MiniTest.expect.equality(count(health_calls, "error"), 1)
+    MiniTest.expect.equality(has_remedy(health_calls, "error", "--version"), true)
+    -- check_binary() returning false must gate the database check off, same as a missing binary.
+    MiniTest.expect.equality(#list_configs_calls, 0)
+  end)
+
+  it("list-configs itself fails: an error with a remedy naming the equivalent CLI invocation", function()
+    local health = load_health({
+      discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
+      cli = (fake_cli({
+        list_configs = { err = { message = "solution not found", kind = "solution-not-found", code = 3 } },
+      })),
+    })
+    health._executable = fake_executable({ "msvclsp", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    vim.fs.root = function()
+      return "/root"
+    end
+
+    health.check()
+
+    local message_found = false
+    for _, call in ipairs(health_calls) do
+      if call.level == "error" and call.msg:find("solution not found", 1, true) then
+        message_found = true
+      end
+    end
+    MiniTest.expect.equality(message_found, true)
+    MiniTest.expect.equality(has_remedy(health_calls, "error", "list-configs"), true)
+  end)
+
   it("missing clangd: an error naming clangd, every other check still runs", function()
     local health = load_health({
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
