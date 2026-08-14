@@ -5,32 +5,282 @@ CONTENTS                                                    *msvclsp-contents*
 
   1. Introduction ......................... |msvclsp-introduction|
   2. Setup ................................ |msvclsp-setup|
-  3. Commands ............................. |msvclsp-commands|
-  4. Configuration ........................ |msvclsp-configuration|
+  3. First use ............................ |msvclsp-first-use|
+  4. Commands ............................. |msvclsp-commands|
+  5. Keymaps ............................... |msvclsp-keymaps|
+  6. Configuration ........................ |msvclsp-configuration|
+  7. Troubleshooting ...................... |msvclsp-troubleshooting|
 
 ==============================================================================
 1. INTRODUCTION                                         *msvclsp-introduction*
 
-msvclsp.nvim parses a Visual Studio solution, generates a compile_commands.json
-compilation database from it, and starts clangd against that database — giving
-C/C++ language support in Neovim for projects built with MSBuild rather than
-CMake.
+`clangd` needs a `compile_commands.json` compilation database to know how each
+file in a project is compiled. CMake generates one automatically; Visual
+Studio solutions don't, so C/C++ codebases built with MSBuild get no real
+language support outside Visual Studio itself, short of hand-converting the
+project to CMake.
 
-TODO: expand.
+msvclsp closes that gap with two pieces working together:
+
+- A Rust CLI (installed separately, see |msvclsp-setup|) that parses a `.sln`
+  and its `.vcxproj`/`.props` files for one configuration/platform and writes
+  a `compile_commands.json`.
+- This plugin, which drives that CLI and points `clangd` at the database it
+  writes.
+
+There is no daemon and no LSP proxy: the CLI writes a file, the plugin starts
+`clangd` against it, and `clangd` does all the real language work from there.
+See |msvclsp-troubleshooting| if something in that chain isn't working.
 
 ==============================================================================
 2. SETUP                                                       *msvclsp-setup*
 
-TODO: installation and require("msvclsp").setup({}) example.
+Prerequisites ~
+                                                    *msvclsp-prerequisites*
+- Neovim 0.12+ (project root detection uses |vim.fs.root()|, and clangd
+  lifecycle management uses `vim.lsp.config`/`vim.lsp.enable`).
+- The `msvclsp` binary, built and put on your `PATH` (or pointed at
+  explicitly via the |msvclsp-config-bin| option). There is no published
+  release yet; from a checkout of the msvclsp repository: >sh
+    cd cli
+    cargo install --path .
+<
+  This installs to Cargo's own bin directory (`~/.cargo/bin` by default),
+  which most Rust installs already have on `PATH`. If you'd rather not
+  install it, `cargo build` and point |msvclsp-config-bin| at the resulting
+  `target/debug/msvclsp` (or `target/release/msvclsp`) instead.
+- `clangd`, on `PATH`.
+- Real use (actually generating a working database) needs Windows with
+  Visual Studio 2019 or 2022 installed, since toolchain discovery depends on
+  it. The plugin itself has no such requirement.
+
+Installation ~
+                                                     *msvclsp-installation*
+msvclsp isn't published to a plugin registry yet (see the "Release/
+distribution strategy" open question in the project's own engineering
+spec), so today's install is a local checkout added to your runtime path.
+With lazy.nvim: >lua
+    {
+      dir = "/path/to/msvclsp/nvim",
+      main = "msvclsp",
+      opts = {},
+    }
+<
+Or, without a plugin manager, prepend the `nvim/` subdirectory of a checkout
+to `runtimepath` yourself and call `setup()` from your config: >lua
+    vim.opt.runtimepath:prepend("/path/to/msvclsp/nvim")
+    require("msvclsp").setup({})
+<
+Either way, `setup()` is the only required call — see
+|msvclsp-configuration| for what it accepts. Calling it with no arguments
+(`{}`) is enough to get started; every option has a working default.
 
 ==============================================================================
-3. COMMANDS                                                 *msvclsp-commands*
+3. FIRST USE                                               *msvclsp-first-use*
 
-TODO: document :Msvclsp* commands.
+1. Open a source file that lives somewhere under a `.sln`. The plugin finds
+   your project root the same way Neovim's built-in LSP clients do —
+   walking up from the buffer for a `.git` directory by default
+   (configurable via |msvclsp-config-root_markers|) — and then scans down
+   from there for `.sln` files (configurable via
+   |msvclsp-config-scan_ignore_dirs| and |msvclsp-config-scan_max_depth|).
+   Both are cached; nothing here requires a command.
+2. Run |:MsvclspSelectConfig|. This lists the configuration/platform pairs
+   your solution declares (e.g. `Debug` + `x64`, `Release` + `x64`, ...) via
+   |vim.ui.select()|. Picking one generates `compile_commands.json` for it.
+3. `clangd` attaches automatically once generation finishes — this is
+   |msvclsp-config-auto_restart_clangd|'s default (`true`). No further
+   command is needed.
+4. Confirm it worked: `:checkhealth msvclsp` should report every check `OK`,
+   and `:LspInfo` should show `clangd` attached to the buffer with your
+   `compile_commands.json`'s directory as its root. Completion,
+   go-to-definition, and diagnostics should all work, with no "missing
+   include" errors from files your project actually builds.
+
+To pick a different configuration/platform later (Debug vs. Release, x64
+vs. Win32), run |:MsvclspSelectConfig| again — it always shows the full
+list, not just the ones you haven't picked. |:MsvclspGenerate| re-runs
+generation for whichever pair is already active, useful after the
+`.sln`/`.vcxproj` files
+themselves change.
 
 ==============================================================================
-4. CONFIGURATION                                       *msvclsp-configuration*
+4. COMMANDS                                                 *msvclsp-commands*
 
-TODO: document options from lua/msvclsp/config.lua.
+None of these exist as bindable functions outside a `:` command — call them
+by name, or bind your own keymap to the command (see |msvclsp-keymaps|).
+Every command notifies a clear error rather than doing nothing if
+`require("msvclsp").setup()` hasn't been called yet, or hasn't succeeded (an
+invalid `opts` table notifies and leaves nothing registered as ready — see
+|msvclsp-configuration|).
+
+                                                          *:MsvclspGenerate*
+:MsvclspGenerate
+    Regenerate `compile_commands.json` for the solution's currently active
+    configuration/platform (whatever |:MsvclspSelectConfig| last picked).
+    Nothing picked yet → notifies you to run |:MsvclspSelectConfig| instead
+    of guessing one. Restarts `clangd` afterward if
+    |msvclsp-config-auto_restart_clangd| is on. A no-op regenerate (nothing
+    on disk actually changed) still restarts `clangd` if it isn't already
+    attached — e.g. right after a fresh Neovim start.
+
+                                                     *:MsvclspSelectConfig*
+:MsvclspSelectConfig
+    Prompt (via |vim.ui.select()|) for one of the solution's declared
+    configuration/platform pairs, marking whichever is currently active, and
+    generate `compile_commands.json` for whatever you pick. Cancelling the
+    prompt (`<Esc>`) does nothing. Restarts `clangd` afterward under the same
+    rule as |:MsvclspGenerate|.
+
+                                                            *:MsvclspRescan*
+:MsvclspRescan
+    Re-scan the project tree for `.sln` files and report how many were
+    found. Needed after adding, moving, or removing a solution file — the
+    scan result is otherwise cached for the life of the session. Does not
+    touch clangd or the compilation database.
+
+                                                           *:MsvclspRestart*
+:MsvclspRestart
+    Restart `clangd` against whatever `compile_commands.json` was last
+    generated this session (by |:MsvclspGenerate| or |:MsvclspSelectConfig|).
+    With nothing generated yet, this is a no-op with a warning rather than
+    starting `clangd` with no database. Useful if `clangd` has wedged itself
+    without the database actually changing.
+
+Not yet available: a command to switch between multiple solutions found
+under one project root (`:MsvclspSelectSolution`) — the plugin currently
+picks the first one found, alphabetically. See the project's own `docs/
+todos.md` (V1-03) if you're reading this from a checkout and want to track
+that.
+
+==============================================================================
+5. KEYMAPS                                                   *msvclsp-keymaps*
+
+msvclsp does not bind any keymaps itself — see |msvclsp-commands| for why.
+Something like this in your own config covers all four: >lua
+    vim.keymap.set("n", "<leader>mg", "<cmd>MsvclspGenerate<cr>",
+      { desc = "msvclsp: Generate compile_commands.json" })
+    vim.keymap.set("n", "<leader>mc", "<cmd>MsvclspSelectConfig<cr>",
+      { desc = "msvclsp: Select configuration/platform" })
+    vim.keymap.set("n", "<leader>ms", "<cmd>MsvclspRescan<cr>",
+      { desc = "msvclsp: Rescan for solutions" })
+    vim.keymap.set("n", "<leader>mr", "<cmd>MsvclspRestart<cr>",
+      { desc = "msvclsp: Restart clangd" })
+<
+Adjust the `<leader>m*` prefix to whatever doesn't collide with your own
+config; nothing about these bindings is load-bearing.
+
+==============================================================================
+6. CONFIGURATION                                       *msvclsp-configuration*
+
+Everything below is a key in the table passed to `require("msvclsp").setup()`
+(`nvim/lua/msvclsp/config.lua`'s `M.defaults`, if you're reading this from a
+checkout). An unknown key, or a value of the wrong type, rejects the whole
+call with a `vim.notify` error naming every problem found and leaves nothing
+configured — `setup()` never partially applies a bad table. Calling
+`setup()` more than once always resolves fresh against the defaults below,
+not against whatever an earlier call left in place. >lua
+    require("msvclsp").setup({
+      -- any subset of the keys below
+    })
+<
+                                                          *msvclsp-config-bin*
+bin ~
+    Type: `string`  Default: `"msvclsp"`
+    Path to the `msvclsp` binary. `"msvclsp"` resolves via `PATH`; point
+    this at an absolute path (e.g. a `cargo build` output under
+    `target/debug/msvclsp`) if you haven't installed it. See
+    |msvclsp-prerequisites|.
+
+                                                 *msvclsp-config-root_markers*
+root_markers ~
+    Type: `string[]`  Default: `{ ".git" }`
+    Files/directories `vim.fs.root()` looks for while walking up from a
+    buffer to find the project root — the same mechanism Neovim's built-in
+    LSP clients use. `.msvclsp/` (generated artifacts) is created here.
+
+                                                     *msvclsp-config-data_dir*
+data_dir ~
+    Type: `string`  Default: `".msvclsp"`
+    Directory name for generated artifacts, intended to be relative to the
+    project root. Currently has no effect: nothing in the plugin or the CLI
+    reads this option yet, and the CLI always writes to `.msvclsp/`
+    regardless of what this is set to. Documented for completeness since
+    `setup()` accepts and validates it; don't rely on changing it doing
+    anything.
+
+                                          *msvclsp-config-auto_restart_clangd*
+auto_restart_clangd ~
+    Type: `boolean`  Default: `true`
+    Restart `clangd` automatically after |:MsvclspGenerate| or
+    |:MsvclspSelectConfig| regenerates the database. Turn off if you'd
+    rather restart it yourself (|:MsvclspRestart|) — e.g. to batch several
+    configuration switches before reattaching.
+
+                                          *msvclsp-config-scan_ignore_dirs*
+scan_ignore_dirs ~
+    Type: `string[]`
+    Default: `{ ".git", ".msvclsp", "node_modules", "bin", "obj",
+    "packages", "Debug", "Release", "x64", "x86", "Win32" }`
+    Directory names skipped while scanning for `.sln` files below the
+    project root. Matched by name anywhere in the tree, not by path — a
+    directory named `bin` is skipped everywhere, not just at the root.
+
+                                            *msvclsp-config-scan_max_depth*
+scan_max_depth ~
+    Type: `number`  Default: `6`
+    Maximum directory levels descended below the project root while
+    scanning for `.sln` files. Bounds worst-case scan cost on a deep or
+    unexpectedly large tree.
+
+                                              *msvclsp-config-clangd_cmd*
+clangd_cmd ~
+    Type: `string[]`  Default: `{ "clangd" }`
+    Command used to launch `clangd`. Add your own arguments after the
+    first element to customize the invocation (e.g. `{ "clangd",
+    "--header-insertion=never" }`); `--compile-commands-dir=<dir>` is
+    always appended automatically and should not be added here.
+
+                                                *msvclsp-config-filetypes*
+filetypes ~
+    Type: `string[]`  Default: `{ "c", "cpp" }`
+    Filetypes `clangd` is started for.
+
+==============================================================================
+7. TROUBLESHOOTING                                   *msvclsp-troubleshooting*
+
+Run `:checkhealth msvclsp` first. It checks the five things most likely to
+be wrong, in this order, and each failure names what to run or check next:
+
+1. The `msvclsp` binary is present and runnable (its version is reported).
+   Not executable → install it or set |msvclsp-config-bin|
+   (|msvclsp-prerequisites|). Executable but doesn't respond to `--version`
+   → run `msvclsp --version` by hand to see the underlying failure.
+2. `clangd` is on `PATH`. Not executable → install it and put it on `PATH`.
+3. The project root was found via a configured root marker, not a silent
+   fallback to the current directory. Fell back → open a file inside your
+   solution's tree, or add a marker via |msvclsp-config-root_markers|.
+4. A `.sln` was found under the project root. None found → run
+   |:MsvclspRescan| after adding or moving a solution into the tree, or
+   check |msvclsp-config-scan_ignore_dirs|/|msvclsp-config-scan_max_depth|
+   aren't excluding it.
+5. A configuration/platform is selected, and its `compile_commands.json`
+   actually exists on disk. Nothing selected → run |:MsvclspSelectConfig|.
+   Selected but nothing generated → run |:MsvclspGenerate|. The `list-
+   configs` call itself failed → the error names the underlying CLI
+   failure; running the same `msvclsp list-configs <solution> --root <root>`
+   invocation by hand shows the full output.
+
+If `:checkhealth` is all green and `clangd` still isn't giving you
+completions or diagnostics:
+
+- Check `:LspInfo` — is a `clangd` client attached to the buffer, and does
+  its root match your project root?
+- Check the generated `compile_commands.json` under `.msvclsp/` actually
+  contains an entry for the file you have open. A file the solution doesn't
+  build (excluded from every configuration) won't have one — msvclsp can
+  only cover what MSBuild would actually compile.
+- `clangd`'s own logs (`:LspLog`) often explain a flag it rejected or a
+  header it couldn't find, faster than guessing from symptoms.
 
 vim:tw=78:ts=8:ft=help:norl:
