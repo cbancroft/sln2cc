@@ -1657,7 +1657,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   [ADR 39](adr/39-nvim-checkhealth.md). `nvim/doc/msvclsp.txt`'s troubleshooting section
   (MVP-33) can now point at real `:checkhealth` behavior instead of a stub.
 
-- [ ] **MVP-33 — User documentation**
+- [x] **MVP-33 — User documentation**
   `docs/nvim-user-docs` · ~5h
 
   **Summary:** Fill in `nvim/doc/msvclsp.txt` and expand the README's installation and usage
@@ -1671,6 +1671,21 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Tests:** Manual — follow the written installation steps in a clean Neovim configuration
   and confirm they work end to end.
+
+  **Outcome:** Pure documentation — no `cli/src/**` or `nvim/lua/**` change, so unlike every
+  prior MVP issue there was no reference-sketch-then-implement cycle; the seven sections of
+  `nvim/doc/msvclsp.txt` and the README's new "Using the Neovim plugin" section were written
+  directly. Two things surfaced along the way. First, `config.lua`'s `data_dir` option is
+  declared and validated but read by nothing — the CLI always writes to a hardcoded
+  `.msvclsp/` under `--root` regardless of it — documented with an explicit "has no effect
+  yet" caveat rather than silently implied to work; wiring it up (or removing it) is
+  implementation work outside this issue's scope. Second, installation can't point at a real
+  plugin-manager spec or a released binary — both are still the "Release/distribution
+  strategy" open question in `engineering_spec.md` — so `:help msvclsp` documents today's only
+  real path (a local checkout on the runtime path, `cargo install --path cli` for the
+  binary) rather than a hypothetical one; whichever issue eventually settles distribution
+  should update this section rather than leave it stale. MVP-34 can now follow this issue's
+  first-use walkthrough instead of writing its own.
 
 - [ ] **MVP-34 — End-to-end verification against real clangd**
   `docs/mvp-e2e-verification` · ~5h

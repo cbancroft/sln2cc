@@ -19,9 +19,14 @@ projects without hand-converting them to CMake.
 
 ## Status
 
-Early scaffolding — nothing is implemented yet. See [docs/milestones.md](docs/milestones.md)
-for what's planned, and [docs/engineering_spec.md](docs/engineering_spec.md) for how it's
-being built.
+MVP in progress: the CLI can parse a real solution and generate a working
+`compile_commands.json` (`generate`, `list-configs`), and the Neovim plugin drives it with
+real commands, config validation, and `:checkhealth`. What's left before the milestone
+closes is mainly MVP-34 — end-to-end verification against a live `clangd` on a real Visual
+Studio solution, not just the fixture corpus — plus a handful of smaller correctness gaps
+found along the way. See [docs/todos.md](docs/todos.md) for the exact list,
+[docs/milestones.md](docs/milestones.md) for the full MVP/V1/V2 breakdown, and
+[docs/engineering_spec.md](docs/engineering_spec.md) for how it's built.
 
 If MSBuild's vocabulary is unfamiliar — items, property sheets, item definition groups, the
 difference between a solution configuration and a project configuration — start with
@@ -30,6 +35,30 @@ the tricky part of working with MSVC project files.
 
 The binary builds on any platform, but real use requires Windows with Visual Studio
 installed, since toolchain and Windows SDK discovery depend on it.
+
+## Using the Neovim plugin
+
+There's no published release yet, so installation today is a local checkout added to your
+runtime path. With `lazy.nvim`:
+
+```lua
+{
+  dir = "/path/to/msvclsp/nvim",
+  main = "msvclsp",
+  opts = {},
+}
+```
+
+You'll also need the `msvclsp` binary itself on `PATH` (`cargo install --path cli` from a
+checkout, or point the plugin's `bin` option at a `cargo build` output) and `clangd` on
+`PATH`. Once both are in place and `setup()` has run, open a file inside a solution's tree,
+run `:MsvclspSelectConfig` to pick a configuration/platform, and `clangd` attaches
+automatically.
+
+Everything else — every command, every configuration option, suggested keymaps, and a
+troubleshooting section built around `:checkhealth msvclsp` — is in `:help msvclsp`
+(`nvim/doc/msvclsp.txt`), which is the source of truth for using the plugin; this README
+only covers building and testing the repository itself.
 
 ## Building and testing
 

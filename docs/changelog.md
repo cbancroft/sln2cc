@@ -151,6 +151,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   really exists on disk. Each failure names what to run next (`:MsvclspSelectConfig`,
   `:MsvclspRescan`, and so on) instead of leaving you to guess.
 
+- The Neovim plugin now has real user documentation: `:help msvclsp` covers installation, a
+  minimal `setup()` example, a first-use walkthrough, every command and configuration option,
+  suggested (not bound) keymaps, and a troubleshooting section built around `:checkhealth`. The
+  README's "Using the Neovim plugin" section covers the same install steps for anyone not yet
+  inside Neovim, pointing at `:help msvclsp` for everything past getting started.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
