@@ -56,7 +56,10 @@ function M.pick_config(solution, root, on_choice)
       end
 
       vim.notify("msvclsp: generating compile_commands.json...", vim.log.levels.INFO)
-      cli.generate(solution, chosen, root, false, function(gen_result, gen_err)
+      -- Forced: the CLI's mtime-based staleness check knows nothing about which
+      -- configuration/platform was requested, so switching to a different one with no file
+      -- changes would otherwise silently reuse the old database.
+      cli.generate(solution, chosen, root, true, function(gen_result, gen_err)
         if gen_err then
           vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
           on_choice(nil, nil)
