@@ -1945,10 +1945,16 @@ Goal: one solution, one manually selected configuration/platform, producing a
 Detail here is deliberately lighter; flesh these out when the MVP is done and the assumptions
 behind them have been tested.
 
-- [ ] **V1-01 — `discover` subcommand** · `feat/cmd-discover` · ~5h
-  Move solution discovery behind the CLI so scanning rules live in one place rather than being
+- [ ] ~~**V1-01 — `discover` subcommand**~~ · `feat/cmd-discover` · ~5h
+  ~~Move solution discovery behind the CLI so scanning rules live in one place rather than being
   duplicated in Lua. Emit JSON with each solution's path and display name. Tests: fixture-tree
-  integration tests covering nested solutions and ignored directories.
+  integration tests covering nested solutions and ignored directories.~~
+
+  **Rejected:** discovery stays entirely the Neovim plugin's responsibility. The CLI's job is
+  compiling a `compile_commands.json` for a solution it's handed, not locating solutions on
+  disk — a `discover` subcommand would have made the CLI reach into a concern that belongs to
+  its caller. `nvim/lua/msvclsp/discovery.lua`'s existing scan (MVP-27) is the permanent design,
+  not an MVP stopgap. See [ADR 44](adr/44-drop-cli-side-discovery.md).
 
 - [ ] **V1-02 — Namespace output per solution** · `feat/output-namespacing` · ~4h
   Write to `.msvclsp/<solution-name>/` so a previously-used solution's artifacts survive

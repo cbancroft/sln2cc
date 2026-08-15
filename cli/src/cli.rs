@@ -25,14 +25,6 @@ use crate::{
 /// that decoded the previous version. No change needed if we are just adding a field.
 const SCHEMA_VERSION: u32 = 1;
 
-/// Result of the `discover` subcommand.
-#[derive(Debug, Clone)]
-pub struct DiscoveredSolution {
-    pub path: PathBuf,
-    /// Name used to namespace artifacts under `.msvclsp/<name>/`.
-    pub name: String,
-}
-
 /// Result of the `list-configs` subcommand.
 #[derive(Debug, Clone, Serialize)]
 pub struct SolutionConfigs {
@@ -263,8 +255,9 @@ pub struct Cli {
 
 /// The subcommands for the plugin.
 ///
-/// `discover` is absent for now. Solution scanning will be implemented here
-/// in V1-01. For now, scanning is done in the Neovim plugin.
+/// There is no `discover`. Locating a solution is the Neovim plugin's job
+/// (`nvim/lua/msvclsp/discovery.lua`) — see [ADR 44](../../docs/adr/44-drop-cli-side-discovery.md).
+/// The CLI is always handed a solution path, never asked to find one.
 #[derive(Debug, PartialEq, Subcommand)]
 pub enum Command {
     /// List the configuration/platform pairs a solution declares.
