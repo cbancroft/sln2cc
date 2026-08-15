@@ -44,6 +44,17 @@ fn simple_solution_matches_golden() {
 }
 
 #[test]
+fn item_definition_order_matches_golden() {
+    // MVP-45: a source `ItemGroup` declared before the `ItemDefinitionGroup`s that apply to it —
+    // the real external project's shape, and the reverse of what every other fixture does. See
+    // ADR 40.
+    support::assert_matches_golden(
+        &fixture("item-definition-order").join("item-definition-order.sln"),
+        &golden("item-definition-order.json"),
+    );
+}
+
+#[test]
 fn props_inheritance_matches_golden() {
     support::assert_matches_golden(
         &fixture("props-inheritance").join("props-inheritance.sln"),

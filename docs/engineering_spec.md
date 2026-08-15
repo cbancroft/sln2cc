@@ -358,11 +358,17 @@ Rough module breakdown implied by the parsing pipeline:
   warning on it would devalue the whole channel — ADR 08's `Some("")`-versus-`None` argument applied to
   the other sigil; genuinely unsupported forms (`%(ClCompile.Identity)`, `@(...)`, an unterminated
   `%(`) are still recorded and copied through verbatim. `$` expands before `%`, since a property's
-  value cannot contain `%(` but a property reference can expand into one. An `ItemDefinitionGroup`
-  applies only to items declared **after** it, so defaults are snapshotted into each item as it is
-  declared rather than gathered up front — which is what ADR 10's ordered splice exists to make
-  possible, and per-file metadata assigned on top is what lets an override *extend* a project default
-  rather than only replace it. And relative item paths resolve against the **`.vcxproj`'s** directory
+  value cannot contain `%(` but a property reference can expand into one. `items.rs` settles
+  `ItemDefinitionGroup`s in a pass of their own, fully resolving them into their final `ClCompile`
+  defaults, before evaluating any item against those defaults — matching MSBuild's own evaluation
+  phases (item definitions, then items) rather than snapshotting a running accumulator into each
+  item as it is declared. Order **among** `ItemDefinitionGroup`s still matters — a later group's
+  `%(Inherited)` self-reference still resolves against an earlier group's value, which is what ADR
+  10's ordered splice exists to make possible — but an item's position relative to the group no
+  longer does; per-file metadata assigned on top is what lets an override *extend* a project default
+  rather than only replace it. See [ADR 40](adr/40-item-definitions-apply-regardless-of-item-order.md),
+  which supersedes ADR 12's decision #1 on this point. And relative item paths resolve against the
+  **`.vcxproj`'s** directory
   rather than the declaring file's, which is why a shared sheet meaning its own directory has to spell
   `$(MSBuildThisFileDirectory)`; because pass 1 restores that family on the way out of each import,
   pass 2 re-enters each deferred element's file against a clone of the bag, or a sheet's own include

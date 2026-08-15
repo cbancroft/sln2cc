@@ -17,6 +17,7 @@ has something to index.
 | `multi-project/`     | Several projects in one solution, with differing settings.    |
 | `props-inheritance/` | Shared `.props` sheets and property override precedence.      |
 | `multi-config/`      | Multiple configuration/platform pairs, including custom names.|
+| `item-definition-order/` | A source `ItemGroup` declared before the `ItemDefinitionGroup`s that apply to it. |
 
 Running the tool against these will create `.msvclsp/` directories inside them; those are
 gitignored.

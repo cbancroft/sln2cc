@@ -64,6 +64,12 @@ The four answers:
 
 1. **An `ItemDefinitionGroup` applies only to items declared after it.** Defaults accumulate during
    the walk and each item takes a *clone* of them as they stand when it is declared.
+   **Superseded by [ADR 40](40-item-definitions-apply-regardless-of-item-order.md).** MVP-45 found
+   a real project whose source `ItemGroup` precedes every `ItemDefinitionGroup`, confirmed against
+   a real Visual Studio build that the group still applies, and split `settle()` into two passes —
+   definitions fully resolved, then items evaluated against them — so an item's position relative
+   to the group no longer matters. Order *among* `ItemDefinitionGroup`s is unaffected and still
+   governs `%(Inherited)` composition exactly as decided here.
 2. **`%(Name)` is expanded eagerly, and an unset name expands to nothing without being recorded.**
    `$()` runs before `%()`.
 3. **Relative item paths resolve against the `.vcxproj`'s directory**, not the declaring file's.
@@ -104,6 +110,13 @@ anyway rather than gathering all defaults up front, for the reason the whole pro
 first is *invisibly* different, applying settings to files MSBuild itself compiles without them, and
 producing a database that is subtly wrong rather than loudly broken. It also cost nothing — ADR 10
 had already spliced the stream in order precisely so that order would be recoverable here.
+
+**Superseded by [ADR 40](40-item-definitions-apply-regardless-of-item-order.md).** This paragraph's
+premise was wrong: MSBuild does not gate an item definition's applicability on the item's position
+relative to it, only on order *among* item-definition groups (which this paragraph's "gathering
+first" concern was actually about, and which ADR 40 keeps). MVP-45 found a real project whose
+source `ItemGroup` precedes its `ItemDefinitionGroup`s and confirmed against a real Visual Studio
+build that the defaults still apply.
 
 **Relative item paths resolve against the project directory.** This is not what the code said:
 `Deferred::file`'s doc comment claimed relative item paths resolve against the declaring file's

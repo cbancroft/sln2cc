@@ -1,0 +1,30 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/main.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/App/include",
+      "/DAPP_LINKED",
+      "/DAPP_BASE",
+      "/std:c++20",
+      "/W4",
+      "<FIXTURE>/App/src/main.cpp"
+    ]
+  },
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/greet.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/App/include",
+      "/DAPP_LINKED",
+      "/DAPP_BASE",
+      "/std:c++20",
+      "/W4",
+      "<FIXTURE>/App/src/greet.cpp"
+    ]
+  }
+]

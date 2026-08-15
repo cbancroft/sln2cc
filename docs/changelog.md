@@ -187,6 +187,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   skipped with a warning instead of stopping generation, while the same construct in your own
   project files is still reported as a hard failure.
 
+- A project whose source-file list is declared before the `ItemDefinitionGroup`s that configure it
+  — a real-world project shape, not an edge case — no longer generates a `compile_commands.json`
+  with every entry silently missing its defines, include directories, and warning settings. The
+  affected files used to compile cleanly according to msvclsp and then have clangd flag every
+  project-specific symbol as undefined, with nothing on stderr to explain why.
+
 ### Security
 
 - A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB

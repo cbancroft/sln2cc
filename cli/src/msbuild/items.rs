@@ -5,12 +5,6 @@
 //! property values the whole graph *ended* with rather than the ones in scope where each element was
 //! written. This is where those conditions are finally evaluated, and where the `ClCompile` items
 //! that become compilation database entries are collected.
-//!
-//! Order is load-bearing twice over. An `ItemDefinitionGroup` applies only to items declared
-//! **after** it, so the defaults are accumulated during the walk and snapshotted into each item as
-//! it is declared rather than gathered up front — which is what ADR 10's spliced-in-order stream
-//! exists to make possible. See [ADR 12](../../../docs/adr/12-clcompile-flag-extraction.md).
-
 use std::path::{Path, PathBuf};
 
 use crate::msbuild::eval::{self, Metadata, Properties};
@@ -59,17 +53,25 @@ struct Scope<'a> {
 /// nothing created. Each element is therefore evaluated with that family pointed back at the file
 /// that wrote it, using the same two calls `imports::Walk::enter` brackets a file with. Everything
 /// else in the bag stays as evaluation left it, which is what MSBuild specifies.
+///
+/// Two passes over the same spliced stream, matching how MSBuild evaluates project files. Item
+/// definitions are fully resolved first, across the whole file. Then items are evaluated against
+/// the finished defaults. See ADR 40 for more details.
 pub fn settle(
     tree: &ProjectTree,
     project: &Path,
     reporter: &mut Reporter,
 ) -> Result<Vec<SourceItem>> {
     let dir = project.parent().unwrap_or(Path::new(""));
+    let defaults = definitions(tree, project, reporter)?;
+
     let mut properties = tree.properties.clone();
-    let mut defaults = Metadata::new();
     let mut sources: Vec<SourceItem> = Vec::new();
 
     for deferred in &tree.deferred {
+        let Element::Items(group) = &deferred.element else {
+            continue;
+        };
         let file = deferred.file.as_path();
         let outer = reserved::enter_file(&mut properties, file);
         let scope = Scope {
@@ -78,59 +80,71 @@ pub fn settle(
             file,
         };
 
-        match &deferred.element {
-            Element::ItemDefinitions(group) => {
-                if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
-                    for definition in &group.definitions {
-                        if !definition.item_type.eq_ignore_ascii_case("ClCompile") {
-                            continue;
-                        }
-                        if !holds(
-                            definition.condition.as_deref(),
-                            &scope,
-                            definition.line,
-                            reporter,
-                        )? {
-                            continue;
-                        }
-
-                        apply(&mut defaults, &definition.metadata, &scope, reporter)?;
-                    }
+        if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
+            for item in &group.items {
+                if !item.item_type.eq_ignore_ascii_case("ClCompile") {
+                    continue;
+                }
+                if !holds(item.condition.as_deref(), &scope, item.line, reporter)? {
+                    continue;
+                }
+                // Include, Update and Remove are mutually exclusive
+                if let Some(include) = &item.include {
+                    include_item(&mut sources, item, include, &defaults, &scope, reporter)?;
+                } else if let Some(update) = &item.update {
+                    update_item(&mut sources, item, update, &scope, reporter)?;
+                } else if let Some(remove) = &item.remove {
+                    let dropped = specs(remove, &scope, item.line, reporter)?;
+                    sources.retain(|source| !dropped.contains(&source.path));
                 }
             }
-
-            Element::Items(group)
-                if holds(group.condition.as_deref(), &scope, group.line, reporter)? =>
-            {
-                for item in &group.items {
-                    if !item.item_type.eq_ignore_ascii_case("ClCompile") {
-                        continue;
-                    }
-
-                    if !holds(item.condition.as_deref(), &scope, item.line, reporter)? {
-                        continue;
-                    }
-
-                    // Include, Update, and Remove are mutually exclusive in practice, and taken
-                    // in that order so an item spelling two only has the first acted on
-                    if let Some(include) = &item.include {
-                        include_item(&mut sources, item, include, &defaults, &scope, reporter)?;
-                    } else if let Some(update) = &item.update {
-                        update_item(&mut sources, item, update, &scope, reporter)?;
-                    } else if let Some(remove) = &item.remove {
-                        let dropped = specs(remove, &scope, item.line, reporter)?;
-                        sources.retain(|source| !dropped.contains(&source.path));
-                    }
-                }
-            }
-
-            // Pass 1 defers nothing else
-            _ => {}
         }
 
         reserved::restore(&mut properties, outer);
     }
     Ok(sources)
+}
+
+/// Fully resolve every `ClCompile` `ItemDefinitionGroup` in tree.deferred into one `Metadata` in
+/// document order.
+fn definitions(tree: &ProjectTree, project: &Path, reporter: &mut Reporter) -> Result<Metadata> {
+    let dir = project.parent().unwrap_or(Path::new(""));
+    let mut properties = tree.properties.clone();
+    let mut defaults = Metadata::new();
+
+    for deferred in &tree.deferred {
+        let Element::ItemDefinitions(group) = &deferred.element else {
+            continue;
+        };
+
+        let file = deferred.file.as_path();
+        let outer = reserved::enter_file(&mut properties, file);
+        let scope = Scope {
+            dir,
+            props: &properties,
+            file,
+        };
+
+        if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
+            for definition in &group.definitions {
+                if !definition.item_type.eq_ignore_ascii_case("ClCompile") {
+                    continue;
+                }
+                if !holds(
+                    definition.condition.as_deref(),
+                    &scope,
+                    definition.line,
+                    reporter,
+                )? {
+                    continue;
+                }
+                apply(&mut defaults, &definition.metadata, &scope, reporter)?;
+            }
+        }
+
+        reserved::restore(&mut properties, outer);
+    }
+    Ok(defaults)
 }
 
 /// Add every file an `Include` names, then subtract what its `Exclude` names.
@@ -599,23 +613,51 @@ mod tests {
     }
 
     #[test]
-    fn an_item_definition_group_after_an_item_does_not_affect_it() {
-        // MSBuild's rule, and the reason the defaults are snapshotted per item rather than gathered
-        // first. Visual Studio always writes the definitions above the items, so a project relying
-        // on this is unusual — but gathering up front would silently apply settings to files that
-        // MSBuild itself compiles without them.
+    fn an_item_definition_group_after_an_item_still_affects_it() {
+        // MSBuild's real rule (see ADR 40, which supersedes ADR 12's decision #1 on this point):
+        // item definitions are a complete pass, finished before items are evaluated at all, so an
+        // item's position relative to the `ItemDefinitionGroup`s that apply to it does not matter.
+        // A real external project (the one that surfaced MVP-45) declares its `ClCompile` source
+        // list before any `ItemDefinitionGroup` in the file, and Visual Studio still applies every
+        // default to it — confirmed against a real VS build, not just the docs.
         let tree = from_project(vec![
-            defaults(&[("PreprocessorDefinitions", "EARLY")]),
             group(vec![include("early.cpp")]),
-            defaults(&[("PreprocessorDefinitions", "LATE")]),
+            defaults(&[("PreprocessorDefinitions", "EARLY")]),
             group(vec![include("late.cpp")]),
+            defaults(&[("PreprocessorDefinitions", "LATE")]),
         ]);
 
         let sources = settled(&tree);
 
+        // Both files see the fully-composed defaults, not just whatever preceded them: order among
+        // `ItemDefinitionGroup`s still governs composition (the last assignment wins), but order
+        // relative to the items themselves no longer gates whether an item receives it at all.
         assert_eq!(names(&sources), ["early.cpp", "late.cpp"]);
-        assert_eq!(value(&sources[0], "PreprocessorDefinitions"), "EARLY");
+        assert_eq!(value(&sources[0], "PreprocessorDefinitions"), "LATE");
         assert_eq!(value(&sources[1], "PreprocessorDefinitions"), "LATE");
+    }
+
+    #[test]
+    fn group_order_still_governs_composition_when_an_item_sits_between_them() {
+        // The part of ADR 12's model that stays true after ADR 40: order among
+        // `ItemDefinitionGroup`s is still document order, so a later group's `%(Inherited)`
+        // self-reference still sees an earlier group's value — an item declared between the two
+        // must not change that composition.
+        let tree = from_project(vec![
+            defaults(&[("AdditionalIncludeDirectories", "shared")]),
+            group(vec![include("main.cpp")]),
+            defaults(&[(
+                "AdditionalIncludeDirectories",
+                "%(AdditionalIncludeDirectories);local",
+            )]),
+        ]);
+
+        let sources = settled(&tree);
+
+        assert_eq!(
+            value(only(&sources), "AdditionalIncludeDirectories"),
+            "shared;local"
+        );
     }
 
     #[test]
@@ -926,12 +968,17 @@ mod tests {
         // MSBuild would compile the file twice. A compilation database cannot say that — clangd
         // reads the first entry it finds — so the second is dropped rather than left to shadow the
         // settings of the first depending on which entry a consumer happens to read.
-        let tree = from_project(vec![
-            defaults(&[("PreprocessorDefinitions", "FIRST")]),
-            group(vec![include("main.cpp")]),
-            defaults(&[("PreprocessorDefinitions", "SECOND")]),
-            group(vec![include("main.cpp")]),
-        ]);
+        //
+        // Per-file metadata rather than a shared `ItemDefinitionGroup`, deliberately: since ADR 40,
+        // item definitions are a complete pass finished before any item is evaluated, so two
+        // `ItemDefinitionGroup`s bracketing these declarations would compose into one shared default
+        // for *both* — telling nothing apart about which declaration survives. A per-item override is
+        // the part of `main.cpp`'s settled metadata that is actually unique to which `<ClCompile>` it
+        // came from.
+        let tree = from_project(vec![group(vec![
+            include_with("main.cpp", &[("PreprocessorDefinitions", "FIRST")]),
+            include_with("main.cpp", &[("PreprocessorDefinitions", "SECOND")]),
+        ])]);
 
         let (sources, reporter) = settled_reporting(&tree);
 

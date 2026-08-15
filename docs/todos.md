@@ -1711,8 +1711,9 @@ Goal: one solution, one manually selected configuration/platform, producing a
   - **MVP-44** — some real solutions fail `generate` outright with a `missing-import` error;
     no database is ever written.
   - **MVP-45** — other real solutions "succeed" but silently write a `compile_commands.json`
-    with none of the project's own defines, include directories, or warning settings — the
-    worse failure mode, since nothing on stderr says anything is wrong.
+    with none of the project's own defines, include directories, or warning settings for any
+    source file declared before its `ItemDefinitionGroup` — the worse failure mode, since
+    nothing on stderr says anything is wrong.
 
   MVP-34 stays open and the MVP milestone stays incomplete until both land and the real-solution
   pass can actually run the rest of the checklist (completion/go-to-definition/diagnostics/
@@ -1758,14 +1759,15 @@ Goal: one solution, one manually selected configuration/platform, producing a
   it, only the *pattern* of self-default-then-override-then-import. Assert the override wins and
   the second import's `Condition` sees it.
 
-- [ ] **MVP-45 — `ItemDefinitionGroup` metadata is dropped when it shares siblings with `Link`/`Lib`**
+- [x] **MVP-45 — `ClCompile` items declared before their `ItemDefinitionGroup` settle with no metadata**
   `fix/item-definition-group-siblings` · ~6h
 
-  **Summary:** A `ClCompile` `ItemDefinitionGroup` that shares its element with sibling
-  `<Link>`/`<Lib>` metadata blocks — normal Visual Studio project shape — settles into *no*
-  metadata at all: no `PreprocessorDefinitions`, no `AdditionalIncludeDirectories`, no
-  `WarningLevel`, nothing. `generate` reports success and writes a `compile_commands.json`, but
-  every entry carries only the toolchain's own system include paths.
+  **Summary:** A `ClCompile` `ItemDefinitionGroup` settles fine on its own, but any source file
+  whose `<ClCompile Include="...">` is declared *before* the `ItemDefinitionGroup`(s) that apply
+  to it settles with *no* metadata at all: no `PreprocessorDefinitions`, no
+  `AdditionalIncludeDirectories`, no `WarningLevel`, nothing. `generate` reports success and
+  writes a `compile_commands.json`, but every affected entry carries only the toolchain's own
+  system include paths.
 
   **Description:** Found running MVP-34's real-solution pass against a real external Contoso3
   solution (not committed to this repo) — reproduces for every source file and every
@@ -1774,37 +1776,53 @@ Goal: one solution, one manually selected configuration/platform, producing a
   written, and it looks superficially plausible (right file list, right toolchain include paths)
   right up until clangd reports every project-specific symbol undefined.
 
-  The project's `ItemDefinitionGroup` for each configuration looks like:
-
-  ```xml
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MT-Retail|x64'">
-    <ClCompile>
-      <PreprocessorDefinitions>_DISABLE_STRING_ANNOTATION=1;...</PreprocessorDefinitions>
-      <!-- ...WarningLevel, Optimization, etc... -->
-    </ClCompile>
-    <Link> ... </Link>
-    <Lib> ... </Lib>
-  </ItemDefinitionGroup>
-  ```
-
-  Every fixture in this repo's corpus only ever has a lone `<ClCompile>` child per
-  `ItemDefinitionGroup` — never `Link`/`Lib` siblings — so nothing here caught the gap. The
-  `Condition` itself is not the problem: a config-gated `PropertySheets` `ImportGroup` in the
-  same project, using the identical `'$(Configuration)|$(Platform)'=='...'` shape, matched and
-  imported the right props file for the requested config. That narrows it to `ClCompile`
-  metadata settling specifically (`items.rs`) not surviving when its `ItemDefinitionGroup` has
-  `Link`/`Lib` siblings — not the general `Condition` evaluator, and not `ItemDefinitionGroup`
-  matching in general. This description is a report, not a diagnosis — confirming the actual
-  mechanism inside `items.rs` and fixing it is this issue's own work.
+  Originally filed against the wrong mechanism — the project's `ItemDefinitionGroup` for each
+  configuration shares its element with `<Link>`/`<Lib>` siblings, and that was assumed to be the
+  cause. It isn't: removing the siblings changed nothing, and neither did removing the group's
+  `Condition`. Binary search against the real project isolated the actual shape — its `ClCompile`
+  source-file `<ItemGroup>` sits at the very top of the file, **before** every
+  `ItemDefinitionGroup`, the reverse of where Visual Studio conventionally places them and of
+  every fixture in this repo's corpus. Moving that one `ItemGroup` to after the
+  `ItemDefinitionGroup`s fixed the output completely, with or without the `Link`/`Lib` siblings.
+  Confirmed against a real Visual Studio build (not just reasoning about the spec): the affected
+  file's effective `Preprocessor Definitions` property in Visual Studio's own project properties
+  UI includes the `ItemDefinitionGroup`'s values despite the reversed order, meaning
+  `items.rs::settle()`'s documented rule — "an `ItemDefinitionGroup` applies only to items
+  declared after it," from
+  [ADR 12](adr/12-clcompile-flag-extraction.md) — does not match real MSBuild. See
+  [ADR 40](adr/40-item-definitions-apply-regardless-of-item-order.md) for the full diagnosis and
+  the two-pass fix it settles on.
 
   This blocks MVP-34 the same way MVP-44 does: the real-solution pass can produce a database, but
   not one worth running the rest of the checklist against, so the MVP milestone stays open until
   this lands too.
 
-  **Tests:** A new fixture with an `ItemDefinitionGroup` containing `ClCompile` alongside `Link`
-  and `Lib` children, asserting the `ClCompile` metadata (a `PreprocessorDefinitions` value in
-  particular) still reaches the generated `compile_commands.json` entry. Also a case with just
-  `ClCompile` and `Link` (no `Lib`), so the fix isn't narrowly keyed to exactly three siblings.
+  **Tests:** `cli/src/msbuild/items.rs` unit tests: an item declared before its
+  `ItemDefinitionGroup` still receives its metadata (inverts the now-wrong
+  `an_item_definition_group_after_an_item_does_not_affect_it`), and a companion test proving
+  `%(Inherited)`-style composition between two conflicting `ItemDefinitionGroup`s still depends on
+  *their* relative order even with an item declared between them. Plus a new fixture,
+  `fixtures/item-definition-order/`, golden-compared end to end through the CLI pipeline,
+  reproducing the real project's shape — source `ItemGroup` before two `ItemDefinitionGroup`s, the
+  second carrying `ClCompile` alongside `Link`/`Lib` siblings — since the unit tests alone don't
+  exercise `imports.rs`'s splice or `flags.rs`'s translation.
+
+  **Outcome:** `items.rs::settle()` split into two passes: a new `definitions()` walks
+  `tree.deferred` once, resolving every `ClCompile` `ItemDefinitionGroup` into one final `Metadata`
+  in document order, before `settle()`'s own loop evaluates any `ItemGroup` against it — matching
+  the shape [ADR 40](adr/40-item-definitions-apply-regardless-of-item-order.md) settled on, and
+  reusing every existing per-element helper (`holds`, `apply`, `specs`, `include_item`,
+  `update_item`) unchanged. Implementing it surfaced a third test relying on the disproved
+  single-pass premise beyond the two the plan anticipated —
+  `a_duplicate_declaration_warns_and_keeps_the_first`, which used two `ItemDefinitionGroup`s to
+  tell "first" and "second" declarations apart, a distinction the two-pass model erases since both
+  groups compose into one shared default before either declaration is evaluated. Rewritten to use
+  per-file metadata overrides instead, which stay unique to each `<ClCompile>` regardless of this
+  fix. Also surfaced, and recorded as an accepted trade-off in ADR 40 rather than fixed: `Reporter`
+  findings no longer accumulate in strict document order across `ItemDefinitionGroup` and
+  `ItemGroup` elements — order is preserved within each kind, but a definitions-pass finding now
+  always precedes an items-pass finding regardless of which came first in the file. MVP-45 is
+  closed; MVP-34's real-solution pass still has MVP-44 as its remaining blocker.
 
 ---
 
