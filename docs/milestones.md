@@ -6,10 +6,15 @@ described in [project_spec.md](project_spec.md) and [engineering_spec.md](engine
 supersedes the original milestone/MVP/v1 lists in [brainstorm.md](brainstorm.md), which predate the
 decision to drop the LSP-proxy approach in favor of generating `compile_commands.json` directly.
 
-# MVP — Single Solution, Manual Workflow
+# MVP — Single Solution, Manual Workflow (complete)
 
 Prove the core value proposition end-to-end for the simplest case: one solution, one
 configuration/platform, no multi-solution complexity yet.
+
+Complete as of MVP-34: end-to-end verification passed against both a fixture and a real external
+solution — real `clangd` attaches, completes, resolves definitions, and reports no missing-include
+diagnostics, and switching configuration/platform visibly changes the emitted flags. See
+`docs/todos.md`'s MVP-34 entry for the full results.
 
 ## Rust CLI Binary
 

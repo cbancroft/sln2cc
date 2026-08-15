@@ -161,6 +161,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   reaching the `--force` flag `generate` has always accepted from the command line. Plain
   `:MsvclspGenerate` is unchanged.
 
+- The MVP is now verified working end-to-end, not just implemented: a real `clangd` attaches,
+  completes, resolves go-to-definition across translation units, and reports no missing-include
+  diagnostics against a generated database, both for a fixture and for a real, multi-project
+  Visual Studio solution with cross-directory project references — and switching
+  configuration/platform and regenerating visibly changes the flags clangd receives.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection

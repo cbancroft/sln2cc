@@ -1687,7 +1687,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   should update this section rather than leave it stale. MVP-34 can now follow this issue's
   first-use walkthrough instead of writing its own.
 
-- [ ] **MVP-34 — End-to-end verification against real clangd**
+- [x] **MVP-34 — End-to-end verification against real clangd**
   `docs/mvp-e2e-verification` · ~5h
 
   **Summary:** Run the manual verification checklist against both a fixture and a real
@@ -1719,6 +1719,45 @@ Goal: one solution, one manually selected configuration/platform, producing a
   pass can actually run the rest of the checklist (completion/go-to-definition/diagnostics/
   config-switch comparison) against output worth trusting. MVP-45 has since landed; MVP-44 is the
   one remaining blocker.
+
+  **Outcome:** Both blockers landed (MVP-44, MVP-45), and the full checklist ran clean against
+  both solutions once `docs/mvp-e2e-verification` was fast-forwarded onto `main` to pick them up
+  — the branch had been cut before either fix merged, so the first re-run of the real-solution
+  pass reproduced MVP-44's exact `missing-import` failure verbatim against a stale binary before
+  that was noticed and corrected.
+
+  **Fixture pass** (`fixtures/simple`, chosen over `fixtures/multi-project` because it has actual
+  cross-TU content — a `greeting()` call into a second translation unit — where `multi-project`'s
+  two files don't call into each other): generated with the real toolchain (not `FakeToolchain`),
+  drove real `clangd` headlessly via a throwaway script using the exact `cmd`/`root_dir`/
+  `filetypes` shape `lsp.lua`'s `activate()` builds. Attach succeeded, zero diagnostics, 100
+  completion items at a plausible position, and `textDocument/definition` on the cross-TU call
+  resolved to `greet.cpp` correctly.
+
+  **Real-solution pass**: a real `ContosoClient_2022.sln` (5 projects, 18
+  configuration/platform pairs, cross-directory project references, one genuine
+  `ConfigurationType=Makefile` member project) — outside this repo, so nothing about its content
+  is committed, only these results. `generate` succeeded for `Debug|x64` (179 `ClCompile`
+  entries, every one carrying real `/D`/`/I` flags — confirms MVP-45 stays fixed at real-project
+  scale) and for `MT-Retail|x64` (also 179 entries). Diffing the same file's command line between
+  the two confirmed flags visibly change on a plain regenerate: `/MTd` → `/MT`, `/DNDEBUG`
+  appearing only in the non-debug configuration. The headless `clangd` script attached cleanly
+  against a real cross-project source file (`ContosoClient.cpp`, which pulls in
+  `Contoso3` headers) under both configurations, with completion working and zero missing-include
+  diagnostics. Two non-blocking diagnostics did appear, identically under both configurations: an
+  `ToolsArgParser.h`-not-used-directly hint and a `constexpr function never produces a constant
+  expression` note in an included header. Neither is a missing-include or a msvclsp flag-
+  generation defect — the second reproduced identically regardless of `/MTd`/`/MT` or the define
+  set, and the project sets no `LanguageStandard` property anywhere in its own tree for msvclsp
+  to mistranslate, so this is upstream code the real MSVC compiler diagnoses differently (or not
+  at all) from clang-cl's frontend — an inherent, out-of-scope consequence of
+  [ADR 18](adr/18-compdb-entry-assembly.md)'s decision to keep flags in MSVC form and let
+  clang-cl interpret them, not a bug in this repo. Not filed as a new issue.
+
+  The full CLI (`cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`: 419 unit + 18
+  CLI-surface + 12 golden, all green) and plugin (76 mini.test cases, all green) suites stayed
+  clean throughout — no source changes were needed for this issue. The MVP milestone is complete;
+  see `docs/milestones.md`.
 
 - [x] **MVP-44 — Don't hard-fail `generate` on Makefile-configuration-type projects**
   `fix/makefile-configuration-type` · ~6h
