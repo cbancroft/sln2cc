@@ -31,7 +31,7 @@ end
 --- @param opts { list_configs: table|nil, generate: table|nil }
 --- @return table fake_cli
 --- @return table[] list_configs_calls
---- @return table[] generate_calls
+--- @return table[] generate_calls each also records `force`, for MVP-46
 local function fake_cli(opts)
   opts = opts or {}
   local list_configs_calls, generate_calls = {}, {}
@@ -41,8 +41,8 @@ local function fake_cli(opts)
       local lc = opts.list_configs or { result = { active = nil } }
       on_done(lc.result, lc.err)
     end,
-    generate = function(solution, cfg, root, on_done)
-      table.insert(generate_calls, { solution = solution, cfg = cfg, root = root })
+    generate = function(solution, cfg, root, force, on_done)
+      table.insert(generate_calls, { solution = solution, cfg = cfg, root = root, force = force })
       local gen = opts.generate or { result = { database = "compile_commands.json" } }
       on_done(gen.result, gen.err)
     end,
@@ -148,6 +148,24 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(vim.fn.exists(":MsvclspRestart"), 2)
       MiniTest.expect.equality(vim.fn.exists(":MsvclspSelectSolution"), 0)
       MiniTest.expect.equality(commands.commands.MsvclspSelectSolution, nil)
+    end)
+
+    it("accepts a bang only on MsvclspGenerate", function()
+      -- MVP-46: :MsvclspGenerate! forces regeneration. The other three commands have no meaning
+      -- for a bang, and Neovim itself refuses `!` on a command that didn't declare it -- that
+      -- refusal is the right behavior for them, not something to route around.
+      load_commands({
+        discovery = fake_discovery(),
+        cli = (fake_cli()),
+        picker = (fake_picker()),
+        lsp = (fake_lsp()),
+      }).register()
+
+      local registered = vim.api.nvim_get_commands({})
+      MiniTest.expect.equality(registered.MsvclspGenerate.bang, true)
+      MiniTest.expect.equality(registered.MsvclspSelectConfig.bang, false)
+      MiniTest.expect.equality(registered.MsvclspRescan.bang, false)
+      MiniTest.expect.equality(registered.MsvclspRestart.bang, false)
     end)
   end)
 
@@ -270,6 +288,22 @@ describe("msvclsp.commands", function()
       vim.cmd("MsvclspGenerate")
 
       MiniTest.expect.equality(#restart_calls, 0)
+    end)
+
+    it("a bang forces regeneration; no bang does not", function()
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local cli, _, generate_calls = fake_cli({
+        list_configs = { result = { active = { configuration = "Debug", platform = "x64" } } },
+      })
+      local picker, lsp = fake_picker(), fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+      vim.cmd("MsvclspGenerate!")
+
+      MiniTest.expect.equality(#generate_calls, 2)
+      MiniTest.expect.equality(generate_calls[1].force, false)
+      MiniTest.expect.equality(generate_calls[2].force, true)
     end)
 
     it("a failed generate notifies and never restarts clangd", function()

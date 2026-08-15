@@ -124,6 +124,13 @@ invalid `opts` table notifies and leaves nothing registered as ready — see
     on disk actually changed) still restarts `clangd` if it isn't already
     attached — e.g. right after a fresh Neovim start.
 
+:MsvclspGenerate!
+    Same as |:MsvclspGenerate|, but forces regeneration even if the CLI's
+    own staleness check would otherwise call the database up to date. Reach
+    for this after a change the check can't see coming (e.g. an imported
+    `.props` file outside the project tree), or if you simply don't trust
+    the cache right now. No other command accepts a bang.
+
                                                      *:MsvclspSelectConfig*
 :MsvclspSelectConfig
     Prompt (via |vim.ui.select()|) for one of the solution's declared

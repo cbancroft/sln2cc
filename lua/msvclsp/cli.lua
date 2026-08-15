@@ -84,9 +84,10 @@ end
 --- @param solution string absolute path to the .sln
 --- @param cfg { configuration: string, platform: string }
 --- @param root string project root to create/read `.msvclsp` under
+--- @param force boolean regenerate unconditionally
 --- @param on_done fun(result: table|nil, err: Msvclsp.CliError|nil)
-function M.generate(solution, cfg, root, on_done)
-  M.run({
+function M.generate(solution, cfg, root, force, on_done)
+  local args = {
     "generate",
     solution,
     "--configuration",
@@ -95,7 +96,11 @@ function M.generate(solution, cfg, root, on_done)
     cfg.platform,
     "--root",
     root,
-  }, function(envelope, err)
+  }
+  if force then
+    table.insert(args, "--force")
+  end
+  M.run(args, function(envelope, err)
     if err then
       on_done(nil, err)
     else

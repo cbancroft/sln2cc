@@ -63,7 +63,7 @@ local function maybe_restart(database, root)
   end
 end
 
-function M._generate()
+function M._generate(opts)
   if not ensure_ready() then
     return
   end
@@ -71,6 +71,7 @@ function M._generate()
   if not solution then
     return
   end
+  local force = opts and opts.bang or false
 
   cli.list_configs(solution, root, function(result, err)
     if err then
@@ -85,7 +86,7 @@ function M._generate()
       return
     end
 
-    cli.generate(solution, result.active, root, function(gen_result, gen_err)
+    cli.generate(solution, result.active, root, force, function(gen_result, gen_err)
       if gen_err then
         vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
         return
@@ -144,7 +145,11 @@ local handlers = {
 --- Registers every command in M.commands
 function M.register()
   for name, desc in pairs(M.commands) do
-    vim.api.nvim_create_user_command(name, handlers[name], { desc = desc })
+    local attrs = { desc = desc }
+    if name == "MsvclspGenerate" then
+      attrs.bang = true
+    end
+    vim.api.nvim_create_user_command(name, handlers[name], attrs)
   end
 end
 
