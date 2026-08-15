@@ -665,6 +665,41 @@ mod tests {
     }
 
     #[test]
+    fn a_local_override_between_two_imports_is_visible_to_the_second_imports_condition() {
+        // MVP-44's own reported shape, reduced to the pattern its Tests: paragraph names: a
+        // self-defaulting property from one import, a local unconditional override written
+        // between the two imports, and a second import's own `PropertyGroup` `Condition` gated
+        // on the result. This already resolves correctly under the document-order walk above —
+        // kept as a regression guard for the mechanism MVP-44's title blamed.
+        let dir = TempTree::new("override-between-imports");
+        let root = dir.project(
+            "root.vcxproj",
+            r#"  <Import Project="defaults.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Flavor>Extended</Flavor>
+  </PropertyGroup>
+  <Import Project="branch.props" />"#,
+        );
+        dir.project(
+            "defaults.props",
+            r#"  <PropertyGroup>
+    <Flavor Condition="'$(Flavor)' == ''">Basic</Flavor>
+  </PropertyGroup>"#,
+        );
+        dir.project(
+            "branch.props",
+            r#"  <PropertyGroup Condition="'$(Flavor)' == 'Extended'">
+    <TookExtendedBranch>yes</TookExtendedBranch>
+  </PropertyGroup>"#,
+        );
+
+        let resolved = tree_seeded(&dir, &root);
+
+        assert_eq!(resolved.properties.get("Flavor"), Some("Extended"));
+        assert_eq!(resolved.properties.get("TookExtendedBranch"), Some("yes"));
+    }
+
+    #[test]
     fn deferred_elements_keep_true_evaluation_order() {
         // The reason this pass returns a spliced stream rather than a list of files. A `.vcxproj`
         // writes its `ItemDefinitionGroup`s between `Microsoft.Cpp.props` and

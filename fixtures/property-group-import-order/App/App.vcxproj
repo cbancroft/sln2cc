@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{9A2C6E1F-4D8B-4A3C-9E7F-2B5D8A1C6F3E}</ProjectGuid>
+    <RootNamespace>App</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <!--
+    MVP-44's reported shape, reduced to a synthetic pair of property sheets (per ADR 25, no real
+    Microsoft.Cpp.* import): defaults.props self-defaults Flavor, this PropertyGroup overrides it
+    unconditionally between the two imports, and branch.props' own Condition depends on which
+    value won. See MVP-44 in docs/todos.md.
+  -->
+  <Import Project="defaults.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <Flavor>Extended</Flavor>
+  </PropertyGroup>
+  <Import Project="branch.props" />
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+  </ItemGroup>
+</Project>

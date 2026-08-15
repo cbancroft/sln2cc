@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/main.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/DFLAVOR_EXTENDED",
+      "<FIXTURE>/App/src/main.cpp"
+    ]
+  }
+]

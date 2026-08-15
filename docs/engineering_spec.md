@@ -902,3 +902,11 @@ MSBuild-evaluation surface area bounded.
   source by the plugin, prebuilt GitHub release binaries, `cargo install`) and how the plugin itself
   is distributed/versioned for plugin managers (e.g. `lazy.nvim` spec).
 - CI provider and concrete workflow definitions.
+- Whether `<Choose>`/`<When>`/`<Otherwise>` needs modeling. Every VS-generated `.vcxproj` in this
+  repo's fixture corpus is conventional enough to avoid it, but Microsoft's own `Microsoft.Cpp.*`
+  toolchain files use it for real branching logic (e.g. `ConfigurationType`-driven imports).
+  `project.rs` currently treats it as wholly `Unsupported` — recorded and warned about, never
+  evaluated — which is safe (never silently wrong) but means any toolchain-file logic gated behind
+  it is simply inert. Surfaced investigating MVP-44; ruled out as that issue's own cause (an inert
+  construct can't be why a branch is wrongly taken), but a related gap worth tracking if more
+  real-solution failures trace back to it. See MVP-44 in `docs/todos.md`.

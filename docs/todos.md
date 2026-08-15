@@ -1759,6 +1759,29 @@ Goal: one solution, one manually selected configuration/platform, producing a
   it, only the *pattern* of self-default-then-override-then-import. Assert the override wins and
   the second import's `Condition` sees it.
 
+  **Progress:** Branch `fix/property-group-import-order` created. Reproduced the pattern this
+  issue's own Tests: paragraph names as a synthetic `FakeToolchain` fixture (`fixtures/property-
+  group-import-order/`, per [ADR 25](adr/25-fixture-simple-and-golden-harness.md)) — a
+  self-defaulting property, a local unconditional override between two imports, and a second
+  import's `Condition` reading the result — and it resolves *correctly* under current
+  `imports.rs`: the override wins and the second import's `Condition` sees it (see
+  `imports.rs::Walk::evaluate()`, which already processes `PropertyGroup` and `Import` strictly in
+  document order, recursing into an import synchronously before continuing past it in the same
+  file). `<Choose>`/`<When>`/`<Otherwise>` was checked too, and ruled out as the direct mechanism —
+  `project.rs` records the whole element as `Element::Unsupported` and never evaluates its content
+  ([ADR 07](adr/07-vcxproj-reader-ir.md)), so it can only ever be inert, never wrongly take a
+  branch. That's a real, separate gap if real `Microsoft.Cpp.props` actually relies on `Choose` for
+  its `ConfigurationType` routing — tracked as a new Open Question in `docs/engineering_spec.md`
+  rather than folded into this fix. The real trigger inside the actual Contoso3
+  `Microsoft.Cpp.Default.props`/`Microsoft.Cpp.props` content is still unconfirmed — diagnosing it
+  is this issue's remaining work; next step is `generate -v` against the real solution to see
+  exactly which file/line sets `ConfigurationType` last before the `Makefile` branch is taken. No
+  ADR: this investigation settles no design decision, per CLAUDE.md §9. The regression test and
+  fixture landed anyway (`imports.rs`'s
+  `a_local_override_between_two_imports_is_visible_to_the_second_imports_condition` and
+  `generate.rs`'s `property_group_import_order_matches_golden`), as a guard for the
+  (already-correct) order-preservation mechanism this issue's title blamed.
+
 - [x] **MVP-45 — `ClCompile` items declared before their `ItemDefinitionGroup` settle with no metadata**
   `fix/item-definition-group-siblings` · ~6h
 

@@ -44,6 +44,18 @@ fn simple_solution_matches_golden() {
 }
 
 #[test]
+fn property_group_import_order_matches_golden() {
+    // MVP-44: a self-defaulting property from one import, a local unconditional override
+    // sandwiched between it and a second import, and that second import's own Condition gated on
+    // the result — end to end through items.rs's settling and flags.rs's translation, which the
+    // imports.rs unit test alone doesn't exercise.
+    support::assert_matches_golden(
+        &fixture("property-group-import-order").join("property-group-import-order.sln"),
+        &golden("property-group-import-order.json"),
+    );
+}
+
+#[test]
 fn item_definition_order_matches_golden() {
     // MVP-45: a source `ItemGroup` declared before the `ItemDefinitionGroup`s that apply to it —
     // the real external project's shape, and the reverse of what every other fixture does. See
