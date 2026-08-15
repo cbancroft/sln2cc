@@ -166,6 +166,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
   uses `vim.fs.root()`.
 
+- `:MsvclspSelectConfig` now always regenerates `compile_commands.json` for the configuration/
+  platform you pick, even if no project file changed since the last run. The CLI's staleness
+  cache only tracks file modification times, not which configuration/platform it was last
+  built for, so picking a different one without touching any files used to silently keep
+  serving the old database.
+
 ### Fixed
 
 - A wildcarded `<Import Project="...">`, such as `$(VCTargetsPath)\ImportBefore\Default\*.props` —

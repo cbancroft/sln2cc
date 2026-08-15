@@ -104,7 +104,10 @@ describe("msvclsp.picker.pick_config", function()
     MiniTest.expect.equality(generate_calls[1].solution, "app.sln")
     MiniTest.expect.equality(generate_calls[1].cfg, chosen)
     MiniTest.expect.equality(generate_calls[1].root, "/root")
-    MiniTest.expect.equality(generate_calls[1].force, false)
+    -- Forced: the CLI's staleness check is file-mtime-only and knows nothing about which
+    -- configuration/platform was requested, so an unforced generate could silently reuse the
+    -- previous configuration's database when switching to a new one touches no files.
+    MiniTest.expect.equality(generate_calls[1].force, true)
   end)
 
   it("a successful generate calls on_choice with the picked config and the database", function()
