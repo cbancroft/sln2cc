@@ -1824,6 +1824,34 @@ Goal: one solution, one manually selected configuration/platform, producing a
   always precedes an items-pass finding regardless of which came first in the file. MVP-45 is
   closed; MVP-34's real-solution pass still has MVP-44 as its remaining blocker.
 
+- [x] **MVP-46 — Force regeneration from Neovim**
+  `feat/nvim-force-regenerate` · ~2h
+
+  **Summary:** `generate` already accepts `--force` (MVP-21/22), but nothing in the plugin can
+  reach it — `cli.lua`'s `M.generate` doesn't accept the flag, and `:MsvclspGenerate` always lets
+  the CLI's own staleness cache decide whether to regenerate. A user who edits a `.vcxproj` and
+  wants a database rebuilt regardless of the cache — or suspects the cache is wrong — has no way
+  to ask for that from the editor; they have to shell out to the CLI directly.
+
+  **Description:** Thread `force` through `cli.lua`'s `M.generate` as an argument that appends
+  `--force` to the invocation, then expose it from `commands.lua`. Open question for the plan:
+  whether that's a `!` bang on the existing `:MsvclspGenerate` (idiomatic Neovim for "force this
+  action," and keeps `M.commands` from growing a near-duplicate entry) or a separate
+  `:MsvclspRegenerate` command — resolve with the user during planning rather than picking
+  silently, since it changes `M.commands`' surface and `nvim/doc/msvclsp.txt`'s command table
+  either way.
+
+  **Tests:** mini.test specs asserting `cli.lua`'s `M.generate` appends `--force` only when asked,
+  and that the plugin-facing command reaches it (stub the CLI at the `cli.lua` boundary, per
+  CLAUDE.md §4 — no real binary invocation).
+
+  **Outcome:** Resolved as a `!` bang on the existing `:MsvclspGenerate`, not a new command — see
+  [ADR 41](adr/41-nvim-force-regenerate.md). `cli.lua`'s `M.generate` gained a positional `force`
+  parameter before `on_done`; `commands.lua`'s `M._generate(opts)` reads `opts.bang`, and only
+  `MsvclspGenerate`'s `nvim_create_user_command` call declares `bang = true`, so Neovim itself
+  rejects a bang on the other three. `picker.lua`'s internal `cli.generate` call passes `force =
+  false` explicitly. No `cli/src/**` change — `--force` already existed there.
+
 ---
 
 # V1 — Multi-solution and workflow polish

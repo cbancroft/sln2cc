@@ -56,7 +56,7 @@ function M.pick_config(solution, root, on_choice)
       end
 
       vim.notify("msvclsp: generating compile_commands.json...", vim.log.levels.INFO)
-      cli.generate(solution, chosen, root, function(gen_result, gen_err)
+      cli.generate(solution, chosen, root, false, function(gen_result, gen_err)
         if gen_err then
           vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
           on_choice(nil, nil)

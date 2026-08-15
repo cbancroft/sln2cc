@@ -157,6 +157,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   README's "Using the Neovim plugin" section covers the same install steps for anyone not yet
   inside Neovim, pointing at `:help msvclsp` for everything past getting started.
 
+- `:MsvclspGenerate!` (the bang form) forces regeneration past the CLI's own staleness cache,
+  reaching the `--force` flag `generate` has always accepted from the command line. Plain
+  `:MsvclspGenerate` is unchanged.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection

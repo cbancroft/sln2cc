@@ -7,15 +7,15 @@
 --- that's test_cli.lua's job.
 --- @param opts { list_configs: table, generate: table|nil }
 --- @return table fake_cli
---- @return table[] generate_calls each { solution, cfg, root }
+--- @return table[] generate_calls each { solution, cfg, root, force }
 local function fake_cli(opts)
   local generate_calls = {}
   local fake = {
     list_configs = function(solution, root, on_done)
       on_done(opts.list_configs.result, opts.list_configs.err)
     end,
-    generate = function(solution, cfg, root, on_done)
-      table.insert(generate_calls, { solution = solution, cfg = cfg, root = root })
+    generate = function(solution, cfg, root, force, on_done)
+      table.insert(generate_calls, { solution = solution, cfg = cfg, root = root, force = force })
       local gen = opts.generate or { result = { database = "compile_commands.json" } }
       on_done(gen.result, gen.err)
     end,
@@ -104,6 +104,7 @@ describe("msvclsp.picker.pick_config", function()
     MiniTest.expect.equality(generate_calls[1].solution, "app.sln")
     MiniTest.expect.equality(generate_calls[1].cfg, chosen)
     MiniTest.expect.equality(generate_calls[1].root, "/root")
+    MiniTest.expect.equality(generate_calls[1].force, false)
   end)
 
   it("a successful generate calls on_choice with the picked config and the database", function()

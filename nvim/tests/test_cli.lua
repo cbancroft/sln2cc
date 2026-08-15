@@ -241,9 +241,15 @@ describe("msvclsp.cli", function()
         fake_system({ code = 0, stdout = vim.json.encode(envelope({ result = payload })), stderr = "" }, calls)
 
       local got_result, got_err
-      cli.generate("C:/proj/app.sln", { configuration = "Debug", platform = "x64" }, "C:/proj", function(result, err)
-        got_result, got_err = result, err
-      end)
+      cli.generate(
+        "C:/proj/app.sln",
+        { configuration = "Debug", platform = "x64" },
+        "C:/proj",
+        false,
+        function(result, err)
+          got_result, got_err = result, err
+        end
+      )
       wait_for(function()
         return got_result ~= nil or got_err ~= nil
       end)
@@ -262,6 +268,24 @@ describe("msvclsp.cli", function()
       })
       MiniTest.expect.equality(got_err, nil)
       MiniTest.expect.equality(got_result, payload)
+    end)
+
+    it("appends --force when asked, and nothing when not", function()
+      -- MVP-46: `:MsvclspGenerate!` reaches this. `--force` bypasses the CLI's own staleness
+      -- cache (MVP-21/22); the default argv above must stay exactly what it is today, which is
+      -- what the sibling test pins.
+      local calls = {}
+      cli._system =
+        fake_system({ code = 0, stdout = vim.json.encode(envelope()), stderr = "" }, calls)
+
+      cli.generate("C:/proj/app.sln", { configuration = "Debug", platform = "x64" }, "C:/proj", true, function() end)
+      wait_for(function()
+        return #calls > 0
+      end)
+
+      MiniTest.expect.equality(vim.tbl_contains(calls[1].cmd, "--force"), true)
+      -- Comes before --json, which M.run always appends last.
+      MiniTest.expect.equality(calls[1].cmd[#calls[1].cmd - 1], "--force")
     end)
   end)
 

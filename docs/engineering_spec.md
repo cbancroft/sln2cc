@@ -749,6 +749,9 @@ belongs to `main.rs`.
   error rather than either failing silently or being absent from command completion.
   `MsvclspGenerate` regenerates using `list-configs`' `.active` pair rather than prompting — no
   active configuration yet notifies the user to run `:MsvclspSelectConfig` instead of guessing one.
+  `MsvclspGenerate!` (the bang form) passes `--force` through to bypass the CLI's own staleness
+  cache; the other three commands don't accept a bang. See
+  [ADR 41](adr/41-nvim-force-regenerate.md).
   `MsvclspGenerate`/`MsvclspSelectConfig` both call `lsp.restart` when
   `config.options.auto_restart_clangd` is set, gated on the option alone rather than
   `GenerateResult.regenerated` — a no-op generate still means clangd should end up attached, e.g. a
