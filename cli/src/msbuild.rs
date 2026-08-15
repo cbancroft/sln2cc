@@ -531,4 +531,58 @@ mod tests {
             reporter.warnings()
         );
     }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-44 — a Makefile-configuration project's own missing toolchain import
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_makefile_configuration_project_evaluates_to_zero_files_instead_of_failing() {
+        // The real shape found running MVP-34's real-solution pass: a genuine NMake dependency
+        // project (`ConfigurationType=Makefile`) routes through a stub of
+        // `Microsoft.Cpp.props` -> `Microsoft.MakeFile.Targets` -> a missing
+        // `Microsoft.Common.targets`, and `evaluate()` must not fail the whole solution over a
+        // project that was never going to contribute `ClCompile` items anyway. See ADR 42.
+        let dir = TempTree::new("makefile-configuration-evaluate");
+        let toolchain = stub_toolchain(&dir);
+
+        let project_path = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>Makefile</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />"#,
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.Cpp.props",
+            "<Project>\n  <Import Project=\"Microsoft.MakeFile.Targets\" />\n</Project>\n",
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.MakeFile.Targets",
+            "<Project>\n  <Import Project=\"$(MSBuildToolsPath)\\Microsoft.Common.targets\" />\n</Project>\n",
+        );
+
+        let scope = ProjectScope {
+            solution: dir.path("App.sln"),
+            project: project_path,
+            config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: Some(toolchain),
+        };
+
+        let (project, reporter) = evaluated_reporting(&scope);
+
+        assert!(
+            project.files.is_empty(),
+            "a Makefile-configuration project contributes no ClCompile items: {:?}",
+            project.files
+        );
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|warning| warning.message.contains("Makefile")),
+            "the skipped import is named rather than silently dropped: {:?}",
+            reporter.warnings()
+        );
+    }
 }

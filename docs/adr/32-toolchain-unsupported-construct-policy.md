@@ -155,3 +155,8 @@ simpler than partially evaluating it.
   line, message, severity) — distinct construct text at distinct lines across many projects won't
   collapse. Worth revisiting if a real multi-project solution's warning output turns out to be
   dominated by this rather than by genuine findings in the user's own tree.
+- **[ADR 42](42-makefile-configuration-missing-import.md) adds a third, narrower downgrade** for a
+  case this ADR's mechanism doesn't cover: a toolchain import that resolves cleanly but is genuinely
+  absent because msvclsp deliberately doesn't seed `$(MSBuildToolsPath)`, gated on
+  `ConfigurationType == Makefile` rather than on `in_toolchain` alone — the "genuinely absent stays
+  fatal" guarantee this ADR's Discussion section argues for is preserved, not widened.

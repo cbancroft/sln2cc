@@ -203,6 +203,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   affected files used to compile cleanly according to msvclsp and then have clangd flag every
   project-specific symbol as undefined, with nothing on stderr to explain why.
 
+- `generate` no longer fails outright when a solution has a `Makefile`/NMake-configuration member
+  project — common for vendored dependencies built outside the normal C++ project system, such as
+  Detours. That project now just contributes nothing to the generated database, with a warning
+  explaining why, instead of aborting generation for the whole solution.
+
 ### Security
 
 - A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB

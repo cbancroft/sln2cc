@@ -116,6 +116,16 @@ impl Walk<'_> {
         result
     }
 
+    /// Whether the project being walked declares `ConfigurationType=Makefile`.
+    ///
+    /// Checked lazily, only at the point a toolchain import is about to be reported missing.
+    /// Most projects never need to call this. Comparison is case insensitive. Used to guard against
+    /// attempting to import a Makefile style project that we don't support (yet).
+    fn is_makefile_configuration(&self) -> bool {
+        self.properties
+            .get("ConfigurationType")
+            .is_some_and(|value| value.eq_ignore_ascii_case("Makefile"))
+    }
     fn evaluate(&mut self, path: &Path, referrer: Option<&Path>) -> Result<()> {
         if self.depth > MAX_IMPORT_DEPTH {
             return Err(Error::RecursionLimit {
@@ -140,6 +150,21 @@ impl Walk<'_> {
         // Only an import can be missing. A referrer is what makes the error nameable.
         if let Some(referrer) = referrer {
             if !path.is_file() {
+                // A Makefile-configuration project routes through Microsoft.MakeFile.Targets, which
+                // needs $(MSBuildToolsPath), which we do not seed yet. Attempting to resolve it
+                // would bring in lots of MSBuild/.NET machinery that we don't care about. See ADR
+                // 42. For now we ignore it until we can add handling for it later
+                if self.in_toolchain(referrer) && self.is_makefile_configuration() {
+                    self.reporter.warn_at(
+                        referrer,
+                        None,
+                        format!(
+                            "imported file not found: `{}`. Skipped because the project is a Makefile-configuration \
+                            project that we do not yet support.",
+                            path.display(),
+                            ));
+                    return Ok(());
+                }
                 return Err(Error::MissingImport {
                     import: path.to_path_buf(),
                     referenced_by: referrer.to_path_buf(),
@@ -1213,6 +1238,92 @@ mod tests {
             r#"  <Import Project="../vs/Toolset.props" />"#,
         );
         dir.project("vs/Toolset.props", r#"  <Import Project="Absent.props" />"#);
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        assert_eq!(
+            result.expect_err("must not resolve").kind(),
+            ErrorKind::MissingImport
+        );
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-44 — a genuinely missing toolchain import for a Makefile-configuration project
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_missing_toolchain_import_for_a_makefile_configuration_project_is_a_warning_not_an_error() {
+        // The real shape: a project's own `ConfigurationType` is `Makefile` (a genuine NMake
+        // dependency, e.g. a vendored library built outside the normal C++ project system), and
+        // the toolchain's own Makefile-targets chain needs `$(MSBuildToolsPath)` -- a property
+        // this evaluator does not seed on purpose (see ADR 42). The resulting `MissingImport`
+        // is exactly as "genuine" as the case above, but must not abort the whole solution.
+        let dir = TempTree::new("makefile-configuration-missing-import");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>Makefile</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="../vs/Toolset.props" />"#,
+        );
+        dir.project("vs/Toolset.props", r#"  <Import Project="Absent.props" />"#);
+
+        let (result, reporter) = tree_with_toolchain(&root, &toolchain);
+        let resolved = result.expect("a Makefile-configuration project must not fail generation");
+
+        assert_eq!(
+            resolved.files.len(),
+            2,
+            "only the project and Toolset.props were entered: {:?}",
+            resolved.files
+        );
+        assert!(
+            reporter.warnings().iter().any(|warning| warning
+                .message
+                .contains("imported file not found")
+                && warning.message.contains("Makefile")),
+            "{:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn configuration_type_comparison_is_case_insensitive() {
+        // `eval::condition_holds` compares `Condition` operands case-insensitively, matching real
+        // MSBuild -- this mirrors that, since it recognizes the same test `Microsoft.Cpp.props`
+        // itself performs to route a project down the Makefile branch in the first place.
+        let dir = TempTree::new("makefile-configuration-case-insensitive");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>MAKEFILE</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="../vs/Toolset.props" />"#,
+        );
+        dir.project("vs/Toolset.props", r#"  <Import Project="Absent.props" />"#);
+
+        let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
+
+        result.expect("`MAKEFILE` must be recognized the same as `Makefile`");
+    }
+
+    #[test]
+    fn a_missing_import_in_the_users_tree_for_a_makefile_project_still_fails() {
+        // The `in_toolchain` gate still applies: `ConfigurationType == Makefile` alone does not
+        // downgrade a missing import the user's own project tree caused. Only a toolchain file's
+        // own import chain gets this leniency -- matching ADR 32's existing precedent for why the
+        // boundary is `in_toolchain`, not just "something about this project."
+        let dir = TempTree::new("makefile-configuration-user-tree-missing-import");
+        let toolchain = dir.path("vs");
+        let root = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>Makefile</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="Absent.props" />"#,
+        );
 
         let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
 

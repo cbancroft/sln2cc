@@ -279,7 +279,15 @@ Rough module breakdown implied by the parsing pipeline:
   would otherwise surface as a confusing `Error::MissingImport` naming a garbled path). A file
   outside `install_path` — the user's own project tree — keeps ADR 09's fatal policy unchanged, and
   a toolchain file whose import resolves cleanly but is genuinely absent still fails, since that
-  signals a broken or unexpected installation rather than an unsupported construct.
+  signals a broken or unexpected installation rather than an unsupported construct — with one
+  exception: a project whose `ConfigurationType` is `Makefile` (a real NMake dependency built
+  outside the normal C++ project system, e.g. a vendored library) routes through the toolchain's
+  own `Microsoft.MakeFile.Targets`, which needs `$(MSBuildToolsPath)` — a property this evaluator
+  does not seed, since resolving it for real would chase generic .NET/MSBuild build machinery
+  (`Microsoft.Common.targets` and beyond) with no C++ relevance. That specific, cleanly-resolved
+  but absent import is downgraded to a warning too, gated on `ConfigurationType` rather than
+  `in_toolchain` alone so a genuinely broken installation for any other project still fails loud.
+  See [ADR 42](adr/42-makefile-configuration-missing-import.md).
 
   `Properties` also tracks which keys' stored values still carry an unsupported construct copied
   through verbatim (`is_tainted`), because the real Visual Studio toolset assigns one to an

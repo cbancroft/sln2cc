@@ -1717,70 +1717,79 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   MVP-34 stays open and the MVP milestone stays incomplete until both land and the real-solution
   pass can actually run the rest of the checklist (completion/go-to-definition/diagnostics/
-  config-switch comparison) against output worth trusting.
+  config-switch comparison) against output worth trusting. MVP-45 has since landed; MVP-44 is the
+  one remaining blocker.
 
-- [ ] **MVP-44 — Fix `ConfigurationType` resolving to the wrong branch across an `Import` boundary**
-  `fix/property-group-import-order` · ~6h
+- [x] **MVP-44 — Don't hard-fail `generate` on Makefile-configuration-type projects**
+  `fix/makefile-configuration-type` · ~6h
 
-  **Summary:** A `.vcxproj` that sets `ConfigurationType` in a per-configuration `PropertyGroup`
-  before importing `Microsoft.Cpp.props` — exactly what every real Visual Studio project
-  generates — has that value resolve wrong by the time the import's own `Condition`s run,
-  and `generate` fails outright instead of producing a database.
+  **Summary:** Originally filed as "`ConfigurationType` resolves to the wrong branch across an
+  `Import` boundary." That diagnosis was wrong: `generate` fails outright with a hard
+  `missing-import` error on a solution that has a genuine `ConfigurationType=Makefile` member
+  project (a real NMake dependency, e.g. a vendored library built outside the normal C++ project
+  system), because its toolchain import chain needs `$(MSBuildToolsPath)` — a property msvclsp
+  deliberately doesn't seed.
 
   **Description:** Found running MVP-34's real-solution pass against a real external Contoso3
   solution (not committed to this repo, so not reproducible from the fixture corpus) — fails on
-  every configuration/platform pair tried, standalone and as a dependency inside a five-project
-  composite solution. Neither fixture in this repo surfaces it because
-  [ADR 25](adr/25-fixture-simple-and-golden-harness.md) fixtures deliberately skip importing the
-  real `Microsoft.Cpp.*` files.
+  every configuration/platform pair tried. The filer's working theory was a `PropertyGroup`/
+  `Import` document-order bug: the failing project sets `ConfigurationType` in a per-configuration
+  `PropertyGroup` before importing `Microsoft.Cpp.props`, and evaluation behaved as though
+  `ConfigurationType` were `Makefile` by the time `Microsoft.Cpp.props`'s own `Condition`s ran,
+  eventually importing `Microsoft.MakeFile.Targets`, which references
+  `$(MSBuildToolsPath)\Microsoft.Common.targets` — expanding to the literal path
+  `C:\Microsoft.Common.Targets` and failing with `missing-import`.
 
-  Document order in the failing project: `Import Microsoft.Cpp.Default.props` (self-defaults
-  `ConfigurationType` to `Application` via `Condition="'$(ConfigurationType)' == ''"`) → a
-  `PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"` unconditionally
-  setting `ConfigurationType` to `StaticLibrary` → `Import Microsoft.Cpp.props` (branches on
-  `'$(ConfigurationType)' == 'Makefile'`). Nothing in the toolchain or the project ever assigns
-  `Makefile` anywhere, yet `generate` takes the Makefile branch by the time `Microsoft.Cpp.props`'s
-  own imports run, eventually importing `Microsoft.MakeFile.Targets`, which references
-  `$(MSBuildToolsPath)\Microsoft.Common.targets` — a property msvclsp doesn't seed — producing the
-  literal path `C:\Microsoft.Common.Targets` and a hard `missing-import` error.
+  A synthetic `FakeToolchain` fixture reproducing that exact shape (self-defaulting property,
+  local unconditional override between two imports, second import's `Condition` reading the
+  result) resolved *correctly* under `imports.rs::Walk::evaluate()`, which already processes
+  `PropertyGroup`/`Import` strictly in document order. `<Choose>`/`<When>`/`<Otherwise>` was ruled
+  out too — `project.rs` records it as `Element::Unsupported` and never evaluates it, so it can
+  only ever be inert, never wrongly take a branch (a real, separate gap, tracked as an Open
+  Question in `docs/engineering_spec.md` rather than folded in here). The regression test and
+  fixture landed anyway, as a guard for that (already-correct) mechanism:
+  `imports.rs`'s `a_local_override_between_two_imports_is_visible_to_the_second_imports_condition`
+  and `generate.rs`'s `property_group_import_order_matches_golden`.
 
-  The point of failure looks like `PropertyGroup` evaluation across an `<Import>` boundary in
-  `project.rs`/`imports.rs`: the interleaving of a project's own document-ordered `PropertyGroup`s
-  with an `<Import>` positioned between them isn't carrying the local override forward the way
-  real MSBuild does. This description is a report, not a diagnosis — confirming the actual
-  mechanism and fixing it is this issue's own work.
+  Running `generate -v` against the real solution directly (once it became available locally)
+  confirmed the title's premise was wrong, not just unconfirmed: `ConfigurationType` never
+  misresolves. `vendorlib_2022.vcxproj` — the project originally suspected — evaluates cleanly,
+  its own `ConfigurationType` (`StaticLibrary`) resolving correctly in exactly the shape described
+  above. The actual failure is `external\Detours\vc\Detours.vcxproj`, a genuine member project of
+  the `.sln` (`Project("{...}") = "Detours", "..\..\external\Detours\vc\Detours.vcxproj", ...`),
+  which legitimately declares `<ConfigurationType>Makefile</ConfigurationType>` because it really
+  is built via `nmake`. `Microsoft.Cpp.props` correctly takes the `Makefile` branch for it, and the
+  `missing-import` failure downstream is genuine — `$(MSBuildToolsPath)` really isn't seeded — not
+  a garbled path from an unsupported construct (ADR 32/MVP-36's existing downgrade doesn't cover
+  this: `expand()` reports an *undefined* property, not an *unsupported* one). Seeding
+  `$(MSBuildToolsPath)` for real was considered and rejected: `Microsoft.Common.targets` chains
+  straight into `Microsoft.Common.CurrentVersion.targets`, thousands of lines of generic
+  .NET/MSBuild build machinery with no C++ relevance, for a project type that has no `ClCompile`
+  items to extract regardless.
 
-  This blocks MVP-34: the real-solution pass of the manual verification checklist cannot get past
-  `generate`, so the MVP milestone stays open until this lands.
+  This blocked MVP-34: the real-solution pass of the manual verification checklist could not get
+  past `generate`.
 
-  **Tests:** A new fixture (or an extension of an existing one) reproducing the shape under
-  `FakeToolchain` — a self-defaulting property, a local unconditional override, then a second
-  import branching on the result — since the real VC toolchain files aren't needed to reproduce
-  it, only the *pattern* of self-default-then-override-then-import. Assert the override wins and
-  the second import's `Condition` sees it.
+  **Tests:** `cli/src/msbuild/imports.rs` unit tests, alongside the existing MVP-36/ADR 32 block:
+  a missing toolchain import for a `ConfigurationType=Makefile` project resolves as a warning, not
+  an error; the `ConfigurationType` comparison is case-insensitive; a missing import in the *user's
+  own* tree for a Makefile project still fails (the `in_toolchain` gate still applies); the
+  existing `a_genuinely_missing_import_in_a_toolchain_file_still_fails` stays green unmodified,
+  confirming the new gate doesn't widen ADR 32's boundary. Plus one `cli/src/msbuild.rs`
+  `evaluate()`-level test proving a Makefile-configuration project evaluates to zero files with a
+  warning, not an error, reusing the existing `stub_toolchain()` real-shaped-toolchain harness. No
+  new fixture: ADR 32 set the precedent that this class of toolchain-policy fix is unit tests at
+  the `Walk`/`evaluate()` level, since the result is an empty file list either way — nothing for
+  `flags.rs`/`compdb.rs` to translate.
 
-  **Progress:** Branch `fix/property-group-import-order` created. Reproduced the pattern this
-  issue's own Tests: paragraph names as a synthetic `FakeToolchain` fixture (`fixtures/property-
-  group-import-order/`, per [ADR 25](adr/25-fixture-simple-and-golden-harness.md)) — a
-  self-defaulting property, a local unconditional override between two imports, and a second
-  import's `Condition` reading the result — and it resolves *correctly* under current
-  `imports.rs`: the override wins and the second import's `Condition` sees it (see
-  `imports.rs::Walk::evaluate()`, which already processes `PropertyGroup` and `Import` strictly in
-  document order, recursing into an import synchronously before continuing past it in the same
-  file). `<Choose>`/`<When>`/`<Otherwise>` was checked too, and ruled out as the direct mechanism —
-  `project.rs` records the whole element as `Element::Unsupported` and never evaluates its content
-  ([ADR 07](adr/07-vcxproj-reader-ir.md)), so it can only ever be inert, never wrongly take a
-  branch. That's a real, separate gap if real `Microsoft.Cpp.props` actually relies on `Choose` for
-  its `ConfigurationType` routing — tracked as a new Open Question in `docs/engineering_spec.md`
-  rather than folded into this fix. The real trigger inside the actual Contoso3
-  `Microsoft.Cpp.Default.props`/`Microsoft.Cpp.props` content is still unconfirmed — diagnosing it
-  is this issue's remaining work; next step is `generate -v` against the real solution to see
-  exactly which file/line sets `ConfigurationType` last before the `Makefile` branch is taken. No
-  ADR: this investigation settles no design decision, per CLAUDE.md §9. The regression test and
-  fixture landed anyway (`imports.rs`'s
-  `a_local_override_between_two_imports_is_visible_to_the_second_imports_condition` and
-  `generate.rs`'s `property_group_import_order_matches_golden`), as a guard for the
-  (already-correct) order-preservation mechanism this issue's title blamed.
+  **Outcome:** `Walk::is_makefile_configuration()` added, checking `ConfigurationType` case-
+  insensitively; `Walk::evaluate`'s `MissingImport` raise gated on it plus the existing
+  `in_toolchain(referrer)` check, downgrading to a warning naming both the skipped import and the
+  unsupported project type. See [ADR 42](adr/42-makefile-configuration-missing-import.md) for the
+  full diagnosis and why this is a narrower, separate gate from ADR 32's rather than a widening of
+  it. Extracting a Makefile-configuration project's own compilation settings
+  (`NMakePreprocessorDefinitions`, `NMakeIncludeSearchPath`, ...) is deferred to **V2-06**. MVP-34
+  loses its last blocker.
 
 - [x] **MVP-45 — `ClCompile` items declared before their `ItemDefinitionGroup` settle with no metadata**
   `fix/item-definition-group-siblings` · ~6h
@@ -1931,3 +1940,18 @@ behind them have been tested.
 - [ ] **V2-05 — Expanded documentation** · `docs/multi-solution-docs` · ~4h
   Document multi-solution workflows and troubleshooting once V1 behavior has settled. Tests:
   manual read-through against actual behavior.
+
+- [ ] **V2-06 — Extract compile settings from Makefile-configuration projects** ·
+  `feat/makefile-configuration-nmake-settings` · ~5h
+  MVP-44 downgrades a `ConfigurationType=Makefile` project's missing toolchain import to a
+  warning rather than failing `generate`, but such a project still contributes zero files to the
+  database — real NMake dependencies (e.g. vendored libraries like Detours) get no completions or
+  diagnostics for their own sources. Read `NMakePreprocessorDefinitions`,
+  `NMakeIncludeSearchPath`, and the equivalent `NMake*` properties directly off the project's own
+  `PropertyGroup`s instead of the normal `ClCompile` item definitions — this does not require
+  walking `Microsoft.Common.(CurrentVersion.)targets`, since those properties are set by the
+  project file itself, not computed by that import chain. See
+  [ADR 42](adr/42-makefile-configuration-missing-import.md). Tests: a fixture with an
+  `NMakePreprocessorDefinitions`/`NMakeIncludeSearchPath`-bearing `ConfigurationType=Makefile`
+  project, golden-compared end to end, asserting the resulting flags come from the `NMake*`
+  properties rather than being empty.
