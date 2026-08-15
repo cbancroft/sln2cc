@@ -217,16 +217,10 @@ pub fn compile(
         flags.push(format!("/wd{entry}"))
     }
 
-    // Last, so a hand-written switch overrides anything the table produced. Split on whitespace,
-    // may need to revisit later if we find that we lose a quoted argument (MVP-13).
-    let options = get("AdditionalOptions");
-    if options.contains('"') {
-        reporter.warn_at(
-            &source.declared_in,
-            Some(source.line),
-            "`AdditionalOptions` contains a quoted argument, which is split on whitespace and will reach clangd as separate flags");
-    }
-    flags.extend(options.split_whitespace().map(str::to_string));
+    // Last, so a hand-written switch overrides anything the table produced. Split using the
+    // compiler's own tokenization rules (MVP-38, ADR 43) rather than whitespace, since this text
+    // reaches cl.exe/clang-cl as literal command-line arguments.
+    flags.extend(split_arguments(get("AdditionalOptions")));
 
     FileCompilation {
         file: source.path.clone(),
@@ -234,6 +228,60 @@ pub fn compile(
         defines,
         flags,
     }
+}
+
+/// Split arguments the way `cl.exe` and `clang-cl`'s own command-line tokenizers do. Quoted
+/// arguments will have spaces preserved, while properly handling escaped quotes.
+fn split_arguments(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    loop {
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        if chars.peek().is_none() {
+            break;
+        }
+
+        let mut arg = String::new();
+        let mut quoted = false;
+        while let Some(&c) = chars.peek() {
+            match c {
+                _ if c.is_whitespace() && !quoted => break,
+                '\\' => {
+                    let mut backslashes = 0;
+                    while chars.peek() == Some(&'\\') {
+                        backslashes += 1;
+                        chars.next();
+                    }
+                    if chars.peek() == Some(&'"') {
+                        arg.extend(std::iter::repeat_n('\\', backslashes / 2));
+                        chars.next();
+                        if backslashes % 2 == 1 {
+                            arg.push('"');
+                        } else {
+                            quoted = !quoted;
+                        }
+                    } else {
+                        arg.extend(std::iter::repeat_n('\\', backslashes));
+                    }
+                }
+                '"' => {
+                    quoted = !quoted;
+                    chars.next();
+                }
+                _ => {
+                    arg.push(c);
+                    chars.next();
+                }
+            }
+        }
+
+        args.push(arg);
+    }
+
+    args
 }
 
 /// A `;` delimited list. Trimmed, empties dropped, order preserved.
@@ -305,9 +353,9 @@ fn dedup<T: PartialEq>(entries: Vec<T>) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Reporter;
     use crate::msbuild::eval::Metadata;
     use crate::msbuild::items::SourceItem;
-    use crate::{Reporter, Severity};
     use std::path::PathBuf;
 
     fn absolute(parts: &[&str]) -> PathBuf {
@@ -656,45 +704,88 @@ mod tests {
         assert_eq!(flags, ["/std:c++17", "/std:c++20", "/Zc:__cplusplus"]);
     }
 
-    /// MVP-13 settling what `flags.rs`'s own comment left open.
-    ///
-    /// The split is on whitespace, which is right for every switch a project realistically puts
-    /// here and wrong for exactly one shape: a quoted argument containing a space becomes two
-    /// flags the project never wrote. Saying so is cheap. MVP-38 owns the real shell-style split.
+    /// MVP-38 replacing MVP-13's warning with the real fix: a quoted argument containing a space
+    /// now survives as the one flag the project wrote, instead of splitting apart. See
+    /// [ADR 43](../../../docs/adr/43-additional-options-argument-splitting.md).
     #[test]
-    fn additional_options_with_a_quoted_argument_warns() {
+    fn additional_options_splits_a_quoted_argument_with_a_space() {
         let (compilation, reporter) =
             compiled_reporting(&[("AdditionalOptions", r#"/DBANNER="hello world""#)]);
 
         assert_eq!(
             compilation.flags,
-            [r#"/DBANNER="hello"#, r#"world""#],
-            "the corruption is real, which is why it is worth a warning"
+            [r#"/DBANNER=hello world"#],
+            "the quoted argument reaches clangd as one flag, not two"
         );
-
-        let [warning] = reporter.warnings() else {
-            panic!("expected exactly one warning: {:?}", reporter.warnings());
-        };
-        assert_eq!(warning.severity, Severity::Warning);
-        assert_eq!(
-            warning.file.as_deref(),
-            Some(source(&[]).declared_in.as_path())
-        );
-        assert_eq!(warning.line, Some(11));
         assert!(
-            warning.message.contains("AdditionalOptions"),
-            "names the setting: {}",
-            warning.message
+            reporter.warnings().is_empty(),
+            "the split is correct now, nothing to warn about: {:?}",
+            reporter.warnings()
         );
     }
 
-    /// The negative case, so the check cannot be satisfied by always warning. Nearly every real
-    /// `AdditionalOptions` looks like this one.
+    /// The shape named in the todo: a quoted, space-containing path handed to `/I`. Getting this
+    /// wrong points clangd at two directories that do not exist.
     #[test]
-    fn additional_options_without_quotes_is_silent() {
+    fn additional_options_splits_a_quoted_path_in_an_include_switch() {
+        let flags = flags_of(&[("AdditionalOptions", r#"/I"C:\Program Files\x\include""#)]);
+
+        assert_eq!(flags, [r#"/IC:\Program Files\x\include"#]);
+    }
+
+    /// The negative case, so the check cannot be satisfied by always splitting on quotes. Nearly
+    /// every real `AdditionalOptions` looks like this one, and it must split exactly as the old
+    /// whitespace-only implementation did.
+    #[test]
+    fn additional_options_without_quotes_splits_on_whitespace_as_before() {
         let flags = flags_of(&[("AdditionalOptions", "/Zc:__cplusplus /bigobj")]);
 
         assert_eq!(flags, ["/Zc:__cplusplus", "/bigobj"]);
+    }
+
+    /// `.vcxproj` input is untrusted (CLAUDE.md §5): a quote opened but never closed must not hang
+    /// evaluation or silently drop everything after it.
+    #[test]
+    fn additional_options_with_an_unterminated_quote_does_not_drop_the_rest() {
+        let flags = flags_of(&[("AdditionalOptions", r#"/DFOO="bar baz"#)]);
+
+        assert_eq!(flags, [r#"/DFOO=bar baz"#]);
+    }
+
+    /// The odd-backslash-count case: `\"` inside a quoted region is a literal `"`, not the end of
+    /// the quote, matching how `cl.exe`/clang-cl parse their own argument list.
+    #[test]
+    fn additional_options_with_an_embedded_escaped_quote() {
+        let flags = flags_of(&[("AdditionalOptions", r#"/DMSG="say \"hi\"""#)]);
+
+        assert_eq!(flags, [r#"/DMSG=say "hi""#]);
+    }
+
+    /// An absent `AdditionalOptions` is the common case for most sources and must not manufacture
+    /// an empty flag.
+    #[test]
+    fn additional_options_with_an_empty_value_produces_no_flags() {
+        let flags = flags_of(&[("AdditionalOptions", "")]);
+
+        assert!(flags.is_empty(), "unexpected flags: {flags:?}");
+    }
+
+    /// Direct coverage of the splitter's backslash counting, isolated from `compile` since these
+    /// two shapes are about the algorithm rather than any particular MSBuild setting.
+    #[test]
+    fn split_arguments_copies_backslashes_not_followed_by_a_quote_literally() {
+        assert_eq!(
+            split_arguments(r"\path\to\thing"),
+            [r"\path\to\thing"],
+            "no quote anywhere, so nothing is special about the backslashes"
+        );
+    }
+
+    /// An even run of backslashes before a quote halves into literal backslashes and the quote
+    /// still toggles quoting state — the complement of the odd-run case covered through `compile`.
+    #[test]
+    fn split_arguments_halves_an_even_backslash_run_before_a_quote() {
+        assert_eq!(split_arguments(r#"\\\\"x""#), [r"\\x"]);
     }
 
     #[test]

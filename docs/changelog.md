@@ -190,9 +190,9 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   several projects used to produce one identical message per project that imported it; now it is
   reported once.
 
-- `AdditionalOptions` containing a quoted argument, such as `/DBANNER="hello world"`, now warns. It
-  is still split on spaces and still reaches clangd as two flags, which is wrong — but it no longer
-  does so silently.
+- `AdditionalOptions` containing a quoted argument, such as `/DBANNER="hello world"` or
+  `/I"C:\Program Files\x\include"`, now reaches clangd as the single flag the project wrote instead
+  of being split apart on the space inside the quotes.
 
 - A property value with XML elements inside it no longer loses them without saying so. It is not
   valid MSBuild and msvclsp still keeps just the text, but it now names the value and the line.

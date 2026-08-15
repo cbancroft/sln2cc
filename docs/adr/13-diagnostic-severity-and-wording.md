@@ -184,6 +184,12 @@ before quotes — and that is a decision with its own testing surface, not a det
 issue. The interim state is honest: the corruption still happens, and now it announces itself.
 MVP-38 holds the work, and the spec's existing open question points at it.
 
+> **Resolved by [ADR 43](43-additional-options-argument-splitting.md).** MVP-38 implemented the
+> real splitter — the Microsoft C runtime/`CommandLineToArgvW` backslash-quote algorithm, which is
+> also what clang-cl's own tokenizer uses — and removed this warning outright, since the condition
+> it existed to flag no longer holds. Left in place rather than edited, per the house rule that a
+> superseded ADR keeps its original argument.
+
 **`%XX` escapes stay undecoded and unwarned.** Decoding them is arguably correct MSBuild behaviour,
 and was rejected here as a change to evaluation semantics rather than to diagnostics — it belongs to
 whoever owns `eval.rs` next, with tests for the escape table. Warning about them was also considered

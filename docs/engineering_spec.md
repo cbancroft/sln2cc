@@ -577,7 +577,6 @@ The catalogue below is the whole of it. A new call site is expected to add a row
 | An `Update` naming a file the project does not compile | Warning | `msbuild/items.rs` |
 | A settled value still holding `$(` or `%(` | Warning | `msbuild/flags.rs` |
 | An enumerated setting whose value is not recognized | Warning | `msbuild/flags.rs` |
-| `AdditionalOptions` holding a quoted argument (see MVP-38) | Warning | `msbuild/flags.rs` |
 | A configuration/platform pair the project never declares | Warning | `msbuild.rs` |
 | A project with no `ClCompile` sources at all | Warning | `msbuild.rs` |
 
@@ -894,13 +893,6 @@ MSBuild-evaluation surface area bounded.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.
-- Whether `AdditionalOptions` needs real shell-style argument splitting. MVP-12 splits on whitespace,
-  which is correct for every switch a project is likely to carry there and wrong for a quoted path
-  containing a space. MVP-13 declined to fix it here and made it *visible* instead — a value holding
-  a `"` now warns that it will reach clangd as separate flags — because getting it right means
-  choosing between MSBuild's quoting rules, `cl`'s response-file rules and the Windows command-line
-  parser's, which disagree about backslashes before quotes. **MVP-38 holds the work.** See
-  [ADR 13](adr/13-diagnostic-severity-and-wording.md).
 - Whether `$(SolutionDir)` and the rest of the `Solution*` family should be seeded at all when a
   project is evaluated outside a solution. Not reachable today, since the CLI always takes a `.sln`,
   but standalone-project support and the multi-solution work both arrive at it. The honest answer may

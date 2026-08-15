@@ -854,7 +854,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   first time. `FileCompilation`/`EvaluatedProject` untouched. See
   [ADR 29](adr/29-wildcard-item-expansion.md).
 
-- [ ] **MVP-38 — Shell-style `AdditionalOptions` splitting**
+- [x] **MVP-38 — Shell-style `AdditionalOptions` splitting**
   `fix/additional-options-splitting` · ~4h
 
   **Summary:** Split `AdditionalOptions` on quoting rules rather than on whitespace, so a switch
@@ -883,6 +883,21 @@ Goal: one solution, one manually selected configuration/platform, producing a
   drop the rest of the line), an embedded escaped quote, and an empty value. Replace MVP-13's
   `additional_options_with_a_quoted_argument_warns` in `msbuild/flags.rs` rather than leaving it
   asserting the corruption this removes.
+
+  **Outcome:** The tiebreaker in the issue's own description — clangd consumes the result in
+  clang-cl mode — turned out to collapse the three-way choice into one: `AdditionalOptions` text is
+  inserted verbatim onto the actual command line MSBuild's `CL` task hands to `cl.exe`, so MSBuild's
+  own quoting was never really a candidate for *this* split (it governs how the `.vcxproj` XML is
+  written, not how the resulting string is tokenized), and `cl.exe`'s parsing is the same Microsoft
+  C runtime/`CommandLineToArgvW` algorithm clang-cl's own tokenizer implements for compatibility.
+  A private `split_arguments` in `flags.rs` implements it — a `"` toggles whether whitespace splits,
+  an even run of `N` backslashes before a `"` halves into literal backslashes with the quote still
+  toggling, an odd run instead escapes the quote into one literal `"`, and an unterminated quote
+  runs to end-of-string rather than erroring, since `.vcxproj` input is untrusted per CLAUDE.md §5.
+  MVP-13's `"` warning is gone outright — replaced by
+  `additional_options_splits_a_quoted_argument_with_a_space` and five siblings, plus two tests on
+  `split_arguments` directly for the backslash-counting cases the `compile`-level tests don't
+  isolate. See [ADR 43](adr/43-additional-options-argument-splitting.md).
 
 - [x] **MVP-41 — Expand wildcard `<Import>` `Project` specs**
   `feat/import-globbing` · ~5h
