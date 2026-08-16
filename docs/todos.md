@@ -1985,9 +1985,18 @@ behind them have been tested.
   active solution's own remembered configuration/platform is V1-05's job, not this one's. See
   [ADR 45](adr/45-nvim-solution-picker.md).
 
-- [ ] **V1-04 — Rescan command** · `feat/nvim-rescan` · ~2h
+- [x] **V1-04 — Rescan command** · `feat/nvim-rescan` · ~2h
   Invalidate the discovery cache and re-scan on demand for when solutions are added, moved, or
   removed. Tests: mini.test spec asserting the cache is dropped and repopulated.
+
+  **Outcome:** Already done. MVP-31 (`feat/nvim-commands`) registered all four MVP-scope
+  commands in one pass rather than splitting rescan into its own later issue, so
+  `discovery.rescan()` and `:MsvclspRescan` — along with the cache-drop-and-repopulate tests
+  this issue calls for (`test_discovery.lua`'s "rescan refreshes the cache" and "a rescan does
+  not forget a persisted choice", `test_commands.lua`'s `MsvclspRescan` describe block) — were
+  already in place before this issue was ever started. See
+  [ADR 37](adr/37-nvim-user-commands.md). No new code, tests, or changelog entry: the changelog
+  already covers `:MsvclspRescan` under `[Unreleased]` from MVP-31's own entry.
 
 - [ ] **V1-05 — Switch-solution command** · `feat/nvim-switch-solution` · ~5h
   Change the active solution, restore *that* solution's own remembered configuration/platform,
