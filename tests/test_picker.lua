@@ -339,3 +339,78 @@ describe("msvclsp.picker.pick_solution", function()
     MiniTest.expect.equality(select_called, false)
   end)
 end)
+
+-- V1-06: inline first-run discovery. Every other pick_solution spec above stubs
+-- msvclsp.discovery wholesale, so none of them can prove a fresh solution scan actually
+-- happens as part of the pick rather than requiring a caller to discover/rescan first. This
+-- block uses the real discovery.lua against a real temp tree to close that specific gap;
+-- discovery.lua itself has been inline/lazy since MVP-27 (its M.solutions caches on first
+-- call, not before), this just pins the picker's own reliance on that behavior down with a
+-- test.
+
+--- Builds a fresh temp directory tree and returns its root plus a cleanup function, mirroring
+--- test_discovery.lua's own helper -- kept local rather than shared, per this repo's existing
+--- per-file helper convention.
+--- @return string root
+--- @return fun() cleanup
+local function make_tree()
+  local root = vim.fs.normalize(vim.fn.tempname())
+  vim.fn.mkdir(root, "p")
+  return root, function()
+    vim.fn.delete(root, "rf")
+  end
+end
+
+--- Creates an empty `.sln` file at `tree .. "/" .. name`. Content is irrelevant --
+--- discovery.lua matches by filename only.
+--- @param tree string
+--- @param name string
+local function make_sln(tree, name)
+  local fd = assert(io.open(tree .. "/" .. name, "w"))
+  fd:close()
+end
+
+describe("msvclsp.picker.pick_solution — inline discovery", function()
+  local picker
+  local original_ui_select
+
+  before_each(function()
+    package.loaded["msvclsp.picker"] = nil
+    -- Deliberately NOT stubbed: this block's whole point is exercising the real module.
+    package.loaded["msvclsp.discovery"] = nil
+    package.loaded["msvclsp.config"] = nil
+    original_ui_select = vim.ui.select
+  end)
+
+  after_each(function()
+    vim.ui.select = original_ui_select
+  end)
+
+  it("discovery runs inline on first pick, with no prior scan", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+
+      picker = require("msvclsp.picker")
+
+      local select_fn, calls = fake_select(tree .. "/App.sln")
+      vim.ui.select = select_fn
+
+      local got, called = "sentinel", false
+      -- No discovery.solutions()/rescan() call precedes this -- if the scan weren't inline,
+      -- vim.ui.select would see an empty list instead of both .sln files.
+      picker.pick_solution(tree, function(s)
+        got, called = s, true
+      end)
+
+      MiniTest.expect.equality(calls[1].items, { tree .. "/App.sln", tree .. "/Other.sln" })
+      MiniTest.expect.equality(called, true)
+      MiniTest.expect.equality(got, tree .. "/App.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+end)
