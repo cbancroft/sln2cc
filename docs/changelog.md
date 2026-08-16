@@ -163,7 +163,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 - `:MsvclspSelectSolution` lets you switch which `.sln` msvclsp targets when more than one is
   found under your project root, and remembers your choice across restarts so you're not asked
-  again next session.
+  again next session. Switching now also restores that solution's own remembered
+  configuration/platform, regenerates `compile_commands.json` if needed, and restarts clangd
+  — each solution keeps its own configuration rather than inheriting whatever was active for
+  the one you switched away from.
 
 - The MVP is now verified working end-to-end, not just implemented: a real `clangd` attaches,
   completes, resolves go-to-definition across translation units, and reports no missing-include

@@ -27,8 +27,11 @@ end
 
 --- Builds a fake `msvclsp.cli`. `list_configs_result`/`generate_result` are each
 --- `{ result, err }` pairs handed straight to their respective `on_done` callbacks
---- synchronously.
---- @param opts { list_configs: table|nil, generate: table|nil }
+--- synchronously. `list_configs_by_solution` (V1-05) lets a test give different solutions
+--- different answers -- needed to prove a solution switch restores *that* solution's own
+--- active configuration rather than a carried-over global value -- and takes priority over
+--- the flat `list_configs` when both are given.
+--- @param opts { list_configs: table|nil, list_configs_by_solution: table<string, table>|nil, generate: table|nil }
 --- @return table fake_cli
 --- @return table[] list_configs_calls
 --- @return table[] generate_calls each also records `force`, for MVP-46
@@ -38,7 +41,9 @@ local function fake_cli(opts)
   local fake = {
     list_configs = function(solution, root, on_done)
       table.insert(list_configs_calls, { solution = solution, root = root })
-      local lc = opts.list_configs or { result = { active = nil } }
+      local lc = (opts.list_configs_by_solution and opts.list_configs_by_solution[solution])
+        or opts.list_configs
+        or { result = { active = nil } }
       on_done(lc.result, lc.err)
     end,
     generate = function(solution, cfg, root, force, on_done)
@@ -463,36 +468,135 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(pick_solution_calls, { { root = "/root" } })
     end)
 
-    it("a successful pick invalidates the root's cached database", function()
-      config.setup({ auto_restart_clangd = false })
+    it("restores the new solution's own active configuration, not the previous solution's", function()
+      -- V1-05's own required case: switching from app.sln (active: Debug|x64) to
+      -- other.sln (active: Release|arm64) must generate against other.sln's *own* answer,
+      -- never a value carried over from whichever solution was active before the switch.
       local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
-      local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
-      local cli = fake_cli({
-        list_configs = { result = { active = { configuration = "Debug", platform = "x64" } } },
+      local old_active = { configuration = "Debug", platform = "x64" }
+      local new_active = { configuration = "Release", platform = "arm64" }
+      local cli, list_calls, generate_calls = fake_cli({
+        list_configs_by_solution = {
+          ["app.sln"] = { result = { active = old_active } },
+          ["/root/Other.sln"] = { result = { active = new_active } },
+        },
+        generate = { result = { database = "/root/.msvclsp/Other-abcd1234/compile_commands.json" } },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(list_calls[#list_calls].solution, "/root/Other.sln")
+      MiniTest.expect.equality(generate_calls[#generate_calls].solution, "/root/Other.sln")
+      MiniTest.expect.equality(generate_calls[#generate_calls].cfg, new_active)
+    end)
+
+    it("a successful switch regenerates unforced and restarts when enabled", function()
+      config.setup({ auto_restart_clangd = true })
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local database = "/root/.msvclsp/Other-abcd1234/compile_commands.json"
+      local active = { configuration = "Release", platform = "arm64" }
+      local cli, list_calls, generate_calls = fake_cli({
+        list_configs_by_solution = { ["/root/Other.sln"] = { result = { active = active } } },
         generate = { result = { database = database } },
       })
       local picker = fake_picker({ solution = "/root/Other.sln" })
       local lsp, restart_calls = fake_lsp()
       ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
 
-      -- Populate the per-root database cache the way a prior MsvclspGenerate would.
-      -- auto_restart_clangd is off so this populates the cache without itself restarting,
-      -- keeping the restart below attributable only to MsvclspRestart's own resolution logic.
-      vim.cmd("MsvclspGenerate")
-      MiniTest.expect.equality(#restart_calls, 0)
-
       vim.cmd("MsvclspSelectSolution")
-      vim.cmd("MsvclspRestart")
 
-      -- The cached database belonged to the old solution; invalidation means MsvclspRestart
-      -- falls through to lsp.restart(nil, root) rather than reusing the stale path.
-      MiniTest.expect.equality(restart_calls[#restart_calls], { database = nil, root = "/root" })
+      MiniTest.expect.equality(list_calls[#list_calls], { solution = "/root/Other.sln", root = "/root" })
+      MiniTest.expect.equality(generate_calls[#generate_calls].solution, "/root/Other.sln")
+      MiniTest.expect.equality(generate_calls[#generate_calls].cfg, active)
+      MiniTest.expect.equality(generate_calls[#generate_calls].root, "/root")
+      -- Unforced: unlike pick_config's configuration switch, a solution switch changes which
+      -- files are even in play, so the CLI's own mtime staleness check is meaningful here.
+      MiniTest.expect.equality(generate_calls[#generate_calls].force, false)
+      MiniTest.expect.equality(#restart_calls, 1)
+      MiniTest.expect.equality(restart_calls[1].database, database)
+      MiniTest.expect.equality(restart_calls[1].root, "/root")
     end)
 
-    it("cancelling (on_choice(nil)) leaves a cached database untouched", function()
+    it("with auto_restart_clangd disabled, regenerates but never restarts", function()
+      config.setup({ auto_restart_clangd = false })
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local active = { configuration = "Release", platform = "arm64" }
+      local cli, _, generate_calls = fake_cli({
+        list_configs_by_solution = { ["/root/Other.sln"] = { result = { active = active } } },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(#generate_calls, 1)
+      MiniTest.expect.equality(#restart_calls, 0)
+    end)
+
+    it("no active configuration for the new solution notifies and never generates", function()
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local cli, _, generate_calls = fake_cli({
+        list_configs_by_solution = { ["/root/Other.sln"] = { result = { active = nil } } },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(#generate_calls, 0)
+      MiniTest.expect.equality(#restart_calls, 0)
+      MiniTest.expect.equality(#notify_calls, 1)
+      MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.WARN)
+    end)
+
+    it("a failed list_configs after switching notifies and never generates", function()
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local cli, _, generate_calls = fake_cli({
+        list_configs_by_solution = {
+          ["/root/Other.sln"] = { err = { message = "boom", kind = nil, code = 1 } },
+        },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(#generate_calls, 0)
+      MiniTest.expect.equality(#restart_calls, 0)
+      MiniTest.expect.equality(#notify_calls, 1)
+      MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.ERROR)
+    end)
+
+    it("a failed generate after switching notifies and never restarts", function()
+      config.setup({ auto_restart_clangd = true })
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local active = { configuration = "Release", platform = "arm64" }
+      local cli = fake_cli({
+        list_configs_by_solution = { ["/root/Other.sln"] = { result = { active = active } } },
+        generate = { err = { message = "generate failed", kind = nil, code = 1 } },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(#restart_calls, 0)
+      MiniTest.expect.equality(#notify_calls, 1)
+      MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.ERROR)
+    end)
+
+    it("cancelling (on_choice(nil)) never calls list_configs or generate, leaves a cached database untouched", function()
+      config.setup({ auto_restart_clangd = false })
       local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
       local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
-      local cli = fake_cli({
+      local cli, list_calls, generate_calls = fake_cli({
         list_configs = { result = { active = { configuration = "Debug", platform = "x64" } } },
         generate = { result = { database = database } },
       })
@@ -500,10 +604,17 @@ describe("msvclsp.commands", function()
       local lsp, restart_calls = fake_lsp()
       ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
 
+      -- Populate the per-root database cache the way a prior MsvclspGenerate would.
       vim.cmd("MsvclspGenerate")
+      local calls_after_generate = #list_calls
+
       vim.cmd("MsvclspSelectSolution")
       vim.cmd("MsvclspRestart")
 
+      -- Cancelling never touches list_configs/generate again, and the cached database from
+      -- the earlier MsvclspGenerate survives to serve MsvclspRestart.
+      MiniTest.expect.equality(#list_calls, calls_after_generate)
+      MiniTest.expect.equality(#generate_calls, 1)
       MiniTest.expect.equality(restart_calls[#restart_calls], { database = database, root = "/root" })
     end)
   end)

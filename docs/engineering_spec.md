@@ -699,9 +699,16 @@ belongs to `main.rs`.
   re-prompt; `picker.lua`'s `M.pick_solution(root, on_choice)` is its only caller — it presents
   `M.solutions(root)` via `vim.ui.select` (marking the active one, mirroring `pick_config`'s own
   marker), and on selection calls the setter before invoking `on_choice(chosen)`. It does not
-  regenerate `compile_commands.json` or restart clangd — restoring the newly active solution's own
-  remembered configuration/platform is V1-05's job. See [ADR 33](adr/33-nvim-solution-discovery.md)
-  and [ADR 45](adr/45-nvim-solution-picker.md).
+  itself regenerate `compile_commands.json` or restart clangd; `commands.lua`'s
+  `MsvclspSelectSolution` handler does that immediately after, through the same
+  `generate_and_restart(solution, root, force)` helper `MsvclspGenerate` calls (threading its own
+  `force` through from `--bang`) — `list_configs` for the newly chosen solution specifically
+  (never reusing whichever configuration was active for the solution being switched away from),
+  `generate` called unforced when an active configuration is found, then `maybe_restart`. No
+  active configuration for the new solution produces a warning naming that solution rather than a
+  silent guess. See
+  [ADR 33](adr/33-nvim-solution-discovery.md), [ADR 45](adr/45-nvim-solution-picker.md), and
+  [ADR 46](adr/46-nvim-switch-solution.md).
 - Configuration/platform selection: `picker.lua`'s `M.pick_config(solution, root, on_choice)` calls
   `cli.list_configs`, presents the results via `vim.ui.select` with the active pair marked
   `"  (active)"` (matching `SolutionConfigs::render_human`'s own marker), and on selection calls

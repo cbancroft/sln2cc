@@ -1998,10 +1998,20 @@ behind them have been tested.
   [ADR 37](adr/37-nvim-user-commands.md). No new code, tests, or changelog entry: the changelog
   already covers `:MsvclspRescan` under `[Unreleased]` from MVP-31's own entry.
 
-- [ ] **V1-05 — Switch-solution command** · `feat/nvim-switch-solution` · ~5h
+- [x] **V1-05 — Switch-solution command** · `feat/nvim-switch-solution` · ~5h
   Change the active solution, restore *that* solution's own remembered configuration/platform,
   regenerate if needed, and restart clangd. Tests: mini.test specs asserting per-solution
   configuration restoration rather than a carried-over global value.
+
+  **Outcome:** `commands.lua`'s `MsvclspSelectSolution` handler grows the same
+  `list_configs -> check active -> generate -> maybe_restart` tail `MsvclspGenerate` already
+  runs, called against whichever solution `picker.pick_solution` (V1-03) hands back rather than
+  the previously active one — closing the gap ADR 45 named explicitly for this issue. The
+  regenerate is unforced (unlike `pick_config`'s forced one): switching solutions changes which
+  files are in play, so the CLI's own mtime staleness check is meaningful here, and forcing
+  unconditionally would waste work regenerating an already-current solution on every switch. No
+  active configuration for the newly chosen solution produces a named warning rather than a
+  guess. See [ADR 46](adr/46-nvim-switch-solution.md).
 
 - [ ] **V1-06 — Inline first-run discovery** · `feat/nvim-inline-discovery` · ~3h
   Run discovery automatically when selection is requested and no cache exists, keeping it one
