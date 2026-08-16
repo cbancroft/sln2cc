@@ -216,3 +216,126 @@ describe("msvclsp.picker.pick_config", function()
     MiniTest.expect.equality(select_called, false)
   end)
 end)
+
+-- pick_solution -- V1-03. Unlike pick_config, this depends on msvclsp.discovery rather than
+-- msvclsp.cli: choosing a solution is inherently a discovery.lua concern (ADR 33, ADR 45),
+-- breaking ADR 35's "picker depends only on cli.lua" precedent deliberately.
+
+--- Builds a fake `msvclsp.discovery`. `solutions_result` is the plain list `M.solutions`
+--- returns; `active` is what `M.active_solution` returns before any pick is made.
+--- @param opts { solutions: string[], active: string|nil }
+--- @return table fake_discovery
+--- @return table[] set_calls each { root, solution }
+local function fake_discovery(opts)
+  local set_calls = {}
+  local fake = {
+    solutions = function()
+      return opts.solutions
+    end,
+    active_solution = function()
+      return opts.active
+    end,
+    set_active_solution = function(root, solution)
+      table.insert(set_calls, { root = root, solution = solution })
+    end,
+  }
+  return fake, set_calls
+end
+
+describe("msvclsp.picker.pick_solution", function()
+  local picker
+  local original_ui_select
+
+  before_each(function()
+    package.loaded["msvclsp.picker"] = nil
+    package.loaded["msvclsp.discovery"] = nil
+    original_ui_select = vim.ui.select
+  end)
+
+  after_each(function()
+    vim.ui.select = original_ui_select
+  end)
+
+  it("passes discovery.solutions' result to vim.ui.select", function()
+    local solutions = { "/root/App.sln", "/root/Other.sln" }
+    package.loaded["msvclsp.discovery"] = fake_discovery({ solutions = solutions })
+    picker = require("msvclsp.picker")
+
+    local select_fn, calls = fake_select(solutions[1])
+    vim.ui.select = select_fn
+
+    picker.pick_solution("/root", function() end)
+
+    MiniTest.expect.equality(calls[1].items, solutions)
+  end)
+
+  it("marks the active solution in the formatted item text", function()
+    local solutions = { "/root/App.sln", "/root/Other.sln" }
+    package.loaded["msvclsp.discovery"] =
+      fake_discovery({ solutions = solutions, active = "/root/Other.sln" })
+    picker = require("msvclsp.picker")
+
+    local select_fn, calls = fake_select(solutions[1])
+    vim.ui.select = select_fn
+
+    picker.pick_solution("/root", function() end)
+
+    local format_item = calls[1].opts.format_item
+    MiniTest.expect.equality(format_item("/root/Other.sln"):find("(active)", 1, true) ~= nil, true)
+    MiniTest.expect.equality(format_item("/root/App.sln"):find("(active)", 1, true) ~= nil, false)
+  end)
+
+  it("selecting an option persists it and calls on_choice with it", function()
+    local solutions = { "/root/App.sln", "/root/Other.sln" }
+    local fake, set_calls = fake_discovery({ solutions = solutions })
+    package.loaded["msvclsp.discovery"] = fake
+    picker = require("msvclsp.picker")
+    vim.ui.select = select(1, fake_select(solutions[2]))
+
+    local got, called = "sentinel", false
+    picker.pick_solution("/root", function(s)
+      got, called = s, true
+    end)
+
+    MiniTest.expect.equality(called, true)
+    MiniTest.expect.equality(got, solutions[2])
+    MiniTest.expect.equality(set_calls, { { root = "/root", solution = solutions[2] } })
+  end)
+
+  it("cancelling calls on_choice(nil) and never persists a choice", function()
+    local solutions = { "/root/App.sln" }
+    local fake, set_calls = fake_discovery({ solutions = solutions })
+    package.loaded["msvclsp.discovery"] = fake
+    picker = require("msvclsp.picker")
+    -- vim.ui.select invokes its callback with nil, mirroring a user backing out (<Esc>).
+    vim.ui.select = select(1, fake_select(nil))
+
+    local got, called = "sentinel", false
+    picker.pick_solution("/root", function(s)
+      got, called = s, true
+    end)
+
+    MiniTest.expect.equality(called, true)
+    MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(#set_calls, 0)
+  end)
+
+  it("an empty solution list notifies, calls on_choice(nil), never opens the selector", function()
+    package.loaded["msvclsp.discovery"] = fake_discovery({ solutions = {} })
+    picker = require("msvclsp.picker")
+
+    local select_called = false
+    vim.ui.select = function()
+      select_called = true
+    end
+
+    local got, called = "sentinel", false
+    picker.pick_solution("/root", function(s)
+      got, called = s, true
+    end)
+
+    MiniTest.expect.equality(called, true)
+    MiniTest.expect.equality(got, nil)
+    MiniTest.expect.equality(select_called, false)
+  end)
+end)

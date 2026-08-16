@@ -687,14 +687,21 @@ belongs to `main.rs`.
   matches or the buffer is unnamed. Resolved per buffer and cached, since every command calls it.
   See [ADR 28](adr/28-nvim-root-detection.md).
 - Solution discovery: `discovery.lua`'s `M.solutions(root?)` scans downward from the project root
-  in Lua — the CLI has no `discover` subcommand for the MVP (see [ADR 03](adr/03-cli-surface-and-json-contract.md))
+  in Lua — the CLI will never gain a `discover` subcommand (see
+  [ADR 03](adr/03-cli-surface-and-json-contract.md), [ADR 44](adr/44-drop-cli-side-discovery.md))
   — skipping directories named in `config.options.scan_ignore_dirs` and never descending past
   `scan_max_depth` levels, both configurable with defaults in `config.lua`. Results are cached per
   project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
-  `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns the first
-  (deterministically sorted) discovered solution — MVP assumes a single solution; an interactive
-  *solution* picker (choosing something other than "the first one found") arrives in V1. See
-  [ADR 33](adr/33-nvim-solution-discovery.md).
+  `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns a persisted choice
+  when one exists, falling back to the first (deterministically sorted) discovered solution
+  otherwise. `M.set_active_solution(root, solution)` records an explicit choice, both in the
+  in-memory cache and in `<root>/<data_dir>/nvim-solution.json` so later Neovim sessions don't
+  re-prompt; `picker.lua`'s `M.pick_solution(root, on_choice)` is its only caller — it presents
+  `M.solutions(root)` via `vim.ui.select` (marking the active one, mirroring `pick_config`'s own
+  marker), and on selection calls the setter before invoking `on_choice(chosen)`. It does not
+  regenerate `compile_commands.json` or restart clangd — restoring the newly active solution's own
+  remembered configuration/platform is V1-05's job. See [ADR 33](adr/33-nvim-solution-discovery.md)
+  and [ADR 45](adr/45-nvim-solution-picker.md).
 - Configuration/platform selection: `picker.lua`'s `M.pick_config(solution, root, on_choice)` calls
   `cli.list_configs`, presents the results via `vim.ui.select` with the active pair marked
   `"  (active)"` (matching `SolutionConfigs::render_human`'s own marker), and on selection calls
@@ -747,8 +754,12 @@ belongs to `main.rs`.
   the caller — `lsp.lua` depends on `config.lua` only, not `discovery.lua`, the same pattern
   `cli.lua`/`picker.lua` already establish. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
 - User commands: `commands.lua`'s `M.register()` creates `:MsvclspGenerate`,
-  `:MsvclspSelectConfig`, `:MsvclspRescan`, and `:MsvclspRestart` (`:MsvclspSelectSolution` stays
-  unregistered until V1-03 gives it a `pick_solution` to call). Registration happens
+  `:MsvclspSelectConfig`, `:MsvclspRescan`, `:MsvclspRestart`, and `:MsvclspSelectSolution`.
+  `:MsvclspSelectSolution` delegates to `picker.pick_solution(root, on_choice)`; on a successful
+  pick it clears `commands.lua`'s own per-root `last_database` cache, since a cached database path
+  belongs to the previous solution and would otherwise leak into a later `:MsvclspRestart`. It does
+  not regenerate or restart clangd itself — see [ADR 45](adr/45-nvim-solution-picker.md).
+  Registration happens
   unconditionally from `plugin/msvclsp.lua` at Neovim startup, not from `setup()` — cheap enough
   (five `nvim_create_user_command` calls, no filesystem access) not to violate "never scan the
   filesystem at startup." Each handler checks an internal `M._ready` flag first, flipped by
@@ -818,6 +829,11 @@ belongs to `main.rs`.
   derives the root itself from where it was opened rather than taking it as a separate
   parameter. See [ADR 20](adr/20-state-file-shape.md) for the full shape and the reasoning
   behind root-relative (rather than absolute) keys.
+- A second, plugin-owned file, `.msvclsp/nvim-solution.json`, holds `{"solution": "<absolute
+  path>"}` — the solution `discovery.lua`'s `M.pick_solution` last chose for this root. Unlike
+  `state.json`, this file is entirely Neovim's own (never read or written by the CLI); a missing
+  or corrupt file degrades to "nothing remembered" rather than an error, since nothing downstream
+  depends on it for correctness. See [ADR 45](adr/45-nvim-solution-picker.md).
 
 ## VS/Project Schema Support
 

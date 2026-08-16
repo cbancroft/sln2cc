@@ -1961,10 +1961,29 @@ behind them have been tested.
   switching away and back. Tests: two solutions generating into distinct directories without
   clobbering each other.
 
-- [ ] **V1-03 — Solution picker with persistence** · `feat/nvim-solution-picker` · ~6h
+- [x] **V1-03 — Solution picker with persistence** · `feat/nvim-solution-picker` · ~6h
   Present discovered solutions via `vim.ui.select` and remember the choice per project root so
   later sessions don't re-prompt. Tests: mini.test specs for selection, persistence across
   simulated restarts, and cancellation.
+
+  **Outcome:** `discovery.lua` gains `M.set_active_solution(root, solution)` — the setter ADR 33
+  reserved a seam for — which updates the in-memory cache and writes
+  `<root>/<data_dir>/nvim-solution.json`; `M.active_solution`'s cold path now checks that file
+  before falling back to "first found," so a rescan (which still clears the in-memory cache)
+  re-derives the persisted answer rather than reverting to it. Unlike `db.rs`'s `state.json`, a
+  missing or corrupt persisted file degrades silently to "nothing remembered" rather than an
+  error — nothing downstream depends on it for correctness, only for which solution is offered
+  first. `picker.lua`'s `M.pick_solution(root, on_choice)` is real: it depends on `discovery.lua`
+  (breaking ADR 35's "picker depends only on `cli.lua`" precedent deliberately, since choosing a
+  solution is inherently a scan-and-select concern), marks the active solution in `format_item`
+  mirroring `pick_config`'s own marker, and calls `set_active_solution` before `on_choice`.
+  Grepping V1-03 across `docs/` surfaced the gap ADR 37 named but didn't design for: `commands.lua`
+  now registers `MsvclspSelectSolution`, delegating to `pick_solution` and clearing its own
+  per-root `last_database` cache on a successful pick, so a stale database path from the previous
+  solution can't leak into a later `:MsvclspRestart`. This issue deliberately does **not**
+  regenerate `compile_commands.json` or restart clangd on a solution switch — restoring the newly
+  active solution's own remembered configuration/platform is V1-05's job, not this one's. See
+  [ADR 45](adr/45-nvim-solution-picker.md).
 
 - [ ] **V1-04 — Rescan command** · `feat/nvim-rescan` · ~2h
   Invalidate the discovery cache and re-scan on demand for when solutions are added, moved, or

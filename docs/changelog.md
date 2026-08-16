@@ -161,6 +161,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   reaching the `--force` flag `generate` has always accepted from the command line. Plain
   `:MsvclspGenerate` is unchanged.
 
+- `:MsvclspSelectSolution` lets you switch which `.sln` msvclsp targets when more than one is
+  found under your project root, and remembers your choice across restarts so you're not asked
+  again next session.
+
 - The MVP is now verified working end-to-end, not just implemented: a real `clangd` attaches,
   completes, resolves go-to-definition across translation units, and reports no missing-include
   diagnostics against a generated database, both for a fixture and for a real, multi-project

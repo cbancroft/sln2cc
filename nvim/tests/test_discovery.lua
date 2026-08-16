@@ -192,6 +192,104 @@ describe("msvclsp.discovery", function()
     end
   end)
 
+  -- set_active_solution / persistence -- V1-03. discovery.lua's own file, not the CLI's
+  -- state.json: ADR 44 assigns "remembering a choice" to the plugin, never the CLI.
+
+  it("set_active_solution overrides the discovered default", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+
+      -- "App.sln" would otherwise win as the sorted-first default.
+      discovery.set_active_solution(tree, tree .. "/Other.sln")
+
+      MiniTest.expect.equality(discovery.active_solution(tree), tree .. "/Other.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("the choice persists across a fresh require (simulated restart)", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+
+      discovery.set_active_solution(tree, tree .. "/Other.sln")
+
+      -- Drop every module-level cache by reloading, mirroring a fresh Neovim session.
+      package.loaded["msvclsp.discovery"] = nil
+      local reloaded = require("msvclsp.discovery")
+
+      MiniTest.expect.equality(reloaded.active_solution(tree), tree .. "/Other.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a rescan does not forget a persisted choice", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+      discovery.set_active_solution(tree, tree .. "/Other.sln")
+
+      -- rescan() clears the in-memory active-solution cache; the persisted choice must still
+      -- win over "first found" once it's re-derived.
+      discovery.rescan(tree)
+
+      MiniTest.expect.equality(discovery.active_solution(tree), tree .. "/Other.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("persisted choices are isolated per project root", function()
+    local tree_a, cleanup_a = make_tree()
+    local tree_b, cleanup_b = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree_a, "App.sln")
+      make_sln(tree_a, "Other.sln")
+      make_sln(tree_b, "App.sln")
+      make_sln(tree_b, "Other.sln")
+
+      discovery.set_active_solution(tree_a, tree_a .. "/Other.sln")
+
+      MiniTest.expect.equality(discovery.active_solution(tree_a), tree_a .. "/Other.sln")
+      -- tree_b never had a choice persisted, so it still falls back to "first found."
+      MiniTest.expect.equality(discovery.active_solution(tree_b), tree_b .. "/App.sln")
+    end)
+    cleanup_a()
+    cleanup_b()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a corrupt persisted file falls back to first-found, not an error", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      vim.fn.mkdir(tree .. "/.msvclsp", "p")
+      local fd = assert(io.open(tree .. "/.msvclsp/nvim-solution.json", "w"))
+      fd:write("{ not valid json")
+      fd:close()
+
+      MiniTest.expect.equality(discovery.active_solution(tree), tree .. "/App.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
   it("finds a nested solution several levels below the root", function()
     local tree, cleanup = make_tree()
     local ok, err = pcall(function()

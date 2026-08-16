@@ -14,6 +14,7 @@ M.commands = {
   MsvclspSelectConfig = "Choose the configuration/platform for the active solution",
   MsvclspRescan = "Re-scan the project tree for .sln files",
   MsvclspRestart = "Restart clangd against the current compilation database",
+  MsvclspSelectSolution = "Choose the active solution among discovered .sln files"
 }
 
 --- Flipped by init.lua once config.setup() succeeds. Commands registerd before this is 
@@ -116,6 +117,21 @@ function M._select_config()
   end)
 end
 
+function M._select_solution()
+  if not ensure_ready() then
+    return
+  end
+
+  local root = discovery.project_root()
+  picker.pick_solution(root, function(solution)
+    if not solution then
+      return
+    end
+    -- The previous solution's generated db no longer applies to this root
+    last_database[root] = nil
+  end)
+end
+
 function M._rescan()
   if not ensure_ready() then
     return
@@ -140,6 +156,7 @@ local handlers = {
   MsvclspSelectConfig = M._select_config,
   MsvclspRescan = M._rescan,
   MsvclspRestart = M._restart,
+  MsvclspSelectSolution = M._select_solution,
 }
 
 --- Registers every command in M.commands

@@ -17,6 +17,56 @@ local solutions_cache = {}
 --- root -> memoized active solution path (or false, meaning we scanned and found nothing).
 local active_cache = {}
 
+local SOLUTION_STATE_FILE = "nvim-solution.json"
+
+--- Path to the persisted active solution file for `root`, under its own `.msvclsp` equivalent data directory.
+local function persisted_path(root)
+  return root .. '/' .. config.options.data_dir .. '/' .. SOLUTION_STATE_FILE
+end
+
+--- Reads the persisted solution for `root`, or nil if nothing is recorded, the file is absent,
+--- or it fails to parse. 
+--- @param root string
+--- @return string|nil
+local function read_persisted(root)
+  local fd = io.open(persisted_path(root), "r")
+  if not fd then
+    return nil
+  end
+  local contents = fd:read("*a")
+  fd:close()
+
+  local ok, decoded = pcall(vim.json.decode, contents)
+  if not ok or type(decoded) ~= "table" then
+    return nil
+  end
+  return decoded.solution
+end
+
+--- Writes `solution` as the persisted choice for `root`. Write failures are printed to the user
+--- but don't block execution.
+--- @param root string
+--- @param solution string
+local function write_persisted(root, solution)
+  local dir = root .. "/" .. config.options.data_dir
+  vim.fn.mkdir(dir, "p")
+  local fd = io.open(persisted_path(root), "w")
+  if not fd then
+    vim.notify("msvclsp: could not persist the selected solution for " .. root, vim.log.levels.WARN)
+    return
+  end
+  fd:write(vim.json.encode( { solution = solution }))
+  fd:close()
+end
+
+--- Explicitly sets the active solution for `root`, persisting it so later sessions don't re-prompt.
+--- @param root string
+--- @param solution string
+function M.set_active_solution(root, solution)
+  active_cache[root] = solution
+  write_persisted(root, solution)
+end
+
 --- Recursively collects `.sln` paths under `dir`, skipping `config.options.scan_ignore_dirs`
 --- by name and never descending past `config.options.scan_max_depth` levels below `root`.
 --- @param dir string
@@ -101,9 +151,9 @@ function M.rescan(root)
   return M.solutions(root)
 end
 
---- The active solution for `root` (default: `M.project_root()`): the first (sorted) `.sln`
---- discovered by `M.solutions()`, memoized. MVP assumes a single solution; choosing a
---- different one than "the first found" is V1's picker's job. `nil` if none was found.
+--- The active solution for `root` (default: `M.project_root()`), memoized: a persisted choice
+--- set via `M.set_active_solution()` if one exists, otherwise the first (sorted) `.sln`
+--- discovered by `M.solutions()`. `nil` if none was found.
 --- @param root string|nil
 --- @return string|nil
 function M.active_solution(root)
@@ -113,7 +163,8 @@ function M.active_solution(root)
     return cached or nil
   end
 
-  local solution = M.solutions(root)[1]
+  local persisted = read_persisted(root)
+  local solution = persisted or M.solutions(root)[1]
   active_cache[root] = solution or false
   return solution
 end
