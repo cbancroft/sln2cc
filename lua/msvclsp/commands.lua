@@ -30,6 +30,16 @@ function M.mark_ready()
   M._ready = true
 end
 
+--- Restarts clangd for `root` iff config.options.auto_restart_clangd.
+--- @param database string
+--- @param root string
+local function maybe_restart(database, root)
+  last_database[root] = database
+  if config.options.auto_restart_clangd then
+    lsp.restart(database, root)
+  end
+end
+
 --- Guards every command body. Returns false (and notifies) if setup() hasn't completed.
 --- @return boolean
 local function ensure_ready()
@@ -54,15 +64,38 @@ local function resolve_solution()
   return solution, root
 end
 
---- Restarts clangd for `root` iff config.options.auto_restart_clangd.
---- @param database string
+--- Runs list_configs -> generate -> maybe_restart for `solution`. Switching solutions changes 
+--- which files are in play so the mtime staleness check is useful here.
+--- @param solution string
 --- @param root string
-local function maybe_restart(database, root)
-  last_database[root] = database
-  if config.options.auto_restart_clangd then
-    lsp.restart(database, root)
-  end
+--- @param force bool
+local function generate_and_restart(solution, root, force) 
+  cli.list_configs(solution, root, function(result, err)
+    if err then
+      vim.notify("msvclsp: " .. err.message, vim.log.levels.ERROR)
+      return
+    end
+
+    if not result.active then
+      vim.notify(
+        "msvclsp: no configuration selected yet for "
+        .. solution
+        .. ". Run :MsvclspSelectConfig",
+        vim.log.levels.WARN
+      )
+      return
+    end
+
+    cli.generate(solution, result.active, root, force, function(gen_result, gen_err) 
+      if gen_err then
+        vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
+        return
+      end
+      maybe_restart(gen_result.database, root)
+    end)
+  end)
 end
+
 
 function M._generate(opts)
   if not ensure_ready() then
@@ -74,27 +107,7 @@ function M._generate(opts)
   end
   local force = opts and opts.bang or false
 
-  cli.list_configs(solution, root, function(result, err)
-    if err then
-      vim.notify("msvclsp: " .. err.message, vim.log.levels.ERROR)
-      return
-    end
-    if not result.active then
-      vim.notify(
-        "msvclsp: no configuration selected yet. Run :MsvclspSelectConfig",
-        vim.log.levels.WARN
-      )
-      return
-    end
-
-    cli.generate(solution, result.active, root, force, function(gen_result, gen_err)
-      if gen_err then
-        vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
-        return
-      end
-      maybe_restart(gen_result.database, root)
-    end)
-  end)
+  generate_and_restart(solution, root, force)
 end
 
 function M._select_config()
@@ -129,6 +142,7 @@ function M._select_solution()
     end
     -- The previous solution's generated db no longer applies to this root
     last_database[root] = nil
+    generate_and_restart(solution, root, false)
   end)
 end
 
