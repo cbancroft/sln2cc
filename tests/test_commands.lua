@@ -51,20 +51,26 @@ local function fake_cli(opts)
 end
 
 --- Builds a fake `msvclsp.picker`. `pick_config` calls `on_choice` synchronously with
---- `opts.config`/`opts.database`.
---- @param opts { config: table|nil, database: string|nil }|nil
+--- `opts.config`/`opts.database`; `pick_solution` (V1-03) calls its `on_choice` synchronously
+--- with `opts.solution`.
+--- @param opts { config: table|nil, database: string|nil, solution: string|nil }|nil
 --- @return table fake_picker
 --- @return table[] pick_config_calls
+--- @return table[] pick_solution_calls each { root }
 local function fake_picker(opts)
   opts = opts or {}
-  local calls = {}
+  local pick_config_calls, pick_solution_calls = {}, {}
   local fake = {
     pick_config = function(solution, root, on_choice)
-      table.insert(calls, { solution = solution, root = root })
+      table.insert(pick_config_calls, { solution = solution, root = root })
       on_choice(opts.config, opts.database)
     end,
+    pick_solution = function(root, on_choice)
+      table.insert(pick_solution_calls, { root = root })
+      on_choice(opts.solution)
+    end,
   }
-  return fake, calls
+  return fake, pick_config_calls, pick_solution_calls
 end
 
 --- Builds a fake `msvclsp.lsp`.
@@ -132,7 +138,7 @@ describe("msvclsp.commands", function()
   end)
 
   describe("register", function()
-    it("creates the four in-scope commands and marks MsvclspSelectSolution absent", function()
+    it("creates all five commands, including MsvclspSelectSolution (V1-03)", function()
       local commands = load_commands({
         discovery = fake_discovery(),
         cli = (fake_cli()),
@@ -146,13 +152,13 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(vim.fn.exists(":MsvclspSelectConfig"), 2)
       MiniTest.expect.equality(vim.fn.exists(":MsvclspRescan"), 2)
       MiniTest.expect.equality(vim.fn.exists(":MsvclspRestart"), 2)
-      MiniTest.expect.equality(vim.fn.exists(":MsvclspSelectSolution"), 0)
-      MiniTest.expect.equality(commands.commands.MsvclspSelectSolution, nil)
+      MiniTest.expect.equality(vim.fn.exists(":MsvclspSelectSolution"), 2)
+      MiniTest.expect.equality(type(commands.commands.MsvclspSelectSolution), "string")
     end)
 
     it("accepts a bang only on MsvclspGenerate", function()
-      -- MVP-46: :MsvclspGenerate! forces regeneration. The other three commands have no meaning
-      -- for a bang, and Neovim itself refuses `!` on a command that didn't declare it -- that
+      -- MVP-46: :MsvclspGenerate! forces regeneration. The other commands have no meaning for
+      -- a bang, and Neovim itself refuses `!` on a command that didn't declare it -- that
       -- refusal is the right behavior for them, not something to route around.
       load_commands({
         discovery = fake_discovery(),
@@ -166,6 +172,7 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(registered.MsvclspSelectConfig.bang, false)
       MiniTest.expect.equality(registered.MsvclspRescan.bang, false)
       MiniTest.expect.equality(registered.MsvclspRestart.bang, false)
+      MiniTest.expect.equality(registered.MsvclspSelectSolution.bang, false)
     end)
   end)
 
@@ -174,7 +181,7 @@ describe("msvclsp.commands", function()
       local discovery, rescan_calls = fake_discovery({ solution = "app.sln" })
       local cli, list_calls = fake_cli()
       local chosen = { configuration = "Debug", platform = "x64" }
-      local picker, pick_calls = fake_picker({ config = chosen })
+      local picker, pick_calls, pick_solution_calls = fake_picker({ config = chosen })
       local lsp, restart_calls = fake_lsp()
       local commands =
         load_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
@@ -184,12 +191,14 @@ describe("msvclsp.commands", function()
       vim.cmd("MsvclspSelectConfig")
       vim.cmd("MsvclspRescan")
       vim.cmd("MsvclspRestart")
+      vim.cmd("MsvclspSelectSolution")
 
       MiniTest.expect.equality(#list_calls, 0)
       MiniTest.expect.equality(#pick_calls, 0)
+      MiniTest.expect.equality(#pick_solution_calls, 0)
       MiniTest.expect.equality(#rescan_calls, 0)
       MiniTest.expect.equality(#restart_calls, 0)
-      MiniTest.expect.equality(#notify_calls, 4)
+      MiniTest.expect.equality(#notify_calls, 5)
       for _, call in ipairs(notify_calls) do
         MiniTest.expect.equality(call.level, vim.log.levels.ERROR)
       end
@@ -439,6 +448,63 @@ describe("msvclsp.commands", function()
       -- commands.lua doesn't notify a second time -- lsp.restart is stubbed here, so the real
       -- warning (asserted in test_lsp.lua) doesn't fire, but commands.lua must not duplicate it.
       MiniTest.expect.equality(#notify_calls, 0)
+    end)
+  end)
+
+  describe("MsvclspSelectSolution", function()
+    it("delegates to picker.pick_solution with the resolved root", function()
+      local discovery = fake_discovery({ root = "/root" })
+      local picker, _, pick_solution_calls = fake_picker({ solution = nil })
+      local cli, lsp = fake_cli(), fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectSolution")
+
+      MiniTest.expect.equality(pick_solution_calls, { { root = "/root" } })
+    end)
+
+    it("a successful pick invalidates the root's cached database", function()
+      config.setup({ auto_restart_clangd = false })
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
+      local cli = fake_cli({
+        list_configs = { result = { active = { configuration = "Debug", platform = "x64" } } },
+        generate = { result = { database = database } },
+      })
+      local picker = fake_picker({ solution = "/root/Other.sln" })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      -- Populate the per-root database cache the way a prior MsvclspGenerate would.
+      -- auto_restart_clangd is off so this populates the cache without itself restarting,
+      -- keeping the restart below attributable only to MsvclspRestart's own resolution logic.
+      vim.cmd("MsvclspGenerate")
+      MiniTest.expect.equality(#restart_calls, 0)
+
+      vim.cmd("MsvclspSelectSolution")
+      vim.cmd("MsvclspRestart")
+
+      -- The cached database belonged to the old solution; invalidation means MsvclspRestart
+      -- falls through to lsp.restart(nil, root) rather than reusing the stale path.
+      MiniTest.expect.equality(restart_calls[#restart_calls], { database = nil, root = "/root" })
+    end)
+
+    it("cancelling (on_choice(nil)) leaves a cached database untouched", function()
+      local discovery = fake_discovery({ root = "/root", solution = "app.sln" })
+      local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
+      local cli = fake_cli({
+        list_configs = { result = { active = { configuration = "Debug", platform = "x64" } } },
+        generate = { result = { database = database } },
+      })
+      local picker = fake_picker({ solution = nil })
+      local lsp, restart_calls = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+      vim.cmd("MsvclspSelectSolution")
+      vim.cmd("MsvclspRestart")
+
+      MiniTest.expect.equality(restart_calls[#restart_calls], { database = database, root = "/root" })
     end)
   end)
 end)

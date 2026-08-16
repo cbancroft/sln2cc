@@ -1,13 +1,8 @@
 --- `vim.ui.select` wrappers for choosing a solution and a configuration/platform.
 local cli = require("msvclsp.cli")
+local discovery = require("msvclsp.discovery")
 
 local M = {}
-
---- Prompt for the active solution. Runs discovery first if nothing is cached yet.
----@param on_choice fun(solution: table|nil)
-function M.pick_solution(on_choice) -- luacheck: no unused args
-  error("not yet implemented")
-end
 
 --- Renders a `ConfigPlatform` table.
 --- @param cfg {configuration: string, platform: string}
@@ -68,6 +63,35 @@ function M.pick_config(solution, root, on_choice)
         on_choice(chosen, gen_result.database)
       end)
     end)
+  end)
+end
+
+--- Prompt for the active solution among those discovered under `root`. Selecting one persists 
+--- it via discovery.set_active_solution so later sessions don't re-prompt. Does not regenerate
+--- or restart clangd. That happens as part of V1-05.
+--- @param root string project root
+--- @param on_choice fun(solution: string|nil)
+function M.pick_solution(root, on_choice)
+  local solutions = discovery.solutions(root)
+  if #solutions == 0 then
+    vim.notify("msvclsp: no solutions found under " .. root, vim.log.levels.WARN)
+    on_choice(nil)
+    return
+  end
+
+  local active = discovery.active_solution(root)
+  vim.ui.select(solutions, {
+    prompt = "Select solution:",
+    format_item = function(path)
+      return vim.fs.basename(path) .. (path == active and "  (active)" or "")
+    end,
+  }, function(chosen)
+    if not chosen then
+      on_choice(nil)
+      return
+    end
+    discovery.set_active_solution(root, chosen)
+    on_choice(chosen)
   end)
 end
 
