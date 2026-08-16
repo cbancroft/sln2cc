@@ -2013,10 +2013,21 @@ behind them have been tested.
   active configuration for the newly chosen solution produces a named warning rather than a
   guess. See [ADR 46](adr/46-nvim-switch-solution.md).
 
-- [ ] **V1-06 — Inline first-run discovery** · `feat/nvim-inline-discovery` · ~3h
+- [x] **V1-06 — Inline first-run discovery** · `feat/nvim-inline-discovery` · ~3h
   Run discovery automatically when selection is requested and no cache exists, keeping it one
   user action instead of two. Tests: mini.test spec asserting discovery runs then the picker
   appears.
+
+  **Outcome:** Already done, in the same sense as V1-04: `discovery.lua`'s `M.solutions` and
+  `M.active_solution` have scanned and cached lazily, on first call, since MVP-27 (`26ab26e`)
+  — there was never a separate discover step a caller had to run first, and `picker.lua`'s
+  `M.pick_solution` (V1-03) already relies on that laziness directly. Unlike V1-04, the exact
+  test this issue's own Tests: line called for didn't already exist: every existing
+  `pick_solution` spec in `test_picker.lua` stubbed `msvclsp.discovery` wholesale, so nothing
+  proved the real module's inline scan reaches the real picker with no prior scan. Closed by
+  adding that one integration-style test — real `discovery.lua` against a real temp tree,
+  through `picker.pick_solution`, only `vim.ui.select` stubbed — no `cli/src/**` or
+  `nvim/lua/**` change. See [ADR 47](adr/47-nvim-inline-discovery.md).
 
 ---
 

@@ -690,7 +690,10 @@ belongs to `main.rs`.
   in Lua — the CLI will never gain a `discover` subcommand (see
   [ADR 03](adr/03-cli-surface-and-json-contract.md), [ADR 44](adr/44-drop-cli-side-discovery.md))
   — skipping directories named in `config.options.scan_ignore_dirs` and never descending past
-  `scan_max_depth` levels, both configurable with defaults in `config.lua`. Results are cached per
+  `scan_max_depth` levels, both configurable with defaults in `config.lua`. Both `M.solutions` and
+  `M.active_solution` scan and populate their cache lazily, on first call, so a command requesting
+  a solution for the first time in a session triggers the scan inline rather than requiring a
+  prior `:MsvclspRescan` — see [ADR 47](adr/47-nvim-inline-discovery.md). Results are cached per
   project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
   `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns a persisted choice
   when one exists, falling back to the first (deterministically sorted) discovered solution
