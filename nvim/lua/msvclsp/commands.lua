@@ -50,25 +50,41 @@ local function ensure_ready()
   return false
 end
 
---- Resolves root + the active solution, notifying and returning nil if none is found.
---- Every command needs this pair, so its factored out rather than repeated 4 times.
---- @return string|nil solution
---- @return string|nil root
-local function resolve_solution()
+--- Resolves root + the active solution, calling `on_resolved(solution, root)`. `solution` is
+--- nil (with a WARN notify) if nothing was found. A vanished active solution -- one whose .sln
+--- no longer exists -- is not the same as "nothing found": it's cleared, the tree is rescanned,
+--- and the user is reprompted via picker.pick_solution instead of silently falling back to a
+--- different solution they never chose. See ADR 48.
+--- @param on_resolved fun(solution: string|nil, root: string)
+local function resolve_solution(on_resolved)
   local root = discovery.project_root()
-  local solution = discovery.active_solution(root)
+  local solution, vanished = discovery.active_solution(root)
+
+  if vanished then
+    vim.notify(
+      "msvclsp: active solution no longer exists: " .. vanished .. ". Pick a replacement.",
+      vim.log.levels.WARN
+    )
+    discovery.rescan(root)
+    picker.pick_solution(root, function(chosen)
+      on_resolved(chosen, root)
+    end)
+    return
+  end
+
   if not solution then
     vim.notify("msvclsp: no solution found under " .. root, vim.log.levels.WARN)
-    return nil, root
+    on_resolved(nil, root)
+    return
   end
-  return solution, root
+  on_resolved(solution, root)
 end
 
 --- Runs list_configs -> generate -> maybe_restart for `solution`. Switching solutions changes 
 --- which files are in play so the mtime staleness check is useful here.
 --- @param solution string
 --- @param root string
---- @param force bool
+--- @param force boolean
 local function generate_and_restart(solution, root, force) 
   cli.list_configs(solution, root, function(result, err)
     if err then
@@ -101,13 +117,13 @@ function M._generate(opts)
   if not ensure_ready() then
     return
   end
-  local solution, root = resolve_solution()
-  if not solution then
-    return
-  end
   local force = opts and opts.bang or false
-
-  generate_and_restart(solution, root, force)
+  resolve_solution(function(solution, root)
+    if not solution then
+      return
+    end
+    generate_and_restart(solution, root, force)
+  end)
 end
 
 function M._select_config()
@@ -115,18 +131,16 @@ function M._select_config()
     return
   end
 
-  local solution, root = resolve_solution()
-  if not solution then
-    return
-  end
-
-  -- picker.pick_config's on_choice now hands back the database from its internal generate call, 
-  -- along with the picked config.
-  picker.pick_config(solution, root, function(chosen, database)
-    if not chosen then
+  resolve_solution(function(solution, root) 
+    if not solution then
       return
     end
-    maybe_restart(database, root)
+    picker.pick_config(solution, root, function(chosen, database) 
+      if not chosen then
+        return
+      end
+      maybe_restart(database, root)
+    end)
   end)
 end
 

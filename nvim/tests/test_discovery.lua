@@ -273,6 +273,87 @@ describe("msvclsp.discovery", function()
     end
   end)
 
+  -- vanished-solution detection -- V2-01. Resolves project_spec.md's "what happens when the
+  -- remembered/active solution's .sln file no longer exists" Open Question: rather than
+  -- returning a dead path (or silently substituting a different solution the user never
+  -- chose, the way a corrupt persisted file does above), active_solution reports the vanished
+  -- path via a second return value and clears its own stale state. See ADR 48.
+
+  it("a deleted persisted solution is reported as vanished and not returned", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      local target = tree .. "/App.sln"
+      discovery.set_active_solution(tree, target)
+
+      vim.fn.delete(target)
+
+      local solution, vanished = discovery.active_solution(tree)
+      MiniTest.expect.equality(solution, nil)
+      MiniTest.expect.equality(vanished, target)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a vanished solution's persisted choice is cleared, not reported forever", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+      local target = tree .. "/App.sln"
+      discovery.set_active_solution(tree, target)
+      vim.fn.delete(target)
+
+      -- First call discovers and reports the vanished path.
+      local _, first_vanished = discovery.active_solution(tree)
+      MiniTest.expect.equality(first_vanished, target)
+
+      -- A second call must not keep reporting the same dead path -- the persisted choice was
+      -- cleared, so this falls through to whatever's next: the other discovered solution.
+      local solution, second_vanished = discovery.active_solution(tree)
+      MiniTest.expect.equality(second_vanished, nil)
+      MiniTest.expect.equality(solution, tree .. "/Other.sln")
+
+      -- The clear reached disk too, not just the in-memory cache -- a fresh require (simulated
+      -- restart) must not resurrect the dead persisted choice either.
+      package.loaded["msvclsp.discovery"] = nil
+      local reloaded = require("msvclsp.discovery")
+      local reloaded_solution, reloaded_vanished = reloaded.active_solution(tree)
+      MiniTest.expect.equality(reloaded_vanished, nil)
+      MiniTest.expect.equality(reloaded_solution, tree .. "/Other.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a moved solution is found again after a rescan", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      local old_path = tree .. "/App.sln"
+      discovery.set_active_solution(tree, old_path)
+
+      -- Simulate a move: the old path is gone, the same solution now lives elsewhere under
+      -- the same tree. There's no file-identity tracking here (see ADR 48) -- this is
+      -- indistinguishable from "deleted, then an unrelated file appeared" and recovers the
+      -- same way: rescan surfaces the new location once someone asks.
+      vim.fn.delete(old_path)
+      make_sln(tree, "Moved/App.sln")
+
+      local refreshed = discovery.rescan(tree)
+      MiniTest.expect.equality(refreshed, { tree .. "/Moved/App.sln" })
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
   it("a corrupt persisted file falls back to first-found, not an error", function()
     local tree, cleanup = make_tree()
     local ok, err = pcall(function()

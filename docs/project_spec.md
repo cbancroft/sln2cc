@@ -90,6 +90,10 @@ rework.
   define different configuration/platform names, so switching back to a previously-used solution
   restores that solution's own last-used configuration/platform rather than falling back to a
   single global value.
+- **A vanished active solution is detected and prompts for a replacement.** If the remembered
+  `.sln` no longer exists on disk — moved or deleted — it is not silently replaced with a
+  different solution the user never chose: the stale choice is cleared, the tree is rescanned,
+  and the picker reopens so the user picks explicitly. See [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
 
 # Goals
 
@@ -105,7 +109,5 @@ rework.
 - How MSVC toolset/Windows SDK include paths and versions are discovered.
 - CLI subcommand surface and output contract between the binary and the Neovim plugin.
 - Local configuration file format and contents.
-- What happens when the remembered/active solution's `.sln` file no longer exists on disk (moved
-  or deleted)?
 - Should there be a way to explicitly pin/override the active solution via config (e.g. for CI or
   scripting use), bypassing the interactive picker?

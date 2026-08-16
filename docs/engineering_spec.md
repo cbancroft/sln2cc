@@ -697,7 +697,12 @@ belongs to `main.rs`.
   project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
   `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` returns a persisted choice
   when one exists, falling back to the first (deterministically sorted) discovered solution
-  otherwise. `M.set_active_solution(root, solution)` records an explicit choice, both in the
+  otherwise — and a second return value, `vanished`, carries the previously-active path when a
+  call just discovered its `.sln` no longer exists on disk. Existence is checked fresh on every
+  call, not only when the cache is cold, and a vanished path is never silently replaced with a
+  different solution: the stale in-memory and persisted state is cleared and the caller decides
+  how to recover. See [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
+  `M.set_active_solution(root, solution)` records an explicit choice, both in the
   in-memory cache and in `<root>/<data_dir>/nvim-solution.json` so later Neovim sessions don't
   re-prompt; `picker.lua`'s `M.pick_solution(root, on_choice)` is its only caller — it presents
   `M.solutions(root)` via `vim.ui.select` (marking the active one, mirroring `pick_config`'s own
@@ -777,6 +782,14 @@ belongs to `main.rs`.
   error rather than either failing silently or being absent from command completion.
   `MsvclspGenerate` regenerates using `list-configs`' `.active` pair rather than prompting — no
   active configuration yet notifies the user to run `:MsvclspSelectConfig` instead of guessing one.
+  `MsvclspGenerate` and `MsvclspSelectConfig` both resolve the active solution through a shared
+  `resolve_solution(on_resolved)` helper; if `discovery.active_solution` reports the resolved path
+  has vanished (its `.sln` deleted or moved away), `resolve_solution` clears the stale choice,
+  rescans, and reprompts via `picker.pick_solution` before continuing the original command with
+  whatever gets picked — rather than failing on a raw CLI file-not-found error or silently
+  substituting a different solution. `MsvclspRestart` is unaffected: it never calls
+  `resolve_solution`, replaying `last_database[root]` directly. See
+  [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
   `MsvclspGenerate!` (the bang form) passes `--force` through to bypass the CLI's own staleness
   cache; the other three commands don't accept a bang. See
   [ADR 41](adr/41-nvim-force-regenerate.md).

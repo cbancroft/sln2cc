@@ -21,10 +21,14 @@ root in Neovim") — the module's own header comment has said so, unchanged, sin
 a single user action." `M.active_solution(root)` calls `M.solutions(root)` on its cold path,
 so it inherits the same laziness. `picker.lua`'s `M.pick_solution(root, on_choice)` (V1-03,
 ADR 45) calls `discovery.solutions(root)` directly with no precondition that a scan already
-ran. Every command in `commands.lua` — `MsvclspGenerate`, `MsvclspSelectConfig`,
-`MsvclspRestart` via `resolve_solution()`, and `MsvclspSelectSolution` via
-`M._select_solution()` — reaches discovery through one of these two entry points, so all of
-them already get inline discovery for free.
+ran. `commands.lua`'s `MsvclspGenerate` and `MsvclspSelectConfig` both reach discovery through
+`resolve_solution()`, and `MsvclspSelectSolution` reaches it through `M._select_solution()`'s
+own call to `picker.pick_solution` — so all three already get inline discovery for free.
+(`MsvclspRestart` is the exception: it never calls `discovery.active_solution` at all, only
+`discovery.project_root()` to key its own `last_database` cache, so it has no discovery step —
+inline or otherwise — to collapse. An earlier draft of this ADR listed it among
+`resolve_solution()`'s callers; it never was one. Corrected while researching V2-01, whose own
+ADR 48 needed `resolve_solution()`'s real call sites to be accurate.)
 
 This is the same shape V1-04 ("Rescan command") hit: a todo item describing work a prior issue
 had already done as a matter of course, not a deliberate stopgap waiting to be finished. It

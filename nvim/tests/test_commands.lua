@@ -2,8 +2,10 @@
 -- (package.loaded swap), the same seam every non-cli.lua module's tests use per CLAUDE.md §4 --
 -- these specs never invoke the real binary or touch real LSP state.
 
---- Builds a fake `msvclsp.discovery`.
---- @param opts { root: string|nil, solution: string|nil, rescan_result: string[]|nil }
+--- Builds a fake `msvclsp.discovery`. `vanished` (V2-01) makes `active_solution` report a
+--- vanished path as its second return value, alongside a nil solution -- mirroring what the
+--- real module does when the resolved `.sln` no longer exists on disk. See ADR 48.
+--- @param opts { root: string|nil, solution: string|nil, vanished: string|nil, rescan_result: string[]|nil }
 --- @return table fake_discovery
 --- @return table[] rescan_calls each is the root passed
 local function fake_discovery(opts)
@@ -15,7 +17,7 @@ local function fake_discovery(opts)
       return root
     end,
     active_solution = function()
-      return opts.solution
+      return opts.solution, opts.vanished
     end,
     rescan = function(r)
       table.insert(rescan_calls, r)
@@ -335,6 +337,47 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(#notify_calls, 1)
       MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.ERROR)
     end)
+
+    -- Vanished active solution -- V2-01. Resolves project_spec.md's "what happens when the
+    -- remembered/active solution's .sln no longer exists" Open Question: rescan, then
+    -- reprompt via the picker, rather than silently falling back to a different solution or
+    -- failing on a raw CLI file-not-found error. See ADR 48.
+
+    it("a vanished active solution rescans, reprompts via the picker, and generates for the newly picked one", function()
+      local discovery, rescan_calls =
+        fake_discovery({ root = "/root", solution = nil, vanished = "/root/Old.sln" })
+      local active = { configuration = "Release", platform = "x64" }
+      local cli, list_calls, generate_calls = fake_cli({
+        list_configs = { result = { active = active } },
+      })
+      local picker, _, pick_solution_calls = fake_picker({ solution = "/root/New.sln" })
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+
+      MiniTest.expect.equality(#rescan_calls, 1)
+      MiniTest.expect.equality(#pick_solution_calls, 1)
+      MiniTest.expect.equality(#generate_calls, 1)
+      MiniTest.expect.equality(list_calls[1].solution, "/root/New.sln")
+      MiniTest.expect.equality(generate_calls[1].solution, "/root/New.sln")
+      MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.WARN)
+    end)
+
+    it("cancelling the reprompt after a vanished solution never generates", function()
+      local discovery, rescan_calls =
+        fake_discovery({ root = "/root", solution = nil, vanished = "/root/Old.sln" })
+      local cli, _, generate_calls = fake_cli()
+      local picker, _, pick_solution_calls = fake_picker({ solution = nil })
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+
+      MiniTest.expect.equality(#rescan_calls, 1)
+      MiniTest.expect.equality(#pick_solution_calls, 1)
+      MiniTest.expect.equality(#generate_calls, 0)
+    end)
   end)
 
   describe("MsvclspSelectConfig", function()
@@ -391,6 +434,39 @@ describe("msvclsp.commands", function()
       vim.cmd("MsvclspSelectConfig")
 
       MiniTest.expect.equality(#restart_calls, 0)
+    end)
+
+    -- Vanished active solution -- V2-01. Same recovery flow as MsvclspGenerate's own vanished
+    -- cases above, but this command's continuation is picker.pick_config rather than
+    -- generate_and_restart. See ADR 48.
+
+    it("a vanished active solution rescans and reprompts before opening the config picker", function()
+      local discovery, rescan_calls =
+        fake_discovery({ root = "/root", solution = nil, vanished = "/root/Old.sln" })
+      local cli = fake_cli()
+      local picker, pick_config_calls, pick_solution_calls =
+        fake_picker({ solution = "/root/New.sln", config = nil, database = nil })
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectConfig")
+
+      MiniTest.expect.equality(#rescan_calls, 1)
+      MiniTest.expect.equality(#pick_solution_calls, 1)
+      MiniTest.expect.equality(#pick_config_calls, 1)
+      MiniTest.expect.equality(pick_config_calls[1].solution, "/root/New.sln")
+    end)
+
+    it("cancelling the reprompt after a vanished solution never opens the config picker", function()
+      local discovery = fake_discovery({ root = "/root", solution = nil, vanished = "/root/Old.sln" })
+      local cli = fake_cli()
+      local picker, pick_config_calls = fake_picker({ solution = nil })
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspSelectConfig")
+
+      MiniTest.expect.equality(#pick_config_calls, 0)
     end)
   end)
 

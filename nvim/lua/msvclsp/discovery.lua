@@ -24,6 +24,21 @@ local function persisted_path(root)
   return root .. '/' .. config.options.data_dir .. '/' .. SOLUTION_STATE_FILE
 end
 
+--- True if `path` exists on disk.
+--- @param path string
+--- @return boolean
+local function exists(path)
+  return (vim.uv or vim.loop).fs_stat(path) ~= nil
+end
+
+--- Removes the persisted active solution file for `root`, if any. Called when the persisted choice's `.sln`
+--- no longer exists.
+--- @param root string
+local function clear_persisted(root)
+  os.remove(persisted_path(root))
+end
+
+
 --- Reads the persisted solution for `root`, or nil if nothing is recorded, the file is absent,
 --- or it fails to parse. 
 --- @param root string
@@ -41,6 +56,33 @@ local function read_persisted(root)
     return nil
   end
   return decoded.solution
+end
+
+
+--- The active solution for `root` (default: `M.project_root()`): persisted via `M.set_active_solution()` 
+--- if one exists and its file still exists. Otherwise the first sorted `.sln` discovered by
+--- `M.solutions()` or `nil` if none are.
+---
+--- Existence checked every call.
+--- @param root string|nil
+--- @return string|nil solution
+--- @return string|nil vanished the path that was active until this call discovered it gone
+function M.active_solution(root)
+  root = root or M.project_root()
+  local candidate = active_cache[root]
+  if candidate == nil then
+    local persisted = read_persisted(root)
+    candidate = persisted or M.solutions(root)[1]
+    active_cache[root] = candidate or false
+  end
+  candidate = candidate or nil
+
+  if candidate and not exists(candidate) then
+    active_cache[root] = nil
+    clear_persisted(root)
+    return nil, candidate
+  end
+  return candidate, nil
 end
 
 --- Writes `solution` as the persisted choice for `root`. Write failures are printed to the user
@@ -151,22 +193,5 @@ function M.rescan(root)
   return M.solutions(root)
 end
 
---- The active solution for `root` (default: `M.project_root()`), memoized: a persisted choice
---- set via `M.set_active_solution()` if one exists, otherwise the first (sorted) `.sln`
---- discovered by `M.solutions()`. `nil` if none was found.
---- @param root string|nil
---- @return string|nil
-function M.active_solution(root)
-  root = root or M.project_root()
-  local cached = active_cache[root]
-  if cached ~= nil then
-    return cached or nil
-  end
-
-  local persisted = read_persisted(root)
-  local solution = persisted or M.solutions(root)[1]
-  active_cache[root] = solution or false
-  return solution
-end
 
 return M

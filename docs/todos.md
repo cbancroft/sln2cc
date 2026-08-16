@@ -2033,9 +2033,23 @@ behind them have been tested.
 
 # V2 — Hardening and edge cases
 
-- [ ] **V2-01 — Handle a vanished active solution** · `fix/missing-solution` · ~4h
+- [x] **V2-01 — Handle a vanished active solution** · `fix/missing-solution` · ~4h
   Detect that a remembered solution's `.sln` no longer exists and prompt for a new one instead
   of failing obscurely. Tests: unit and mini.test specs covering a deleted and a moved solution.
+
+  **Outcome:** Resolves `project_spec.md`'s long-standing Open Question on the same topic.
+  `discovery.lua`'s `M.active_solution(root)` gains a second return value, `vanished`, checked
+  fresh on every call (not only when its cache is cold) rather than only on first use per
+  session — a solution deleted or moved mid-session is caught the next time anything asks, not
+  just one already gone before Neovim opened the project. A vanished path is never silently
+  replaced with a different solution the user never chose: the stale in-memory and persisted
+  state is cleared, and `commands.lua`'s `resolve_solution` (now callback-based:
+  `resolve_solution(on_resolved)`, threaded through `MsvclspGenerate` and
+  `MsvclspSelectConfig`) rescans and reprompts via the existing `picker.pick_solution` before
+  continuing the original command with whatever gets picked. `picker.lua` needed no change —
+  its existing contract was already exactly what a reprompt needs. `MsvclspRestart` is
+  unaffected; it never resolved the active solution to begin with. See
+  [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
 
 - [ ] **V2-02 — Config-based solution pinning** · `feat/solution-pin` · ~4h
   Allow an explicit solution path via configuration for CI and scripting, bypassing the

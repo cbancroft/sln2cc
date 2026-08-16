@@ -221,6 +221,11 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   Detours. That project now just contributes nothing to the generated database, with a warning
   explaining why, instead of aborting generation for the whole solution.
 
+- If your active solution's `.sln` has been deleted or moved since you last picked it,
+  `:MsvclspGenerate` and `:MsvclspSelectConfig` no longer fail with a raw CLI file-not-found
+  error. They now detect it, rescan, and reopen the solution picker so you can choose a
+  replacement, then continue with whatever you picked.
+
 ### Security
 
 - A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB
