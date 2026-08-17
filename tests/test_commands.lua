@@ -4,8 +4,11 @@
 
 --- Builds a fake `msvclsp.discovery`. `vanished` (V2-01) makes `active_solution` report a
 --- vanished path as its second return value, alongside a nil solution -- mirroring what the
---- real module does when the resolved `.sln` no longer exists on disk. See ADR 48.
---- @param opts { root: string|nil, solution: string|nil, vanished: string|nil, rescan_result: string[]|nil }
+--- real module does when the resolved `.sln` no longer exists on disk. See ADR 48. `pin_error`
+--- (V2-02) makes it report a configured-but-missing pinned solution as the third return value
+--- instead -- a distinct case from `vanished`, since it must not trigger the same
+--- rescan-and-reprompt flow. See ADR 49.
+--- @param opts { root: string|nil, solution: string|nil, vanished: string|nil, pin_error: string|nil, rescan_result: string[]|nil }
 --- @return table fake_discovery
 --- @return table[] rescan_calls each is the root passed
 local function fake_discovery(opts)
@@ -17,7 +20,7 @@ local function fake_discovery(opts)
       return root
     end,
     active_solution = function()
-      return opts.solution, opts.vanished
+      return opts.solution, opts.vanished, opts.pin_error
     end,
     rescan = function(r)
       table.insert(rescan_calls, r)
@@ -377,6 +380,32 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(#rescan_calls, 1)
       MiniTest.expect.equality(#pick_solution_calls, 1)
       MiniTest.expect.equality(#generate_calls, 0)
+    end)
+
+    -- Config-based solution pinning -- V2-02. A missing pinned solution is a hard error, not
+    -- the vanished-solution reprompt flow above: a pin exists so CI/scripting callers never see
+    -- a picker, so silently falling into rescan-and-reprompt would defeat the point. See ADR 49.
+
+    it("a pin_error short-circuits generate with a notify and no rescan or reprompt", function()
+      local discovery, rescan_calls = fake_discovery({
+        root = "/root",
+        solution = nil,
+        vanished = nil,
+        pin_error = "/root/Ghost.sln",
+      })
+      local cli, list_calls, generate_calls = fake_cli()
+      local picker, _, pick_solution_calls = fake_picker()
+      local lsp = fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+
+      MiniTest.expect.equality(#rescan_calls, 0)
+      MiniTest.expect.equality(#pick_solution_calls, 0)
+      MiniTest.expect.equality(#list_calls, 0)
+      MiniTest.expect.equality(#generate_calls, 0)
+      MiniTest.expect.equality(#notify_calls, 1)
+      MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.ERROR)
     end)
   end)
 

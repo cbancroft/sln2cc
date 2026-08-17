@@ -5,8 +5,10 @@
 -- vim.fs.root and vim.health are Neovim/stdlib surfaces, stubbed directly for the duration
 -- of each test that needs them, mirroring test_lsp.lua's approach to vim.lsp/vim.api.
 
---- Builds a fake `msvclsp.discovery`.
---- @param opts { root: string|nil, solution: string|nil }|nil
+--- Builds a fake `msvclsp.discovery`. `pin_error` (V2-02) mirrors what the real module reports
+--- when `config.options.pinned_solution` is set but doesn't exist on disk -- distinct from
+--- `solution == nil` on its own, which means no `.sln` was found at all. See ADR 49.
+--- @param opts { root: string|nil, solution: string|nil, pin_error: string|nil }|nil
 --- @return table fake_discovery
 local function fake_discovery(opts)
   opts = opts or {}
@@ -15,7 +17,7 @@ local function fake_discovery(opts)
       return opts.root or "/root"
     end,
     active_solution = function()
-      return opts.solution
+      return opts.solution, nil, opts.pin_error
     end,
   }
 end
@@ -320,6 +322,44 @@ describe("msvclsp.health", function()
     MiniTest.expect.equality(#list_configs_calls, 0)
 
     MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspRescan"), true)
+  end)
+
+  -- Config-based solution pinning -- V2-02. A missing pinned solution is a distinct, sharper
+  -- diagnosis than "no .sln found under root": the tree may well contain solutions, just not
+  -- the one the operator pinned. See ADR 49.
+
+  it("pinned solution missing: an error naming the pin, list_configs never called", function()
+    local list_configs_calls
+    local cli
+    cli, list_configs_calls = fake_cli()
+    local health = load_health({
+      discovery = fake_discovery({
+        root = "/root",
+        solution = nil,
+        pin_error = "/root/Ghost.sln",
+      }),
+      cli = cli,
+    })
+    health._executable = fake_executable({ "msvclsp", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    vim.fs.root = function()
+      return "/root"
+    end
+
+    health.check()
+
+    MiniTest.expect.equality(#list_configs_calls, 0)
+
+    local named_pin = false
+    for _, call in ipairs(health_calls) do
+      if call.level == "error" and call.msg:find("/root/Ghost.sln", 1, true) then
+        named_pin = true
+      end
+    end
+    MiniTest.expect.equality(named_pin, true)
+    -- The generic "no .sln found" warning must not also fire -- a pinned, missing solution is
+    -- reported once, as the sharper diagnosis, not twice.
+    MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspRescan"), false)
   end)
 
   it("no database generated: an active config but no file on disk warns with a remedy", function()

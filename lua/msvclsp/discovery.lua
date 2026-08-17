@@ -59,16 +59,31 @@ local function read_persisted(root)
 end
 
 
---- The active solution for `root` (default: `M.project_root()`): persisted via `M.set_active_solution()` 
---- if one exists and its file still exists. Otherwise the first sorted `.sln` discovered by
---- `M.solutions()` or `nil` if none are.
+--- The active solution for `root` (default: `M.project_root()`)
+--- Resolution order:
+---
+--- 1. `config.options.pinned_solution`, if set is unconditionally taken as the active solution.
+--- 2. Choice persisted via `M.set_active_solution()`, if the file exists
+--- 3. The first (sorted) `.sln` discovered by `M.solutions()`.
 ---
 --- Existence checked every call.
 --- @param root string|nil
 --- @return string|nil solution
---- @return string|nil vanished the path that was active until this call discovered it gone
+--- @return string|nil vanished the path that was active until this call discovered it gone. Never set 
+---         while a pin is configured.
+--- @return string|nil pin_error the configured `pinned_solution` path is set but the file it points
+---         to does not exist.
 function M.active_solution(root)
   root = root or M.project_root()
+
+  local pinned = config.options.pinned_solution
+  if pinned ~= "" then
+    if exists(pinned) then
+      return pinned, nil, nil
+    end
+    return nil, nil, pinned
+  end
+
   local candidate = active_cache[root]
   if candidate == nil then
     local persisted = read_persisted(root)
@@ -80,9 +95,9 @@ function M.active_solution(root)
   if candidate and not exists(candidate) then
     active_cache[root] = nil
     clear_persisted(root)
-    return nil, candidate
+    return nil, candidate, nil
   end
-  return candidate, nil
+  return candidate, nil, nil
 end
 
 --- Writes `solution` as the persisted choice for `root`. Write failures are printed to the user

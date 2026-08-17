@@ -35,6 +35,11 @@ M.defaults = {
 
   --- Filetypes clangd is started for.
   filetypes = { "c", "cpp" },
+
+  --- Absolute path to a `.sln` file that is always considered the 'active' solution, no matter what 
+  --- the persisted or selected solution is. Intended for CI/scripting use where nothing can 
+  --- respond to a `vim.ui.select` prompt. Empty string means no pin.
+  pinned_solution = "",
 }
 
 M.options = vim.deepcopy(M.defaults)
