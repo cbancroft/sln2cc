@@ -94,6 +94,11 @@ rework.
   `.sln` no longer exists on disk — moved or deleted — it is not silently replaced with a
   different solution the user never chose: the stale choice is cleared, the tree is rescanned,
   and the picker reopens so the user picks explicitly. See [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
+- **A solution can be pinned via config, bypassing the picker entirely.** Setting
+  `pinned_solution` to an absolute `.sln` path wins unconditionally over any persisted or
+  discovered choice, for CI/scripting use where nothing can answer an interactive prompt. A
+  configured pin that doesn't exist on disk is a hard error rather than a picker reprompt. See
+  [ADR 49](adr/49-nvim-solution-pinning.md).
 
 # Goals
 
@@ -109,5 +114,3 @@ rework.
 - How MSVC toolset/Windows SDK include paths and versions are discovered.
 - CLI subcommand surface and output contract between the binary and the Neovim plugin.
 - Local configuration file format and contents.
-- Should there be a way to explicitly pin/override the active solution via config (e.g. for CI or
-  scripting use), bypassing the interactive picker?

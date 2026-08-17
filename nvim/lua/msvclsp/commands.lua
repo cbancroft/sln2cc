@@ -54,11 +54,22 @@ end
 --- nil (with a WARN notify) if nothing was found. A vanished active solution -- one whose .sln
 --- no longer exists -- is not the same as "nothing found": it's cleared, the tree is rescanned,
 --- and the user is reprompted via picker.pick_solution instead of silently falling back to a
---- different solution they never chose. See ADR 48.
+--- different solution they never chose. See ADR 48. A configured `pinned_solution` that does not
+--- exist on disk is reported as a hard ERROR instead, with no rescan or reprompt: a pin exists
+--- for CI/scripting callers with no one to answer a picker. See ADR 49.
 --- @param on_resolved fun(solution: string|nil, root: string)
 local function resolve_solution(on_resolved)
   local root = discovery.project_root()
-  local solution, vanished = discovery.active_solution(root)
+  local solution, vanished, pin_error = discovery.active_solution(root)
+
+  if pin_error then
+    vim.notify(
+      "msvclsp: pinned solution does not exist: " .. pin_error,
+      vim.log.levels.ERROR
+    )
+    on_resolved(nil, root)
+    return
+  end
 
   if vanished then
     vim.notify(

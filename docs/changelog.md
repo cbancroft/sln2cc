@@ -168,6 +168,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   — each solution keeps its own configuration rather than inheriting whatever was active for
   the one you switched away from.
 
+- A solution can now be pinned via the new `pinned_solution` config option — an absolute path to
+  a `.sln` file that always wins as the active solution, bypassing both your remembered choice
+  and the interactive picker entirely. Meant for CI or scripting, where nothing is around to
+  answer a prompt. A pinned path that doesn't exist is reported as an error rather than falling
+  back to the picker.
+
 - The MVP is now verified working end-to-end, not just implemented: a real `clangd` attaches,
   completes, resolves go-to-definition across translation units, and reports no missing-include
   diagnostics against a generated database, both for a fixture and for a real, multi-project

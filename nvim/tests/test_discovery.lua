@@ -422,4 +422,90 @@ describe("msvclsp.discovery", function()
       error(err, 0)
     end
   end)
+
+  -- config-based solution pinning -- V2-02. Resolves project_spec.md's "should there be a way
+  -- to explicitly pin/override the active solution via config... bypassing the interactive
+  -- picker?" Open Question. A pin is checked before either the persisted choice or the
+  -- first-discovered fallback, and is reported through a *third* return value (`pin_error`)
+  -- distinct from `vanished` (V2-01/ADR 48): a missing pin must not trigger that flow's
+  -- rescan-and-reprompt, since a pin exists precisely for unattended CI/scripting callers with
+  -- no one to answer a `vim.ui.select` prompt. See ADR 49.
+
+  it("a pinned solution wins over a persisted choice", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+      discovery.set_active_solution(tree, tree .. "/App.sln")
+
+      require("msvclsp.config").setup({ pinned_solution = tree .. "/Other.sln" })
+
+      local solution, vanished, pin_error = discovery.active_solution(tree)
+      MiniTest.expect.equality(solution, tree .. "/Other.sln")
+      MiniTest.expect.equality(vanished, nil)
+      MiniTest.expect.equality(pin_error, nil)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a pinned solution wins over the first-discovered default", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      -- No persisted choice. "App.sln" would otherwise win as the sorted-first default.
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+
+      require("msvclsp.config").setup({ pinned_solution = tree .. "/Other.sln" })
+
+      MiniTest.expect.equality(discovery.active_solution(tree), tree .. "/Other.sln")
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("a pinned solution that does not exist is reported via pin_error, not returned", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      local missing = tree .. "/Ghost.sln"
+
+      require("msvclsp.config").setup({ pinned_solution = missing })
+
+      local solution, vanished, pin_error = discovery.active_solution(tree)
+      MiniTest.expect.equality(solution, nil)
+      -- Not the vanished-recovery case: nothing was ever persisted, and reporting this as
+      -- `vanished` would make commands.lua rescan and open the picker -- exactly what a pin
+      -- exists to avoid.
+      MiniTest.expect.equality(vanished, nil)
+      MiniTest.expect.equality(pin_error, missing)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
+
+  it("an unset pin falls through to existing behavior", function()
+    local tree, cleanup = make_tree()
+    local ok, err = pcall(function()
+      make_sln(tree, "App.sln")
+      make_sln(tree, "Other.sln")
+      discovery.set_active_solution(tree, tree .. "/Other.sln")
+
+      -- Default config: pinned_solution is "", not a path -- must not be treated as a pin.
+      local solution, vanished, pin_error = discovery.active_solution(tree)
+      MiniTest.expect.equality(solution, tree .. "/Other.sln")
+      MiniTest.expect.equality(vanished, nil)
+      MiniTest.expect.equality(pin_error, nil)
+    end)
+    cleanup()
+    if not ok then
+      error(err, 0)
+    end
+  end)
 end)

@@ -2051,9 +2051,27 @@ behind them have been tested.
   unaffected; it never resolved the active solution to begin with. See
   [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
 
-- [ ] **V2-02 — Config-based solution pinning** · `feat/solution-pin` · ~4h
+- [x] **V2-02 — Config-based solution pinning** · `feat/solution-pin` · ~4h
   Allow an explicit solution path via configuration for CI and scripting, bypassing the
   picker entirely. Tests: assert the pinned solution wins over any remembered selection.
+
+  **Outcome:** Resolves `project_spec.md`'s long-standing Open Question on the same topic.
+  `discovery.lua`'s `M.active_solution(root)` checks a new `config.options.pinned_solution`
+  before either the persisted choice or the first-discovered fallback, so a pin wins
+  unconditionally — the same module V2-01/ADR 48 already made the single source of truth for
+  "what's active." A configured-but-missing pin is reported through a new *third* return value,
+  `pin_error`, kept deliberately separate from `vanished`: `commands.lua`'s `resolve_solution`
+  short-circuits on `pin_error` with a `vim.notify(ERROR)` and no rescan or reprompt, since a pin
+  exists specifically so CI/scripting callers never see `picker.pick_solution`'s
+  `vim.ui.select` — routing a missing pin into the vanished-solution recovery flow would block
+  on a prompt nothing can answer. `:MsvclspSelectSolution` needed no change: it calls
+  `picker.pick_solution` directly, so a manual pick still persists while a pin is configured, but
+  the pin resurfaces on the very next call to `active_solution` regardless, a direct consequence
+  of the pin check running unconditionally rather than a new branch anywhere else.
+  `health.lua`'s `check_solution` also reads `pin_error`, reporting a missing pinned solution as
+  a named `vim.health.error` rather than the generic "no `.sln` found" warning, since
+  `:checkhealth` is exactly where a misconfigured pin should surface legibly. See
+  [ADR 49](adr/49-nvim-solution-pinning.md).
 
 - [ ] **V2-04 — Surface CLI errors in the plugin UI** · `feat/nvim-error-surfacing` · ~4h
   Present structured CLI errors and evaluation warnings legibly rather than letting them

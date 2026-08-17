@@ -67,7 +67,14 @@ end
 --- @param root string
 --- @return string|nil solution
 local function check_solution(root)
-  local solution = discovery.active_solution(root)
+  local solution, _, pin_error = discovery.active_solution(root)
+  if pin_error then
+    vim.health.error(
+      "pinned solution does not exist: " .. pin_error,
+      { "Fix or clear the `pinned_solution` config option." }
+    )
+    return nil
+  end
   if not solution then
     vim.health.warn(
       "no .sln found under " .. root,
