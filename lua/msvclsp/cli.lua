@@ -69,13 +69,13 @@ end
 --- `list-configs` — configuration/platform options for a solution, plus its last-used one.
 --- @param solution string absolute path to the .sln
 --- @param root string project root to create/read `.msvclsp` under
---- @param on_done fun(result: table|nil, err: Msvclsp.CliError|nil)
+--- @param on_done fun(result: table|nil, err: Msvclsp.CliError|nil, warnings: table[]|nil)
 function M.list_configs(solution, root, on_done)
   M.run({ "list-configs", solution, "--root", root}, function(envelope, err)
     if err then
-      on_done(nil, err)
+      on_done(nil, err, nil)
     else
-      on_done(envelope.result, nil)
+      on_done(envelope.result, nil, envelope.warnings)
     end
   end)
 end
@@ -85,7 +85,7 @@ end
 --- @param cfg { configuration: string, platform: string }
 --- @param root string project root to create/read `.msvclsp` under
 --- @param force boolean regenerate unconditionally
---- @param on_done fun(result: table|nil, err: Msvclsp.CliError|nil)
+--- @param on_done fun(result: table|nil, err: Msvclsp.CliError|nil, warnings: table[]|nil)
 function M.generate(solution, cfg, root, force, on_done)
   local args = {
     "generate",
@@ -102,9 +102,9 @@ function M.generate(solution, cfg, root, force, on_done)
   end
   M.run(args, function(envelope, err)
     if err then
-      on_done(nil, err)
+      on_done(nil, err, nil)
     else
-      on_done(envelope.result, nil)
+      on_done(envelope.result, nil, envelope.warnings)
     end
   end)
 end

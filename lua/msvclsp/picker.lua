@@ -1,6 +1,7 @@
 --- `vim.ui.select` wrappers for choosing a solution and a configuration/platform.
 local cli = require("msvclsp.cli")
 local discovery = require("msvclsp.discovery")
+local notify = require("msvclsp.notify")
 
 local M = {}
 
@@ -26,12 +27,13 @@ end
 --- @param root string project root passed through to CLI calls
 --- @param on_choice fun(config: { configuration: string, platform: string }|nil, database: string|nil)
 function M.pick_config(solution, root, on_choice)
-  cli.list_configs(solution, root, function(configs, err)
+  cli.list_configs(solution, root, function(configs, err, warnings)
     if err then
-      vim.notify("msvclsp: " .. err.message, vim.log.levels.ERROR)
+      notify.notify_error(err)
       on_choice(nil, nil)
       return
     end
+    notify.notify_warnings(warnings)
 
     if #configs.available == 0 then
       vim.notify("msvclsp: no configurations declared in " .. solution, vim.log.levels.WARN)
@@ -54,12 +56,13 @@ function M.pick_config(solution, root, on_choice)
       -- Forced: the CLI's mtime-based staleness check knows nothing about which
       -- configuration/platform was requested, so switching to a different one with no file
       -- changes would otherwise silently reuse the old database.
-      cli.generate(solution, chosen, root, true, function(gen_result, gen_err)
+      cli.generate(solution, chosen, root, true, function(gen_result, gen_err, gen_warnings)
         if gen_err then
-          vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
+          notify.notify_error(gen_err)
           on_choice(nil, nil)
           return
         end
+        notify.notify_warnings(gen_warnings)
         on_choice(chosen, gen_result.database)
       end)
     end)

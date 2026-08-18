@@ -231,6 +231,52 @@ describe("msvclsp.cli", function()
       MiniTest.expect.equality(got_result, nil)
       MiniTest.expect.equality(got_err.kind, "solution-parse")
     end)
+
+    -- V2-04: envelope.warnings previously stopped at M.run and never reached list_configs'
+    -- own on_done, so a warning found while parsing the solution had nowhere to go on a
+    -- successful call. A 3rd on_done argument is additive -- callers with a 2-param
+    -- callback (health.lua's check_database, this file's own earlier tests) are unaffected.
+    it("hands envelope.warnings through as a 3rd on_done argument on success", function()
+      local diagnostics = { { severity = "warning", message = "unexpected version" } }
+      local payload = { solution = "C:/proj/app.sln", available = {}, active = nil }
+      cli._system = fake_system({
+        code = 0,
+        stdout = vim.json.encode(envelope({ result = payload, warnings = diagnostics })),
+        stderr = "",
+      }, {})
+
+      local got_result, got_err, got_warnings
+      cli.list_configs("C:/proj/app.sln", "C:/proj", function(result, err, warnings)
+        got_result, got_err, got_warnings = result, err, warnings
+      end)
+      wait_for(function()
+        return got_result ~= nil or got_err ~= nil
+      end)
+
+      MiniTest.expect.equality(got_err, nil)
+      MiniTest.expect.equality(got_warnings, diagnostics)
+    end)
+
+    it("passes no warnings on failure", function()
+      local err_envelope = envelope({
+        has_error = true,
+        result = nil,
+        error = { kind = "solution-parse", message = "bad xml", causes = {} },
+        warnings = {},
+      })
+      cli._system =
+        fake_system({ code = 4, stdout = vim.json.encode(err_envelope), stderr = "msvclsp: bad xml\n" }, {})
+
+      local got_result, got_err, got_warnings
+      cli.list_configs("app.sln", "C:/proj", function(result, err, warnings)
+        got_result, got_err, got_warnings = result, err, warnings
+      end)
+      wait_for(function()
+        return got_result ~= nil or got_err ~= nil
+      end)
+
+      MiniTest.expect.equality(got_warnings, nil)
+    end)
   end)
 
   describe("generate", function()

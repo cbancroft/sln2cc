@@ -31,11 +31,14 @@ local function fake_discovery(opts)
 end
 
 --- Builds a fake `msvclsp.cli`. `list_configs_result`/`generate_result` are each
---- `{ result, err }` pairs handed straight to their respective `on_done` callbacks
---- synchronously. `list_configs_by_solution` (V1-05) lets a test give different solutions
---- different answers -- needed to prove a solution switch restores *that* solution's own
---- active configuration rather than a carried-over global value -- and takes priority over
---- the flat `list_configs` when both are given.
+--- `{ result, err, warnings }` triples handed straight to their respective `on_done`
+--- callbacks synchronously -- `warnings` (V2-04) mirrors the real `on_done(result, err,
+--- warnings)` 3rd argument ADR 50 adds, defaulting to nil so every pre-existing opts table
+--- (which never set it) still exercises the "no warnings" path. `list_configs_by_solution`
+--- (V1-05) lets a test give different solutions different answers -- needed to prove a
+--- solution switch restores *that* solution's own active configuration rather than a
+--- carried-over global value -- and takes priority over the flat `list_configs` when both
+--- are given.
 --- @param opts { list_configs: table|nil, list_configs_by_solution: table<string, table>|nil, generate: table|nil }
 --- @return table fake_cli
 --- @return table[] list_configs_calls
@@ -49,12 +52,12 @@ local function fake_cli(opts)
       local lc = (opts.list_configs_by_solution and opts.list_configs_by_solution[solution])
         or opts.list_configs
         or { result = { active = nil } }
-      on_done(lc.result, lc.err)
+      on_done(lc.result, lc.err, lc.warnings)
     end,
     generate = function(solution, cfg, root, force, on_done)
       table.insert(generate_calls, { solution = solution, cfg = cfg, root = root, force = force })
       local gen = opts.generate or { result = { database = "compile_commands.json" } }
-      on_done(gen.result, gen.err)
+      on_done(gen.result, gen.err, gen.warnings)
     end,
   }
   return fake, list_configs_calls, generate_calls
@@ -256,6 +259,50 @@ describe("msvclsp.commands", function()
       MiniTest.expect.equality(#generate_calls, 0)
       MiniTest.expect.equality(#notify_calls, 1)
       MiniTest.expect.equality(notify_calls[1].level, vim.log.levels.ERROR)
+    end)
+
+    -- V2-04: a structured error with a `kind` now routes through notify.notify_error, which
+    -- appends a kind-specific remedy -- distinct from the bare `err.message` the command
+    -- handlers used to notify verbatim. invalid-configuration is the spot-check because
+    -- list_configs is the easiest failure to trigger a specific kind for in this fake.
+    it("a failed list_configs with a kind notifies more than the bare message", function()
+      local discovery = fake_discovery({ solution = "app.sln" })
+      local cli = fake_cli({
+        list_configs = {
+          err = { message = "Debug|arm64 is not a configuration", kind = "invalid-configuration", code = 7 },
+        },
+      })
+      local picker, lsp = fake_picker(), fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+
+      MiniTest.expect.equality(#notify_calls, 1)
+      local msg = notify_calls[1].msg
+      MiniTest.expect.equality(msg:find("Debug|arm64 is not a configuration", 1, true) ~= nil, true)
+      MiniTest.expect.no_equality(msg, "msvclsp: Debug|arm64 is not a configuration")
+    end)
+
+    it("warnings from a successful list_configs produce exactly one notification", function()
+      local discovery = fake_discovery({ solution = "app.sln" })
+      local cli = fake_cli({
+        list_configs = {
+          result = { active = { configuration = "Debug", platform = "x64" } },
+          warnings = { { severity = "warning", message = "unsupported construct" } },
+        },
+        generate = { result = { database = "compile_commands.json" } },
+      })
+      local picker, lsp = fake_picker(), fake_lsp()
+      ready_commands({ discovery = discovery, cli = cli, picker = picker, lsp = lsp })
+
+      vim.cmd("MsvclspGenerate")
+
+      -- Exactly one notify: the warning batch. No error, so nothing else fires.
+      local warning_calls = vim.tbl_filter(function(c)
+        return c.msg:find("unsupported construct", 1, true) ~= nil
+      end, notify_calls)
+      MiniTest.expect.equality(#warning_calls, 1)
+      MiniTest.expect.equality(warning_calls[1].level, vim.log.levels.WARN)
     end)
 
     it("generates using the active configuration/platform and root", function()
