@@ -99,9 +99,18 @@ pub fn evaluate(scope: &ProjectScope, reporter: &mut Reporter) -> Result<Evaluat
         .parent()
         .unwrap_or(Path::new(""))
         .to_path_buf();
+    let makefile = imports::is_makefile_configuration(&tree.properties);
     let files = sources
         .iter()
-        .map(|source| flags::compile(source, &project_dir, reporter))
+        .map(|source| {
+            if makefile {
+                let mut source = source.clone();
+                source.metadata = items::nmake_metadata(&tree.properties);
+                flags::compile(&source, &project_dir, reporter)
+            } else {
+                flags::compile(source, &project_dir, reporter)
+            }
+        })
         .collect();
 
     Ok(EvaluatedProject {
@@ -533,7 +542,8 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------------------------
-    // MVP-44 — a Makefile-configuration project's own missing toolchain import
+    // MVP-44 / V2-06 — a Makefile-configuration project's own missing toolchain import, and its
+    // own NMake* compile settings
     // -------------------------------------------------------------------------------------------
 
     #[test]
@@ -584,5 +594,119 @@ mod tests {
             "the skipped import is named rather than silently dropped: {:?}",
             reporter.warnings()
         );
+    }
+
+    #[test]
+    fn a_makefile_configuration_project_uses_nmake_properties_for_its_source_files() {
+        // V2-06: a Makefile-configuration project that does declare its own `ClCompile` items
+        // (as real vendored projects like Detours do, for Solution Explorer/IntelliSense) must
+        // still get real flags -- from its own `NMake*` properties, since the normal
+        // `ItemDefinitionGroup` never gets populated (its toolchain import chain is skipped, see
+        // ADR 42/MVP-44). The item carries its own `PreprocessorDefinitions` override too, which
+        // must lose to the `NMake*` value: the two mechanisms describe mutually exclusive build
+        // systems for the same project, and there is nothing to compose (ADR 52).
+        let dir = TempTree::new("makefile-configuration-nmake");
+        let toolchain = stub_toolchain(&dir);
+
+        let project_path = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>Makefile</ConfigurationType>
+    <NMakePreprocessorDefinitions>DETOURS_X64;WIN32</NMakePreprocessorDefinitions>
+    <NMakeIncludeSearchPath>$(ProjectDir)include</NMakeIncludeSearchPath>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemGroup>
+    <ClCompile Include="src\detours.cpp">
+      <PreprocessorDefinitions>IGNORED_ITEM_LEVEL_SETTING</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>"#,
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.Cpp.props",
+            "<Project>\n  <Import Project=\"Microsoft.MakeFile.Targets\" />\n</Project>\n",
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.MakeFile.Targets",
+            "<Project>\n  <Import Project=\"$(MSBuildToolsPath)\\Microsoft.Common.targets\" />\n</Project>\n",
+        );
+
+        let scope = ProjectScope {
+            solution: dir.path("App.sln"),
+            project: project_path,
+            config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: Some(toolchain),
+        };
+
+        let (project, reporter) = evaluated_reporting(&scope);
+
+        assert_eq!(
+            names(&project),
+            ["detours.cpp"],
+            "the item declared in the project's own ItemGroup still evaluates"
+        );
+        let compiled = file(&project, "detours.cpp");
+        assert_eq!(
+            compiled.defines,
+            ["DETOURS_X64", "WIN32"],
+            "from NMakePreprocessorDefinitions, not the item-level override"
+        );
+        assert_eq!(
+            compiled.include_paths,
+            [paths::normalize(&dir.path("app/include"))],
+            "from NMakeIncludeSearchPath"
+        );
+        assert!(
+            reporter
+                .warnings()
+                .iter()
+                .any(|warning| warning.message.contains("Makefile")),
+            "the skipped toolchain import is still named: {:?}",
+            reporter.warnings()
+        );
+    }
+
+    #[test]
+    fn a_makefile_configuration_project_with_no_nmake_properties_still_evaluates_with_empty_flags()
+    {
+        // Distinct from `a_makefile_configuration_project_evaluates_to_zero_files_instead_of_
+        // failing` above, which has no `ClCompile` item at all: this project has a source file
+        // but no `NMake*` settings, and must not fail or invent flags from nothing.
+        let dir = TempTree::new("makefile-configuration-no-nmake-properties");
+        let toolchain = stub_toolchain(&dir);
+
+        let project_path = dir.project(
+            "app/App.vcxproj",
+            r#"  <PropertyGroup>
+    <ConfigurationType>Makefile</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemGroup>
+    <ClCompile Include="src\detours.cpp" />
+  </ItemGroup>"#,
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.Cpp.props",
+            "<Project>\n  <Import Project=\"Microsoft.MakeFile.Targets\" />\n</Project>\n",
+        );
+        dir.write(
+            "vs/MSBuild/Microsoft/VC/v170/Microsoft.MakeFile.Targets",
+            "<Project>\n  <Import Project=\"$(MSBuildToolsPath)\\Microsoft.Common.targets\" />\n</Project>\n",
+        );
+
+        let scope = ProjectScope {
+            solution: dir.path("App.sln"),
+            project: project_path,
+            config: ConfigPlatform::new("Debug", "x64"),
+            toolchain: Some(toolchain),
+        };
+
+        let (project, _reporter) = evaluated_reporting(&scope);
+
+        assert_eq!(names(&project), ["detours.cpp"]);
+        let compiled = file(&project, "detours.cpp");
+        assert!(compiled.defines.is_empty());
+        assert!(compiled.include_paths.is_empty());
+        assert!(compiled.flags.is_empty());
     }
 }

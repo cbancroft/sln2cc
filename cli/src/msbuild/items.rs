@@ -329,6 +329,23 @@ fn holds(
     )
 }
 
+/// Build a `ClCompile` shaped [`Metadata`] from a Makefile-configuration project's `NMake*`
+/// properties, in place of processing `ItemDefinitionGroup`s a Makefile toolchain never populates.
+pub fn nmake_metadata(properties: &Properties) -> Metadata {
+    let mut metadata = Metadata::new();
+    for (nmake, clcompile) in [
+        ("NMakePreprocessorDefinitions", "PreprocessorDefinitions"),
+        ("NMakeIncludeSearchPath", "AdditionalIncludeDirectories"),
+        ("NMakeForcedIncludes", "ForcedIncludeFiles"),
+    ] {
+        if let Some(value) = properties.get(nmake) {
+            metadata.set(clcompile, value);
+        }
+    }
+
+    metadata
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1269,6 +1286,69 @@ mod tests {
         assert!(
             declared.is_empty(),
             "a project declaring nothing must not look like one declaring the wrong thing"
+        );
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // V2-06 — Makefile-configuration projects' own NMake* properties
+    // -------------------------------------------------------------------------------------------
+
+    #[test]
+    fn nmake_metadata_maps_the_three_parse_affecting_properties() {
+        // The three `NMake*` settings that change how a file parses, onto the same `ClCompile`
+        // metadata names `flags::compile` already knows how to translate -- reusing that table
+        // rather than duplicating it. Values are already fully expanded (`Properties::assign`
+        // expands eagerly, ADR 08), so this is a rename, not a re-evaluation.
+        let properties = bag(&[
+            ("NMakePreprocessorDefinitions", "DETOURS_X64;WIN32"),
+            ("NMakeIncludeSearchPath", "shared;vendor"),
+            ("NMakeForcedIncludes", "pre.h"),
+        ]);
+
+        let metadata = nmake_metadata(&properties);
+
+        assert_eq!(
+            metadata.get("PreprocessorDefinitions"),
+            Some("DETOURS_X64;WIN32")
+        );
+        assert_eq!(
+            metadata.get("AdditionalIncludeDirectories"),
+            Some("shared;vendor")
+        );
+        assert_eq!(metadata.get("ForcedIncludeFiles"), Some("pre.h"));
+    }
+
+    #[test]
+    fn nmake_metadata_leaves_unset_properties_absent() {
+        // `flags::compile` treats an empty/unset setting as "nothing to say" (no flag, no
+        // warning). Setting `Some("")` here instead of leaving the key out would be a different,
+        // wrong signal -- ADR 08's `Some("")`-versus-`None` distinction, applied to this mapping.
+        let metadata = nmake_metadata(&Properties::new());
+
+        assert_eq!(metadata.get("PreprocessorDefinitions"), None);
+        assert_eq!(metadata.get("AdditionalIncludeDirectories"), None);
+        assert_eq!(metadata.get("ForcedIncludeFiles"), None);
+    }
+
+    #[test]
+    fn nmake_metadata_does_not_read_unrelated_nmake_properties() {
+        // Negative case: the mapping is a whitelist of the three settings that affect parsing,
+        // not a blanket copy of everything named `NMake*`. `NMakeBuildCommandLine` and friends
+        // drive the build/link step, which clangd never performs.
+        let properties = bag(&[
+            ("NMakeBuildCommandLine", "nmake /f Makefile"),
+            ("NMakeOutput", "app.exe"),
+        ]);
+
+        let metadata = nmake_metadata(&properties);
+
+        assert_eq!(metadata.get("PreprocessorDefinitions"), None);
+        assert_eq!(metadata.get("AdditionalIncludeDirectories"), None);
+        assert_eq!(metadata.get("ForcedIncludeFiles"), None);
+        assert_eq!(
+            metadata.get("NMakeBuildCommandLine"),
+            None,
+            "the NMake-spelled name itself must not leak through unmapped"
         );
     }
 

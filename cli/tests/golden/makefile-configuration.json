@@ -1,0 +1,14 @@
+[
+  {
+    "directory": "<FIXTURE>/App",
+    "file": "<FIXTURE>/App/src/detours.cpp",
+    "arguments": [
+      "clang-cl",
+      "--driver-mode=cl",
+      "/I<FIXTURE>/App/include",
+      "/DDETOURS_X64",
+      "/DWIN32",
+      "<FIXTURE>/App/src/detours.cpp"
+    ]
+  }
+]

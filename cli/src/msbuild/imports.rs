@@ -91,6 +91,13 @@ pub fn resolve(
     })
 }
 
+/// Whether `properties` declares `ConfigurationType=Makefile` (case-insensitive).
+pub(crate) fn is_makefile_configuration(properties: &Properties) -> bool {
+    properties
+        .get("ConfigurationType")
+        .is_some_and(|val| val.eq_ignore_ascii_case("Makefile"))
+}
+
 /// The state carried down the import graph.
 ///
 /// `files` doubles as the visited set.
@@ -122,9 +129,7 @@ impl Walk<'_> {
     /// Most projects never need to call this. Comparison is case insensitive. Used to guard against
     /// attempting to import a Makefile style project that we don't support (yet).
     fn is_makefile_configuration(&self) -> bool {
-        self.properties
-            .get("ConfigurationType")
-            .is_some_and(|value| value.eq_ignore_ascii_case("Makefile"))
+        is_makefile_configuration(&self.properties)
     }
     fn evaluate(&mut self, path: &Path, referrer: Option<&Path>) -> Result<()> {
         if self.depth > MAX_IMPORT_DEPTH {
@@ -1307,6 +1312,26 @@ mod tests {
         let (result, _reporter) = tree_with_toolchain(&root, &toolchain);
 
         result.expect("`MAKEFILE` must be recognized the same as `Makefile`");
+    }
+
+    #[test]
+    fn is_makefile_configuration_reads_configuration_type_case_insensitively() {
+        // V2-06: `msbuild::evaluate` needs the same "is this project a Makefile-configuration
+        // one" question `Walk` already asks of its own running bag, asked instead of the final
+        // `tree.properties` a whole `resolve()` hands back -- exercised here directly, without a
+        // `Walk`, so the two call sites can never drift onto different string literals.
+        let mut makefile = Properties::new();
+        makefile.set("ConfigurationType", "MAKEFILE");
+        assert!(is_makefile_configuration(&makefile));
+
+        let mut application = Properties::new();
+        application.set("ConfigurationType", "Application");
+        assert!(!is_makefile_configuration(&application));
+
+        assert!(
+            !is_makefile_configuration(&Properties::new()),
+            "an unset ConfigurationType is not Makefile"
+        );
     }
 
     #[test]

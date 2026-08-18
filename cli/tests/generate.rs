@@ -90,6 +90,18 @@ fn multi_config_matches_golden() {
     );
 }
 
+#[test]
+fn makefile_configuration_matches_golden() {
+    // V2-06: a ConfigurationType=Makefile project (a vendored NMake dependency, e.g. Detours)
+    // must get real flags for its own ClCompile item, read from its NMake* properties rather
+    // than the ItemDefinitionGroup pipeline an unimported toolchain chain never populates. See
+    // ADR 42 and ADR 52.
+    support::assert_matches_golden(
+        &fixture("makefile-configuration").join("makefile-configuration.sln"),
+        &golden("makefile-configuration.json"),
+    );
+}
+
 /// A GUID stable across every `TempProject`; nothing here needs more than one project, so there
 /// is nothing for a collision to confuse.
 const PROJECT_GUID: &str = "{A50E4C4B-9A9D-4B1A-8E2E-000000000001}";

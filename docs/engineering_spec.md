@@ -289,6 +289,19 @@ Rough module breakdown implied by the parsing pipeline:
   `in_toolchain` alone so a genuinely broken installation for any other project still fails loud.
   See [ADR 42](adr/42-makefile-configuration-missing-import.md).
 
+  Such a project still declares its sources under an ordinary `ClCompile` `ItemGroup` — Visual
+  Studio's own Solution Explorer and IntelliSense need something to show — but its compile settings
+  live on the project's own `PropertyGroup` as `NMake*` properties (`NMakePreprocessorDefinitions`,
+  `NMakeIncludeSearchPath`, `NMakeForcedIncludes`) rather than in the `ItemDefinitionGroup`s the
+  skipped import chain would otherwise populate. `msbuild::evaluate`'s Pass 3 reads those three
+  directly off the already-fully-expanded property bag Pass 1 hands back and maps them onto the
+  `ClCompile`-metadata names `flags::compile` already translates, replacing rather than merging with
+  whatever (typically empty) `ItemDefinitionGroup` metadata Pass 2 settled — the two mechanisms
+  describe mutually exclusive build systems for the same project. The rest of the real `NMake*`
+  family (`NMakeBuildCommandLine`, `NMakeOutput`, and the other build/link-only properties) stays
+  unread, mirroring `flags.rs`'s own skip list for `ClCompile` codegen/link settings: clangd never
+  builds or links. See [ADR 52](adr/52-makefile-configuration-nmake-settings.md).
+
   `Properties` also tracks which keys' stored values still carry an unsupported construct copied
   through verbatim (`is_tainted`), because the real Visual Studio toolset assigns one to an
   intermediate property before an `<Import>` references it — the reference itself is otherwise

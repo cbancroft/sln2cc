@@ -2112,7 +2112,7 @@ behind them have been tested.
   Document multi-solution workflows and troubleshooting once V1 behavior has settled. Tests:
   manual read-through against actual behavior.
 
-- [ ] **V2-06 — Extract compile settings from Makefile-configuration projects** ·
+- [x] **V2-06 — Extract compile settings from Makefile-configuration projects** ·
   `feat/makefile-configuration-nmake-settings` · ~5h
   MVP-44 downgrades a `ConfigurationType=Makefile` project's missing toolchain import to a
   warning rather than failing `generate`, but such a project still contributes zero files to the
@@ -2126,3 +2126,23 @@ behind them have been tested.
   `NMakePreprocessorDefinitions`/`NMakeIncludeSearchPath`-bearing `ConfigurationType=Makefile`
   project, golden-compared end to end, asserting the resulting flags come from the `NMake*`
   properties rather than being empty.
+
+  **Outcome:** `msbuild::evaluate`'s Pass 3 now branches on `imports::is_makefile_configuration`
+  (the check `Walk` already performed mid-walk, exposed as a `pub(crate)` free function so the
+  two call sites can't drift onto different string literals) — reading
+  `NMakePreprocessorDefinitions`/`NMakeIncludeSearchPath`/`NMakeForcedIncludes` straight off the
+  already-fully-expanded Pass-1 property bag via a new `items::nmake_metadata`, and mapping them
+  onto the exact `ClCompile`-metadata names `flags::compile` already translates — reusing that
+  table rather than duplicating it. This **replaces** rather than merges with whatever (typically
+  empty) `ItemDefinitionGroup` metadata `items::settle` attached: the two mechanisms describe
+  mutually exclusive build systems for the same project, so a per-item override that would apply
+  under a real MSBuild compile step must not silently win over the `NMake*` value that actually
+  drives `nmake`. Only the three parse-affecting properties are mapped; the rest of the real
+  `NMake*` family (`NMakeBuildCommandLine`, `NMakeOutput`, and the other build/link-only
+  properties) stays unread, mirroring `flags.rs`'s own long-standing skip list for ordinary
+  `ClCompile` codegen/link settings — clangd never builds or links. New fixture
+  `fixtures/makefile-configuration/` needs no toolchain import at all (per ADR 25's convention,
+  already used by `fixtures/property-group-import-order` for MVP-44 itself): the settings this
+  issue reads live directly on the project's own `PropertyGroup`, so the import-skip mechanism
+  ADR 42 built — already covered by `imports.rs`'s and `msbuild.rs`'s own unit tests — needs no
+  re-proving here. See [ADR 52](adr/52-makefile-configuration-nmake-settings.md).

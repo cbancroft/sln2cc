@@ -239,6 +239,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   error. They now detect it, rescan, and reopen the solution picker so you can choose a
   replacement, then continue with whatever you picked.
 
+- A `Makefile`/NMake-configuration project — a vendored dependency like Detours, built outside the
+  normal C++ project system — that declares its own source files now gets real include-path and
+  preprocessor-definition information for them, read from its `NMakeIncludeSearchPath`/
+  `NMakePreprocessorDefinitions` properties. Previously such a project's files, once it stopped
+  aborting generation outright, still got no completions or diagnostics of their own.
+
 ### Security
 
 - A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB

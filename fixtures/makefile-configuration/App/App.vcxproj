@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{7E1A9C3D-4F2B-4E6A-9C1D-8A2B6F4E3D01}</ProjectGuid>
+    <RootNamespace>App</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <!--
+    V2-06's shape: a real Makefile-configuration project (a vendored NMake dependency, e.g.
+    Detours) declares its compile settings as NMake* properties on its own PropertyGroup rather
+    than through ItemDefinitionGroup, because the toolchain import chain that would normally
+    populate ClCompile defaults is never walked for this ConfigurationType (see ADR 42). No
+    Microsoft.Cpp.* import here (per ADR 25's fixture convention); that mechanism is already
+    covered by cli/src/msbuild.rs's and imports.rs's own unit tests. NMakeBuildCommandLine is
+    present to prove the build/link-only NMake* properties are not read for compile flags.
+  -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <NMakePreprocessorDefinitions>DETOURS_X64;WIN32</NMakePreprocessorDefinitions>
+    <NMakeIncludeSearchPath>$(ProjectDir)include</NMakeIncludeSearchPath>
+    <NMakeBuildCommandLine>nmake /f Makefile</NMakeBuildCommandLine>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="src\detours.cpp">
+      <!--
+        A per-item override the normal ItemDefinitionGroup/ClCompile pipeline would honor. Left
+        in deliberately: the golden output only matches if the real implementation reads the
+        NMake* properties above instead of this item-level metadata.
+      -->
+      <PreprocessorDefinitions>IGNORED_ITEM_LEVEL_SETTING</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+</Project>

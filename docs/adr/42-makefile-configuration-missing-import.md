@@ -145,7 +145,9 @@ a second time.
   described the disproven diagnosis.
 - **V2-06 filed**, not solved: Makefile-configuration projects still contribute nothing to the
   database. Acceptable for the MVP, since such projects are typically vendored dependencies rather
-  than code the user is editing, but a real gap if one is.
+  than code the user is editing, but a real gap if one is. Closed by
+  [ADR 52](52-makefile-configuration-nmake-settings.md), which reads the settings directly off the
+  project's own `NMake*` properties rather than the toolchain chain this ADR skips.
 - **No change to `eval.rs`, `items.rs`, `flags.rs`, `reserved.rs`, or `msbuild.rs` beyond the
   existing "no source files" warning path already covering the empty result.** The fix is entirely
   contained to `imports.rs::Walk::evaluate`'s control flow, following ADR 32's own precedent for
