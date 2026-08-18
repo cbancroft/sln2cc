@@ -2073,10 +2073,25 @@ behind them have been tested.
   `:checkhealth` is exactly where a misconfigured pin should surface legibly. See
   [ADR 49](adr/49-nvim-solution-pinning.md).
 
-- [ ] **V2-04 — Surface CLI errors in the plugin UI** · `feat/nvim-error-surfacing` · ~4h
+- [x] **V2-04 — Surface CLI errors in the plugin UI** · `feat/nvim-error-surfacing` · ~4h
   Present structured CLI errors and evaluation warnings legibly rather than letting them
   vanish into a silent no-op. Tests: mini.test specs asserting each error kind produces a
   distinct, actionable notification.
+
+  **Outcome:** A new `nvim/lua/msvclsp/notify.lua` centralizes both renderers: `M.notify_error`
+  appends a kind-specific one-line remedy (`M.REMEDIES`, one row per `ErrorKind` wire string)
+  after the CLI's own message, always at `ERROR`; `M.notify_warnings` batches an envelope's
+  `warnings` array into one `vim.notify` per call (not one per diagnostic — ADR 13 already
+  flagged the volume risk), at `WARN` if any diagnostic isn't exactly `severity == "note"`, else
+  `INFO`. `cli.lua`'s `M.list_configs`/`M.generate` gained a 3rd, additive `on_done` argument,
+  `warnings`, so the envelope's `warnings` array — previously dropped after `M.run` handed back
+  the full envelope for exactly this purpose (ADR 34) — actually reaches a renderer.
+  `commands.lua` and `picker.lua` route every `Msvclsp.CliError` through `notify.notify_error`
+  and call `notify.notify_warnings` after every successful `list_configs`/`generate`.
+  `health.lua`'s `:checkhealth` status check is deliberately untouched — its
+  `vim.health.ok`/`warn`/`error` reporting is a different mechanism from `vim.notify`, and this
+  issue's scope is the interactive command path. Resolves the engineering spec's "who owns
+  warnings" Open Question. See [ADR 50](adr/50-nvim-error-surfacing.md).
 
 - [ ] **V2-05 — Expanded documentation** · `docs/multi-solution-docs` · ~4h
   Document multi-solution workflows and troubleshooting once V1 behavior has settled. Tests:

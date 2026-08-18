@@ -4,6 +4,7 @@ local discovery = require("msvclsp.discovery")
 local cli = require("msvclsp.cli")
 local picker = require("msvclsp.picker")
 local lsp = require("msvclsp.lsp")
+local notify = require("msvclsp.notify")
 
 local M = {}
 
@@ -96,12 +97,13 @@ end
 --- @param solution string
 --- @param root string
 --- @param force boolean
-local function generate_and_restart(solution, root, force) 
-  cli.list_configs(solution, root, function(result, err)
+local function generate_and_restart(solution, root, force)
+  cli.list_configs(solution, root, function(result, err, warnings)
     if err then
-      vim.notify("msvclsp: " .. err.message, vim.log.levels.ERROR)
+      notify.notify_error(err)
       return
     end
+    notify.notify_warnings(warnings)
 
     if not result.active then
       vim.notify(
@@ -113,11 +115,12 @@ local function generate_and_restart(solution, root, force)
       return
     end
 
-    cli.generate(solution, result.active, root, force, function(gen_result, gen_err) 
+    cli.generate(solution, result.active, root, force, function(gen_result, gen_err, gen_warnings)
       if gen_err then
-        vim.notify("msvclsp: " .. gen_err.message, vim.log.levels.ERROR)
+        notify.notify_error(gen_err)
         return
       end
+      notify.notify_warnings(gen_warnings)
       maybe_restart(gen_result.database, root)
     end)
   end)

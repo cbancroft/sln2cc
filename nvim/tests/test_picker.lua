@@ -2,9 +2,10 @@
 -- module's tests use per CLAUDE.md §4 -- these specs never invoke the real binary.
 
 --- Builds a fake `msvclsp.cli` module. `list_configs_result`/`generate_result` are each
---- `{ result, err }` pairs handed straight to their respective `on_done` callbacks
---- synchronously, since these tests don't need to exercise cli.lua's own async behavior --
---- that's test_cli.lua's job.
+--- `{ result, err, warnings }` triples handed straight to their respective `on_done`
+--- callbacks synchronously, since these tests don't need to exercise cli.lua's own async
+--- behavior -- that's test_cli.lua's job. `warnings` (V2-04) mirrors the real 3rd `on_done`
+--- argument; existing opts tables never set it, so they exercise the "no warnings" path.
 --- @param opts { list_configs: table, generate: table|nil }
 --- @return table fake_cli
 --- @return table[] generate_calls each { solution, cfg, root, force }
@@ -12,12 +13,12 @@ local function fake_cli(opts)
   local generate_calls = {}
   local fake = {
     list_configs = function(solution, root, on_done)
-      on_done(opts.list_configs.result, opts.list_configs.err)
+      on_done(opts.list_configs.result, opts.list_configs.err, opts.list_configs.warnings)
     end,
     generate = function(solution, cfg, root, force, on_done)
       table.insert(generate_calls, { solution = solution, cfg = cfg, root = root, force = force })
       local gen = opts.generate or { result = { database = "compile_commands.json" } }
-      on_done(gen.result, gen.err)
+      on_done(gen.result, gen.err, gen.warnings)
     end,
   }
   return fake, generate_calls
@@ -38,6 +39,21 @@ end
 
 local function config(conf, plat)
   return { configuration = conf, platform = plat }
+end
+
+--- Swaps vim.notify for the duration of a test, collecting every call. Mirrors
+--- test_commands.lua's own stub_notify.
+--- @return table[] calls each { msg, level }
+--- @return fun() restore
+local function stub_notify()
+  local calls = {}
+  local original = vim.notify
+  vim.notify = function(msg, level)
+    table.insert(calls, { msg = msg, level = level })
+  end
+  return calls, function()
+    vim.notify = original
+  end
 end
 
 describe("msvclsp.picker.pick_config", function()
@@ -214,6 +230,33 @@ describe("msvclsp.picker.pick_config", function()
     MiniTest.expect.equality(got, nil)
     MiniTest.expect.equality(got_database, nil)
     MiniTest.expect.equality(select_called, false)
+  end)
+
+  -- V2-04: warnings from either the list_configs or the generate call that follows a
+  -- selection previously had nowhere to go once cli.lua unwrapped envelope.warnings away.
+  it("warnings from a successful generate after selection produce a notification", function()
+    local chosen = config("Release", "x64")
+    package.loaded["msvclsp.cli"] = fake_cli({
+      list_configs = {
+        result = { solution = "app.sln", available = { chosen }, active = nil },
+      },
+      generate = {
+        result = { database = "/root/.msvclsp/App-abcd1234/compile_commands.json" },
+        warnings = { { severity = "warning", message = "unsupported construct" } },
+      },
+    })
+    picker = require("msvclsp.picker")
+    vim.ui.select = select(1, fake_select(chosen))
+    local notify_calls, restore_notify = stub_notify()
+
+    picker.pick_config("app.sln", "/root", function() end)
+    restore_notify()
+
+    local warning_calls = vim.tbl_filter(function(c)
+      return c.msg:find("unsupported construct", 1, true) ~= nil
+    end, notify_calls)
+    MiniTest.expect.equality(#warning_calls, 1)
+    MiniTest.expect.equality(warning_calls[1].level, vim.log.levels.WARN)
   end)
 end)
 

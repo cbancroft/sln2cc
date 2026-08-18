@@ -180,6 +180,13 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   Visual Studio solution with cross-directory project references — and switching
   configuration/platform and regenerating visibly changes the flags clangd receives.
 
+- CLI failures reported by the Neovim plugin now include a one-line, kind-specific suggestion —
+  "run `:MsvclspSelectConfig`", "install/repair Visual Studio", "delete `.msvclsp/state.json`
+  and regenerate", and so on — instead of just the bare underlying error message. Evaluation
+  warnings (an unsupported MSBuild construct, an unfamiliar solution format, and the like) now
+  also reach you as a notification after `:MsvclspGenerate`/`:MsvclspSelectConfig` instead of
+  disappearing once the run succeeds.
+
 ### Changed
 
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection

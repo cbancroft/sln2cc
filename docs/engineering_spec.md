@@ -739,15 +739,29 @@ belongs to `main.rs`.
 - CLI invocation: `cli.lua`'s `M.run(args, on_done)` spawns the binary via `vim.system()` (behind
   an overridable `M._system` field, so `cli.lua`'s own tests can stub the spawn without a real
   binary), always appends `--json`, and decodes stdout on exit. On success it hands the whole
-  decoded envelope to `on_done(envelope, nil)` — `warnings` survives alongside `result`, since
-  V2-04 owns rendering them and shouldn't need to touch this module to reach them. On any failure
-  (non-zero exit, undecodable stdout, or a spawn failure like a missing binary) it hands back a
-  structured error whose `message` is stderr's text and whose `kind` is `envelope.error.kind` when
-  the envelope decoded. `M.list_configs(solution, root, on_done)` and
-  `M.generate(solution, config, root, on_done)` build on `M.run`, unwrap to `envelope.result`, and
-  always pass `--root` — the plugin resolves `root` itself (see project root detection above) and
-  passes it through explicitly rather than defaulting to the solution's own directory, since the
-  two are documented to diverge. See [ADR 34](adr/34-nvim-cli-invocation.md).
+  decoded envelope to `on_done(envelope, nil)`. On any failure (non-zero exit, undecodable stdout,
+  or a spawn failure like a missing binary) it hands back a structured error whose `message` is
+  stderr's text and whose `kind` is `envelope.error.kind` when the envelope decoded.
+  `M.list_configs(solution, root, on_done)` and `M.generate(solution, config, root, on_done)`
+  build on `M.run` and always pass `--root` — the plugin resolves `root` itself (see project root
+  detection above) and passes it through explicitly rather than defaulting to the solution's own
+  directory, since the two are documented to diverge. Their `on_done` takes a 3rd argument,
+  `warnings` — `envelope.result`/`nil`/`envelope.warnings` on success, `nil`/`err`/`nil` on
+  failure — additive over `M.run`'s own 2-argument shape, so a 2-parameter callback (e.g.
+  `health.lua`'s) is unaffected. See [ADR 34](adr/34-nvim-cli-invocation.md) and
+  [ADR 50](adr/50-nvim-error-surfacing.md).
+- Error and warning presentation: `notify.lua`'s `M.notify_error(err)` and
+  `M.notify_warnings(warnings)` are the plugin's only renderers for a `Msvclsp.CliError` and an
+  envelope's `warnings` array, respectively. `M.notify_error` always notifies at `ERROR`,
+  appending a kind-specific one-line remedy from `M.REMEDIES` (one row per `ErrorKind` wire
+  string) when `err.kind` has one; `err.kind == nil` (a spawn failure, or a `clap` usage error)
+  notifies `err.message` alone. `M.notify_warnings` batches every diagnostic into one `vim.notify`
+  call rather than one per diagnostic, at `WARN` if any diagnostic's `severity` is not exactly
+  `"note"`, else `INFO` — an unrecognized `severity` is treated as a warning, per
+  [ADR 13](adr/13-diagnostic-severity-and-wording.md)'s "treat an unknown value as a warning"
+  instruction. `commands.lua` and `picker.lua` call both wherever they invoke
+  `cli.list_configs`/`cli.generate`; `health.lua`'s `:checkhealth` status check is deliberately
+  untouched. See [ADR 50](adr/50-nvim-error-surfacing.md).
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into
   `.msvclsp/<solution-name>-<hash>/`.
 - `clangd` lifecycle: `lsp.lua`'s `M.start(database, root)` / `M.restart(database, root)` point
@@ -932,9 +946,6 @@ MSBuild-evaluation surface area bounded.
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only
   for a human reading a captured payload. Nothing enforces it today.
-- Which channel warnings should actually reach the user through in Neovim: rendered from the
-  envelope's `warnings` array, or folded in with stderr the way MVP-28 handles errors. V2-04 owns
-  error surfacing; nothing yet says who owns warnings.
 - Distribution's effect on MSRV. If the CLI ships as prebuilt release binaries, MSRV is a
   contributor-only concern; if the plugin builds from source or users `cargo install`, it gates
   users directly. Worth settling alongside the release/distribution question below.
