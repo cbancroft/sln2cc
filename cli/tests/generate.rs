@@ -229,6 +229,26 @@ fn generate_forced(sln: &Path) -> Result<Outcome> {
     msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
+/// Like [`generate`], but with an explicit `--root` rather than the default (the solution's own
+/// directory) — the shape a real multi-solution workspace uses, and the only way to make two
+/// independent [`TempProject`]s share one `.msvclsp` parent.
+fn generate_with_root(sln: &Path, root: &Path) -> Result<Outcome> {
+    let cli = Cli::try_parse_from([
+        "msvclsp",
+        "generate",
+        sln.to_str().expect("temp path is valid UTF-8"),
+        "--configuration",
+        "Debug",
+        "--platform",
+        "x64",
+        "--root",
+        root.to_str().expect("temp path is valid UTF-8"),
+    ])
+    .expect("parses");
+    let mut reporter = Reporter::new(false);
+    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
+}
+
 fn database_path(outcome: Outcome) -> (PathBuf, bool) {
     match outcome {
         Outcome::Generate(result) => (result.database, result.regenerated),
@@ -329,6 +349,53 @@ fn an_unbuilt_project_is_still_indexed() {
         contents.contains("main.cpp"),
         "an unbuilt project's file must still appear in the database: {contents}"
     );
+}
+
+/// `resolve_output_dir`'s collision-avoidance (ADR 19) is unit-tested in isolation in
+/// `compdb.rs`, but nothing before this exercised it through the real `generate` pipeline with
+/// two *different* solutions sharing one `.msvclsp` root — the actual multi-solution workspace
+/// shape V1-02 describes. Closes the gap between that todo item's `Tests:` line and what existed.
+#[test]
+fn two_solutions_generate_into_distinct_directories() {
+    let shared_root = std::env::temp_dir().join(format!(
+        "msvclsp-generate-shared-root-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&shared_root);
+
+    let first = TempProject::new("first", true);
+    let second = TempProject::new("second", true);
+
+    let (first_db, _) = database_path(
+        generate_with_root(&first.sln(), &shared_root).expect("first solution generates"),
+    );
+    let (second_db, _) = database_path(
+        generate_with_root(&second.sln(), &shared_root).expect("second solution generates"),
+    );
+
+    assert_ne!(
+        first_db, second_db,
+        "distinct solutions must not share an output directory"
+    );
+    assert!(first_db.starts_with(&shared_root));
+    assert!(second_db.starts_with(&shared_root));
+
+    let first_contents = std::fs::read_to_string(&first_db).expect("first database exists");
+    let second_contents = std::fs::read_to_string(&second_db).expect("second database exists");
+    assert!(
+        first_contents.contains("first"),
+        "first database must reference its own project's directory: {first_contents}"
+    );
+    assert!(
+        second_contents.contains("second"),
+        "second database must reference its own project's directory: {second_contents}"
+    );
+    assert!(
+        !first_contents.contains("second") && !second_contents.contains("first"),
+        "neither database may have been clobbered by the other solution's run"
+    );
+
+    let _ = std::fs::remove_dir_all(&shared_root);
 }
 
 /// Not one of `Store`'s own unit tests (those exercise `record_dependencies`/`is_up_to_date` in

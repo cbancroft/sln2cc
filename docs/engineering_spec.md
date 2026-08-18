@@ -619,10 +619,11 @@ omitted, so the plugin decodes one documented structure rather than branching on
 `result` is `SolutionConfigs` (`solution`, `available`, `active`, `database`) for `list-configs` and
 `GenerateResult` (`database`, `regenerated`) for `generate`. `SolutionConfigs.database` is the
 resolved `compile_commands.json` path for the solution regardless of whether anything has been
-generated yet or a configuration is `active` — namespacing is per-solution, not per-configuration
-(V1-02 owns the latter), so it needs neither. Added by MVP-32 so `health.lua` can check for the
-file's existence without duplicating `compdb::resolve_output_dir`'s naming scheme; see
-[ADR 39](adr/39-nvim-checkhealth.md).
+generated yet or a configuration is `active` — namespacing is per-solution only, so it needs
+neither. Per-configuration namespacing was never scoped as separate work and isn't tracked
+anywhere; see [ADR 51](adr/51-output-namespacing-already-delivered.md). Added by MVP-32 so
+`health.lua` can check for the file's existence without duplicating
+`compdb::resolve_output_dir`'s naming scheme; see [ADR 39](adr/39-nvim-checkhealth.md).
 
 ## Error Handling
 

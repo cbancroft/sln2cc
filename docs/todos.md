@@ -1956,10 +1956,25 @@ behind them have been tested.
   its caller. `nvim/lua/msvclsp/discovery.lua`'s existing scan (MVP-27) is the permanent design,
   not an MVP stopgap. See [ADR 44](adr/44-drop-cli-side-discovery.md).
 
-- [ ] **V1-02 — Namespace output per solution** · `feat/output-namespacing` · ~4h
+- [x] **V1-02 — Namespace output per solution** · `feat/output-namespacing` · ~4h
   Write to `.msvclsp/<solution-name>/` so a previously-used solution's artifacts survive
   switching away and back. Tests: two solutions generating into distinct directories without
   clobbering each other.
+
+  **Outcome:** Already done, in the same sense as V1-04/V1-06. `compdb::resolve_output_dir`
+  (`cli/src/compdb.rs`) has written every solution's output under
+  `.msvclsp/<solution-stem>-<hash>/` with a `.source` collision marker since MVP-17, and
+  `db::Store` (`cli/src/db.rs`) has kept `state.json` keyed per-solution path since MVP-18 —
+  both predate this issue by over a week, so a previously-used solution's artifacts already
+  survive switching away and back. Unlike V1-04, the exact test this issue's own Tests: line
+  called for didn't already exist: `compdb.rs` and `db.rs` each unit-test cross-solution
+  isolation in isolation, but nothing ran two real solutions through the full `generate`
+  pipeline sharing one `.msvclsp` root. Closed by adding that one integration test,
+  `cli/tests/generate.rs::two_solutions_generate_into_distinct_directories` — no `cli/src/**`
+  or `nvim/lua/**` change. Also corrected two stale cross-references
+  (`engineering_spec.md`, [ADR 39](adr/39-nvim-checkhealth.md)) that described this issue as
+  owning a per-configuration namespacing scheme it never scoped and nothing tracks. See
+  [ADR 51](adr/51-output-namespacing-already-delivered.md).
 
 - [x] **V1-03 — Solution picker with persistence** · `feat/nvim-solution-picker` · ~6h
   Present discovered solutions via `vim.ui.select` and remember the choice per project root so

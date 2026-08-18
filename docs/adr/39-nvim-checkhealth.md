@@ -21,8 +21,9 @@ The first four read state `config.lua` and `discovery.lua` already expose. The f
 anywhere to read from: `list-configs`' `SolutionConfigs` (`cli.rs`) reports `active` — the chosen
 configuration/platform — but never *where* that configuration's `compile_commands.json` would
 live. That path is computed by `compdb::resolve_output_dir(msvclsp_dir, sln_path)`, keyed on the
-solution alone (namespacing is per-solution today; V1-02 owns per-configuration namespacing), and
-nothing on the Lua side duplicates that computation. Two more small gaps surfaced once the shape of
+solution alone (namespacing is per-solution only; per-configuration namespacing was never scoped
+as separate work — see [ADR 51](51-output-namespacing-already-delivered.md)), and nothing on the
+Lua side duplicates that computation. Two more small gaps surfaced once the shape of
 `M.check()` was worked out: `discovery.project_root()` silently folds "found via a root marker"
 and "fell back to the current directory" into the same plain string, and `cli.list_configs` is
 async while every `:checkhealth` provider Neovim calls is expected to have finished reporting by
