@@ -1,7 +1,7 @@
 *sln2cc.txt*   clangd support for Visual Studio solutions
 
 ==============================================================================
-CONTENTS                                                    *sln2cc-contents*
+CONTENTS                                                     *sln2cc-contents*
 
   1. Introduction ......................... |sln2cc-introduction|
   2. Setup ................................ |sln2cc-setup|
@@ -12,7 +12,7 @@ CONTENTS                                                    *sln2cc-contents*
   7. Troubleshooting ...................... |sln2cc-troubleshooting|
 
 ==============================================================================
-1. INTRODUCTION                                         *sln2cc-introduction*
+1. INTRODUCTION                                          *sln2cc-introduction*
 
 `clangd` needs a `compile_commands.json` compilation database to know how each
 file in a project is compiled. CMake generates one automatically; Visual
@@ -33,10 +33,10 @@ There is no daemon and no LSP proxy: the CLI writes a file, the plugin starts
 See |sln2cc-troubleshooting| if something in that chain isn't working.
 
 ==============================================================================
-2. SETUP                                                       *sln2cc-setup*
+2. SETUP                                                        *sln2cc-setup*
 
 Prerequisites ~
-                                                    *sln2cc-prerequisites*
+                                                     *sln2cc-prerequisites*
 - Neovim 0.12+ (project root detection uses |vim.fs.root()|, and clangd
   lifecycle management uses `vim.lsp.config`/`vim.lsp.enable`).
 - The `sln2cc` binary, built and put on your `PATH` (or pointed at
@@ -55,7 +55,7 @@ Prerequisites ~
   it. The plugin itself has no such requirement.
 
 Installation ~
-                                                     *sln2cc-installation*
+                                                      *sln2cc-installation*
 sln2cc isn't published to a plugin registry yet (see the "Release/
 distribution strategy" open question in the project's own engineering
 spec), so today's install is a local checkout added to your runtime path.
@@ -76,7 +76,7 @@ Either way, `setup()` is the only required call — see
 (`{}`) is enough to get started; every option has a working default.
 
 ==============================================================================
-3. FIRST USE                                               *sln2cc-first-use*
+3. FIRST USE                                                *sln2cc-first-use*
 
 1. Open a source file that lives somewhere under a `.sln`. The plugin finds
    your project root the same way Neovim's built-in LSP clients do —
@@ -105,7 +105,7 @@ generation for whichever pair is already active, useful after the
 themselves change.
 
 ==============================================================================
-4. COMMANDS                                                 *sln2cc-commands*
+4. COMMANDS                                                  *sln2cc-commands*
 
 None of these exist as bindable functions outside a `:` command — call them
 by name, or bind your own keymap to the command (see |sln2cc-keymaps|).
@@ -114,7 +114,7 @@ Every command notifies a clear error rather than doing nothing if
 invalid `opts` table notifies and leaves nothing registered as ready — see
 |sln2cc-configuration|).
 
-                                                          *:Sln2ccGenerate*
+                                                           *:Sln2ccGenerate*
 :Sln2ccGenerate
     Regenerate `compile_commands.json` for the solution's currently active
     configuration/platform (whatever |:Sln2ccSelectConfig| last picked).
@@ -131,7 +131,7 @@ invalid `opts` table notifies and leaves nothing registered as ready — see
     `.props` file outside the project tree), or if you simply don't trust
     the cache right now. No other command accepts a bang.
 
-                                                     *:Sln2ccSelectConfig*
+                                                      *:Sln2ccSelectConfig*
 :Sln2ccSelectConfig
     Prompt (via |vim.ui.select()|) for one of the solution's declared
     configuration/platform pairs, marking whichever is currently active, and
@@ -139,14 +139,14 @@ invalid `opts` table notifies and leaves nothing registered as ready — see
     prompt (`<Esc>`) does nothing. Restarts `clangd` afterward under the same
     rule as |:Sln2ccGenerate|.
 
-                                                            *:Sln2ccRescan*
+                                                             *:Sln2ccRescan*
 :Sln2ccRescan
     Re-scan the project tree for `.sln` files and report how many were
     found. Needed after adding, moving, or removing a solution file — the
     scan result is otherwise cached for the life of the session. Does not
     touch clangd or the compilation database.
 
-                                                           *:Sln2ccRestart*
+                                                            *:Sln2ccRestart*
 :Sln2ccRestart
     Restart `clangd` against whatever `compile_commands.json` was last
     generated this session (by |:Sln2ccGenerate| or |:Sln2ccSelectConfig|).
@@ -161,7 +161,7 @@ todos.md` (V1-03) if you're reading this from a checkout and want to track
 that.
 
 ==============================================================================
-5. KEYMAPS                                                   *sln2cc-keymaps*
+5. KEYMAPS                                                    *sln2cc-keymaps*
 
 sln2cc does not bind any keymaps itself — see |sln2cc-commands| for why.
 Something like this in your own config covers all four: >lua
@@ -178,7 +178,7 @@ Adjust the `<leader>m*` prefix to whatever doesn't collide with your own
 config; nothing about these bindings is load-bearing.
 
 ==============================================================================
-6. CONFIGURATION                                       *sln2cc-configuration*
+6. CONFIGURATION                                        *sln2cc-configuration*
 
 Everything below is a key in the table passed to `require("sln2cc").setup()`
 (`nvim/lua/sln2cc/config.lua`'s `M.defaults`, if you're reading this from a
@@ -191,7 +191,7 @@ not against whatever an earlier call left in place. >lua
       -- any subset of the keys below
     })
 <
-                                                          *sln2cc-config-bin*
+                                                           *sln2cc-config-bin*
 bin ~
     Type: `string`  Default: `"sln2cc"`
     Path to the `sln2cc` binary. `"sln2cc"` resolves via `PATH`; point
@@ -199,14 +199,14 @@ bin ~
     `target/debug/sln2cc`) if you haven't installed it. See
     |sln2cc-prerequisites|.
 
-                                                 *sln2cc-config-root_markers*
+                                                  *sln2cc-config-root_markers*
 root_markers ~
     Type: `string[]`  Default: `{ ".git" }`
     Files/directories `vim.fs.root()` looks for while walking up from a
     buffer to find the project root — the same mechanism Neovim's built-in
     LSP clients use. `.sln2cc/` (generated artifacts) is created here.
 
-                                                     *sln2cc-config-data_dir*
+                                                      *sln2cc-config-data_dir*
 data_dir ~
     Type: `string`  Default: `".sln2cc"`
     Directory name for generated artifacts, intended to be relative to the
@@ -216,7 +216,7 @@ data_dir ~
     `setup()` accepts and validates it; don't rely on changing it doing
     anything.
 
-                                          *sln2cc-config-auto_restart_clangd*
+                                           *sln2cc-config-auto_restart_clangd*
 auto_restart_clangd ~
     Type: `boolean`  Default: `true`
     Restart `clangd` automatically after |:Sln2ccGenerate| or
@@ -224,7 +224,7 @@ auto_restart_clangd ~
     rather restart it yourself (|:Sln2ccRestart|) — e.g. to batch several
     configuration switches before reattaching.
 
-                                          *sln2cc-config-scan_ignore_dirs*
+                                           *sln2cc-config-scan_ignore_dirs*
 scan_ignore_dirs ~
     Type: `string[]`
     Default: `{ ".git", ".sln2cc", "node_modules", "bin", "obj",
@@ -233,14 +233,14 @@ scan_ignore_dirs ~
     project root. Matched by name anywhere in the tree, not by path — a
     directory named `bin` is skipped everywhere, not just at the root.
 
-                                            *sln2cc-config-scan_max_depth*
+                                             *sln2cc-config-scan_max_depth*
 scan_max_depth ~
     Type: `number`  Default: `6`
     Maximum directory levels descended below the project root while
     scanning for `.sln` files. Bounds worst-case scan cost on a deep or
     unexpectedly large tree.
 
-                                              *sln2cc-config-clangd_cmd*
+                                               *sln2cc-config-clangd_cmd*
 clangd_cmd ~
     Type: `string[]`  Default: `{ "clangd" }`
     Command used to launch `clangd`. Add your own arguments after the
@@ -248,13 +248,13 @@ clangd_cmd ~
     "--header-insertion=never" }`); `--compile-commands-dir=<dir>` is
     always appended automatically and should not be added here.
 
-                                                *sln2cc-config-filetypes*
+                                                 *sln2cc-config-filetypes*
 filetypes ~
     Type: `string[]`  Default: `{ "c", "cpp" }`
     Filetypes `clangd` is started for.
 
 ==============================================================================
-7. TROUBLESHOOTING                                   *sln2cc-troubleshooting*
+7. TROUBLESHOOTING                                    *sln2cc-troubleshooting*
 
 Run `:checkhealth sln2cc` first. It checks the five things most likely to
 be wrong, in this order, and each failure names what to run or check next:
