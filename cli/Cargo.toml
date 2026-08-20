@@ -7,6 +7,10 @@ edition = "2024"
 rust-version = "1.85"
 description = "Generates clangd compile_commands.json from Visual Studio solutions"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/cbancroft/sln2cc"
+keywords = ["clangd", "compile-commands", "msbuild", "visual-studio", "lsp"]
+categories = ["development-tools::build-utils", "command-line-utilities"]
 
 # Dependencies are deliberately few; see "Dependency Decisions" in docs/engineering_spec.md
 # for the full reasoning. Summary of what was *rejected* and why, so it isn't relitigated:
