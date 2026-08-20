@@ -1,7 +1,7 @@
 --- clangd lifecycle management.
 ---
 --- clangd is always launched pointed at an explicit compile_commands.json under
---- `.msvclsp/<solution-name>-<hash>/`, never relying on its own directory-walk discovery, because
+--- `.sln2cc/<solution-name>-<hash>/`, never relying on its own directory-walk discovery, because
 --- a solution's location in the tree may not line up with where sources live. The path is always handed
 --- in by the caller.
 ---
@@ -9,7 +9,7 @@
 --- (re-)enables it, letting `FileType` autocmds start and attach clangd as normal. We just point the
 --- clangd instance at the proper `compile_commands.json`.
 
-local config = require("msvclsp.config")
+local config = require("sln2cc.config")
 
 local M = {}
 
@@ -84,7 +84,7 @@ end
 function M.start(database, root)
   if not database then
     vim.notify(
-      "msvclsp: no compile_commands.json generated yet. Pick a configuration first.",
+      "sln2cc: no compile_commands.json generated yet. Pick a configuration first.",
       vim.log.levels.WARN
     )
     return
@@ -101,7 +101,7 @@ end
 function M.restart(database, root)
   if not database then
     vim.notify(
-      "msvclsp: no compile_commands.json generated yet. Pick a configuration first.",
+      "sln2cc: no compile_commands.json generated yet. Pick a configuration first.",
       vim.log.levels.WARN
     )
     return

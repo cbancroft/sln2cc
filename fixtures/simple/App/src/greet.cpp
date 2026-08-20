@@ -1,3 +1,3 @@
 #include "greet.h"
 
-const char* greeting() { return "Hello from msvclsp"; }
+const char* greeting() { return "Hello from sln2cc"; }

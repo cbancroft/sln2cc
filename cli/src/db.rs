@@ -64,11 +64,11 @@ struct SolutionRecord {
     files: BTreeMap<String, i64>,
 }
 
-/// Handle to the state file stored under `.msvclsp/`.
+/// Handle to the state file stored under `.sln2cc/`.
 #[derive(Debug)]
 pub struct Store {
     pub path: PathBuf,
-    /// The workspace root. This is `.msvclsp`'s own parent, and used to key solutions by
+    /// The workspace root. This is `.sln2cc`'s own parent, and used to key solutions by
     /// root-relative path rather than absolute. See [`solution_key`].
     root: PathBuf,
     state: State,
@@ -77,15 +77,15 @@ pub struct Store {
 impl Store {
     /// Open (creating if absent) the state file for a project root.
     /// A missing file is empty state, not an error. The state file is a cache, and an empty cache
-    /// is a normal starting state. `.msvclsp` is created if it does not exist yet.
-    pub fn open(msvclsp_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(msvclsp_dir).map_err(|e| Error::io(msvclsp_dir, e))?;
-        let path = msvclsp_dir.join(STATE_FILE);
+    /// is a normal starting state. `.sln2cc` is created if it does not exist yet.
+    pub fn open(sln2cc_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(sln2cc_dir).map_err(|e| Error::io(sln2cc_dir, e))?;
+        let path = sln2cc_dir.join(STATE_FILE);
 
-        // `msvclsp` always sits directly at the project root, so this is unreachable in practice.
-        // Falling back to `msvclsp_dir` itself is a graceful degrade rather than an `unwrap()` on
+        // `sln2cc` always sits directly at the project root, so this is unreachable in practice.
+        // Falling back to `sln2cc_dir` itself is a graceful degrade rather than an `unwrap()` on
         // a result nothing in this crate can construct without a parent.
-        let root = msvclsp_dir.parent().unwrap_or(msvclsp_dir).to_path_buf();
+        let root = sln2cc_dir.parent().unwrap_or(sln2cc_dir).to_path_buf();
 
         let state = match std::fs::read_to_string(&path) {
             Ok(contents) => {
@@ -268,11 +268,11 @@ mod tests {
     #[test]
     fn open_creates_a_fresh_state_file_with_the_expected_top_level_keys() {
         let tree = TempTree::new("open_creates_fresh_state");
-        let msvclsp_dir = tree.path(".msvclsp");
+        let sln2cc_dir = tree.path(".sln2cc");
 
-        Store::open(&msvclsp_dir).expect("a missing state file is not an error");
+        Store::open(&sln2cc_dir).expect("a missing state file is not an error");
 
-        let contents = std::fs::read_to_string(msvclsp_dir.join("state.json"))
+        let contents = std::fs::read_to_string(sln2cc_dir.join("state.json"))
             .expect("open() must write the fresh state file to disk");
         let value: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
 
@@ -283,8 +283,8 @@ mod tests {
     #[test]
     fn reopening_existing_state_round_trips_unchanged() {
         let tree = TempTree::new("reopen_round_trips");
-        let msvclsp_dir = tree.path(".msvclsp");
-        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
+        let sln2cc_dir = tree.path(".sln2cc");
+        std::fs::create_dir_all(&sln2cc_dir).expect("temp tree is writable");
         let original = serde_json::json!({
             "version": 1,
             "solutions": {
@@ -295,13 +295,13 @@ mod tests {
                 }
             }
         });
-        std::fs::write(msvclsp_dir.join("state.json"), original.to_string())
+        std::fs::write(sln2cc_dir.join("state.json"), original.to_string())
             .expect("temp tree is writable");
 
-        Store::open(&msvclsp_dir).expect("opens existing state");
+        Store::open(&sln2cc_dir).expect("opens existing state");
 
         let reread: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(msvclsp_dir.join("state.json"))
+            &std::fs::read_to_string(sln2cc_dir.join("state.json"))
                 .expect("state file still exists"),
         )
         .expect("valid json");
@@ -314,9 +314,9 @@ mod tests {
     #[test]
     fn open_treats_a_missing_file_as_empty_state() {
         let tree = TempTree::new("missing_file_is_empty_state");
-        let msvclsp_dir = tree.path(".msvclsp");
+        let sln2cc_dir = tree.path(".sln2cc");
 
-        let result = Store::open(&msvclsp_dir);
+        let result = Store::open(&sln2cc_dir);
 
         assert!(
             result.is_ok(),
@@ -327,12 +327,12 @@ mod tests {
     #[test]
     fn a_malformed_state_file_produces_a_clear_error_not_a_panic() {
         let tree = TempTree::new("malformed_state_file");
-        let msvclsp_dir = tree.path(".msvclsp");
-        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
-        std::fs::write(msvclsp_dir.join("state.json"), "{ not valid json")
+        let sln2cc_dir = tree.path(".sln2cc");
+        std::fs::create_dir_all(&sln2cc_dir).expect("temp tree is writable");
+        std::fs::write(sln2cc_dir.join("state.json"), "{ not valid json")
             .expect("temp tree is writable");
 
-        let result = Store::open(&msvclsp_dir);
+        let result = Store::open(&sln2cc_dir);
 
         assert!(matches!(result, Err(Error::StateParse { .. })));
     }
@@ -343,15 +343,15 @@ mod tests {
     #[test]
     fn an_unsupported_schema_version_is_rejected_clearly() {
         let tree = TempTree::new("unsupported_schema_version");
-        let msvclsp_dir = tree.path(".msvclsp");
-        std::fs::create_dir_all(&msvclsp_dir).expect("temp tree is writable");
+        let sln2cc_dir = tree.path(".sln2cc");
+        std::fs::create_dir_all(&sln2cc_dir).expect("temp tree is writable");
         std::fs::write(
-            msvclsp_dir.join("state.json"),
+            sln2cc_dir.join("state.json"),
             serde_json::json!({"version": 999, "solutions": {}}).to_string(),
         )
         .expect("temp tree is writable");
 
-        let result = Store::open(&msvclsp_dir);
+        let result = Store::open(&sln2cc_dir);
 
         match result {
             Err(Error::StateVersion {
@@ -427,8 +427,8 @@ mod tests {
     #[test]
     fn solution_key_is_relative_to_the_workspace_root_and_lowercased() {
         let tree = TempTree::new("solution_key_relative_to_root");
-        let msvclsp_dir = tree.path(".msvclsp");
-        let store = Store::open(&msvclsp_dir).expect("opens");
+        let sln2cc_dir = tree.path(".sln2cc");
+        let store = Store::open(&sln2cc_dir).expect("opens");
         let solution = tree.path("Sub/App.sln");
 
         let key = store.solution_key(&solution);
@@ -448,8 +448,8 @@ mod tests {
     #[test]
     fn solution_key_is_stable_across_casing() {
         let tree = TempTree::new("solution_key_stable_across_casing");
-        let msvclsp_dir = tree.path(".msvclsp");
-        let store = Store::open(&msvclsp_dir).expect("opens");
+        let sln2cc_dir = tree.path(".sln2cc");
+        let store = Store::open(&sln2cc_dir).expect("opens");
 
         let lower_key = store.solution_key(&tree.path("Sub/App.sln"));
         let upper_key = store.solution_key(&tree.root().join("SUB").join("APP.SLN"));
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn set_then_get_round_trips() {
         let tree = TempTree::new("set_then_get_round_trips");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         let solution = tree.path("App.sln");
         let config = debug_x64();
 
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn active_config_is_none_for_an_unknown_solution() {
         let tree = TempTree::new("active_config_unknown_solution");
-        let store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let store = Store::open(&tree.path(".sln2cc")).expect("opens");
 
         let result = store
             .active_config(&tree.path("Never.sln"))
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn set_active_config_overwrites_an_existing_selection() {
         let tree = TempTree::new("set_active_config_overwrites");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         let solution = tree.path("App.sln");
 
         store
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn two_solutions_hold_independent_selections() {
         let tree = TempTree::new("two_solutions_independent_selections");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         let first = tree.path("First.sln");
         let second = tree.path("Second.sln");
 
@@ -550,19 +550,19 @@ mod tests {
 
     /// Not in the issue's own test list, but proves the write-through actually reaches
     /// `state.json` rather than only updating the in-memory copy — a second `Store::open`
-    /// against the same `.msvclsp` directory has no way to see the selection otherwise.
+    /// against the same `.sln2cc` directory has no way to see the selection otherwise.
     #[test]
     fn set_active_config_persists_to_disk() {
         let tree = TempTree::new("set_active_config_persists_to_disk");
-        let msvclsp_dir = tree.path(".msvclsp");
+        let sln2cc_dir = tree.path(".sln2cc");
         let solution = tree.path("App.sln");
 
-        let mut store = Store::open(&msvclsp_dir).expect("opens the first handle");
+        let mut store = Store::open(&sln2cc_dir).expect("opens the first handle");
         store
             .set_active_config(&solution, &debug_x64())
             .expect("sets the active config");
 
-        let reopened = Store::open(&msvclsp_dir).expect("opens a second handle");
+        let reopened = Store::open(&sln2cc_dir).expect("opens a second handle");
 
         assert_eq!(
             reopened.active_config(&solution).expect("reads"),
@@ -582,7 +582,7 @@ mod tests {
     #[test]
     fn is_up_to_date_is_false_for_a_solution_never_recorded() {
         let tree = TempTree::new("is_up_to_date_never_recorded");
-        let store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let store = Store::open(&tree.path(".sln2cc")).expect("opens");
 
         let result = store
             .is_up_to_date(&tree.path("App.sln"))
@@ -601,7 +601,7 @@ mod tests {
         let solution = tree.path("App.sln");
         tree.write("App.sln", "sln contents");
         let project = tree.write("App.vcxproj", "project contents");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
 
         store
             .record_dependencies(&solution, &[solution.clone(), project])
@@ -621,7 +621,7 @@ mod tests {
         let solution = tree.path("App.sln");
         tree.write("App.sln", "sln contents");
         let project = tree.write("App.vcxproj", "project contents");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         store
             .record_dependencies(&solution, &[solution.clone(), project])
             .expect("records the dependency set");
@@ -643,7 +643,7 @@ mod tests {
         let solution = tree.path("App.sln");
         tree.write("App.sln", "sln contents");
         let project = tree.write("App.vcxproj", "project contents");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         store
             .record_dependencies(&solution, &[solution.clone(), project.clone()])
             .expect("records the dependency set");
@@ -667,7 +667,7 @@ mod tests {
         let solution = tree.path("App.sln");
         tree.write("App.sln", "sln contents");
         let project = tree.write("App.vcxproj", "project contents, no imports");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
         store
             .record_dependencies(&solution, &[solution.clone(), project])
             .expect("records the dependency set from the first evaluation");
@@ -690,7 +690,7 @@ mod tests {
         tree.write("App.sln", "sln contents");
         let a = tree.write("A.props", "a contents");
         let b = tree.write("B.props", "b contents");
-        let mut store = Store::open(&tree.path(".msvclsp")).expect("opens");
+        let mut store = Store::open(&tree.path(".sln2cc")).expect("opens");
 
         store
             .record_dependencies(&solution, &[solution.clone(), a.clone(), b.clone()])
@@ -716,17 +716,17 @@ mod tests {
     #[test]
     fn record_dependencies_persists_to_disk() {
         let tree = TempTree::new("record_dependencies_persists_to_disk");
-        let msvclsp_dir = tree.path(".msvclsp");
+        let sln2cc_dir = tree.path(".sln2cc");
         let solution = tree.path("App.sln");
         tree.write("App.sln", "sln contents");
         let project = tree.write("App.vcxproj", "project contents");
 
-        let mut store = Store::open(&msvclsp_dir).expect("opens the first handle");
+        let mut store = Store::open(&sln2cc_dir).expect("opens the first handle");
         store
             .record_dependencies(&solution, &[solution.clone(), project])
             .expect("records the dependency set");
 
-        let reopened = Store::open(&msvclsp_dir).expect("opens a second handle");
+        let reopened = Store::open(&sln2cc_dir).expect("opens a second handle");
 
         assert!(
             reopened

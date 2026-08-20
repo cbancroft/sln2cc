@@ -3,16 +3,16 @@
 local M = {}
 
 M.defaults = {
-  --- Path to the msvclsp binary. Resolution strategy is an open question
+  --- Path to the sln2cc binary. Resolution strategy is an open question
   --- (bundled build vs. release download vs. cargo install).
-  bin = "msvclsp",
+  bin = "sln2cc",
 
   --- Root markers used to locate the project root, matching what Neovim's LSP clients
-  --- already use. `.msvclsp/` is created here.
+  --- already use. `.sln2cc/` is created here.
   root_markers = { ".git" },
 
   --- Directory name for generated artifacts, relative to the project root.
-  data_dir = ".msvclsp",
+  data_dir = ".sln2cc",
 
   --- Restart clangd automatically after regenerating the compilation database.
   auto_restart_clangd = true,
@@ -21,7 +21,7 @@ M.defaults = {
   --- by name, not path — a directory called `bin` is skipped everywhere in the tree, not just
   --- at the root. Scanning never descends into these, so a huge `node_modules` costs nothing.
   scan_ignore_dirs = {
-    ".git", ".msvclsp", "node_modules", "bin", "obj", "packages",
+    ".git", ".sln2cc", "node_modules", "bin", "obj", "packages",
     "Debug", "Release", "x64", "x86", "Win32",
   },
 
@@ -111,7 +111,7 @@ function M.setup(opts)
   validate(M.defaults, opts, "", errors)
   if #errors > 0 then
     vim.notify(
-      "msvclsp: invalid configuration:\n  " .. table.concat(errors, "\n  "),
+      "sln2cc: invalid configuration:\n  " .. table.concat(errors, "\n  "),
       vim.log.levels.ERROR
     )
     return nil

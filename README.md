@@ -1,10 +1,10 @@
-# msvclsp
+# sln2cc
 
 clangd support for C/C++ projects built with Visual Studio solutions.
 
 `clangd` needs a `compile_commands.json` compilation database to know how each file is
 compiled. CMake projects generate one automatically; Visual Studio solutions don't.
-msvclsp parses a `.sln` and its `.vcxproj`/`.props` files for a chosen
+sln2cc parses a `.sln` and its `.vcxproj`/`.props` files for a chosen
 configuration/platform and produces that database — so you can use Neovim on MSBuild
 projects without hand-converting them to CMake.
 
@@ -32,7 +32,7 @@ same file count. See [docs/todos.md](docs/todos.md) for the exact list,
 
 If MSBuild's vocabulary is unfamiliar — items, property sheets, item definition groups, the
 difference between a solution configuration and a project configuration — start with
-[docs/glossary.md](docs/glossary.md). msvclsp's warnings use those terms, and the terms are
+[docs/glossary.md](docs/glossary.md). sln2cc's warnings use those terms, and the terms are
 the tricky part of working with MSVC project files.
 
 The binary builds on any platform, but real use requires Windows with Visual Studio
@@ -45,21 +45,21 @@ runtime path. With `lazy.nvim`:
 
 ```lua
 {
-  dir = "/path/to/msvclsp/nvim",
-  main = "msvclsp",
+  dir = "/path/to/sln2cc/nvim",
+  main = "sln2cc",
   opts = {},
 }
 ```
 
-You'll also need the `msvclsp` binary itself on `PATH` (`cargo install --path cli` from a
+You'll also need the `sln2cc` binary itself on `PATH` (`cargo install --path cli` from a
 checkout, or point the plugin's `bin` option at a `cargo build` output) and `clangd` on
 `PATH`. Once both are in place and `setup()` has run, open a file inside a solution's tree,
-run `:MsvclspSelectConfig` to pick a configuration/platform, and `clangd` attaches
+run `:Sln2ccSelectConfig` to pick a configuration/platform, and `clangd` attaches
 automatically.
 
 Everything else — every command, every configuration option, suggested keymaps, and a
-troubleshooting section built around `:checkhealth msvclsp` — is in `:help msvclsp`
-(`nvim/doc/msvclsp.txt`), which is the source of truth for using the plugin; this README
+troubleshooting section built around `:checkhealth sln2cc` — is in `:help sln2cc`
+(`nvim/doc/sln2cc.txt`), which is the source of truth for using the plugin; this README
 only covers building and testing the repository itself.
 
 ## Building and testing
@@ -138,7 +138,7 @@ To load the plugin from this checkout while developing, add `nvim/` to your runt
 e.g. with `lazy.nvim`:
 
 ```lua
-{ dir = "D:/code/msvclsp/nvim", main = "msvclsp", opts = {} }
+{ dir = "D:/code/sln2cc/nvim", main = "sln2cc", opts = {} }
 ```
 
 Note that plugin managers generally expect `lua/`, `plugin/`, and `doc/` at the *repository*

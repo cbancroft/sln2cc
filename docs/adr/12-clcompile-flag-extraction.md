@@ -170,7 +170,7 @@ issue text permitted skipping codegen and link settings; the judgement calls wer
 | `ForcedIncludeFiles`, `UndefinePreprocessorDefinitions` | translated | Preprocessor state, directly. |
 | `WarningLevel`, `DisableSpecificWarnings` | translated | Decide which diagnostics the editor shows. clang-cl maps levels onto its own groups approximately, so the set will not match a real build exactly — accepted, because the alternative is ignoring a project's explicit choice to silence a warning. |
 | `TreatWarningAsError` | **skipped** | clang's warning set is not MSVC's, so honouring `/WX` turns diagnostics the real build never emits into editor *errors*, and a working file reads as broken. |
-| `PrecompiledHeader`, `PrecompiledHeaderFile` | **skipped** | `/Yu` injects nothing — a source using a pch still `#include`s it — so skipping costs no parse fidelity, while emitting it points clangd at a `.pch` no msvclsp run produces. |
+| `PrecompiledHeader`, `PrecompiledHeaderFile` | **skipped** | `/Yu` injects nothing — a source using a pch still `#include`s it — so skipping costs no parse fidelity, while emitting it points clangd at a `.pch` no sln2cc run produces. |
 | `DisableLanguageExtensions` | **skipped** | clang-cl rejects `/Za`, which would fail the whole command rather than one flag. |
 | `CharacterSet`, `ConfigurationType` | **skipped** | Properties rather than metadata: `UNICODE`/`_UNICODE` reach `PreprocessorDefinitions` through Microsoft's own `.props`, and hard-coding a copy of that logic would go stale the moment a toolset changed it. MVP-15 makes it moot. |
 | everything else | skipped | Codegen or build bookkeeping. Cannot change how a file parses. |

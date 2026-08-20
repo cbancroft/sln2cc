@@ -4,7 +4,7 @@ Features and bugfixes as they land, following [Keep a Changelog](https://keepach
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Entries are added in the same change that implements them, written for someone *using*
-msvclsp rather than someone reading the diff. Purely internal work — refactors, test
+sln2cc rather than someone reading the diff. Purely internal work — refactors, test
 scaffolding, documentation — is omitted unless it changes behavior. At release, the
 `[Unreleased]` section becomes the new version's notes.
 
@@ -15,32 +15,32 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Added
 
-- A command line: `msvclsp list-configs <solution>` and `msvclsp generate <solution>
-  --configuration <name> --platform <name>`, both accepting `--root` to say where `.msvclsp/`
+- A command line: `sln2cc list-configs <solution>` and `sln2cc generate <solution>
+  --configuration <name> --platform <name>`, both accepting `--root` to say where `.sln2cc/`
   should live. `--json` switches stdout to a machine-readable envelope for the Neovim plugin;
   without it you get readable text. Failures exit with a distinct code per class and explain
   themselves on stderr. Both subcommands now actually work.
 
-- `msvclsp generate <solution> --configuration <name> --platform <name>` writes a real
-  `compile_commands.json` for the requested configuration/platform under `.msvclsp/`, discovering
+- `sln2cc generate <solution> --configuration <name> --platform <name>` writes a real
+  `compile_commands.json` for the requested configuration/platform under `.sln2cc/`, discovering
   your Visual Studio installation, evaluating every project the solution maps to that pair — including
   one unchecked in Configuration Manager, since its files still deserve completions when you open
   them — and reporting the absolute path it wrote. A second run against unchanged files is a no-op;
   `--force` skips that check. Asking for a configuration/platform pair the solution does not declare
   fails with the list of valid ones instead of guessing.
 
-- `msvclsp list-configs <solution>` lists the configuration/platform pairs (`Debug|x64`,
+- `sln2cc list-configs <solution>` lists the configuration/platform pairs (`Debug|x64`,
   `Release|x64`, and so on) the solution actually declares, in the order the solution lists them,
   and marks which one you last generated for it. Nothing to guess or open Visual Studio's
   Configuration Manager for.
 
-- Warnings about things msvclsp noticed but could work around — an unfamiliar solution format
+- Warnings about things sln2cc noticed but could work around — an unfamiliar solution format
   version, say — are now reported rather than dropped. They appear on stderr whichever output mode
   you use, and in the `warnings` array under `--json`, including when the run then goes on to fail.
   File paths in them are shown relative to the project root so pasting the output somewhere does not
   leak your directory layout.
 
-- `-v`/`--verbose` reports what msvclsp is working on as it goes, on stderr. Parsing a large solution
+- `-v`/`--verbose` reports what sln2cc is working on as it goes, on stderr. Parsing a large solution
   takes real time, and this is how you tell it is doing something. It also switches warning paths to
   their full absolute form for when the shortened version is the confusing part. stdout is untouched
   either way, so `-v` is safe to add to a piped or scripted invocation.
@@ -74,24 +74,24 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   without losing the project's — and the "inherit from parent or project defaults" checkbox does what
   it says. A configuration/platform-gated section applies only to the pair you asked for.
 
-  Things msvclsp cannot work out are said out loud rather than guessed at: a wildcard such as
+  Things sln2cc cannot work out are said out loud rather than guessed at: a wildcard such as
   `Include="src\*.cpp"` is not expanded yet, and now tells you which files are missing from the
   database instead of quietly producing none; asking for a configuration the project does not declare
-  warns instead of handing you files with no flags on them; a setting whose value msvclsp does not
+  warns instead of handing you files with no flags on them; a setting whose value sln2cc does not
   recognize is named and skipped; and a value that still contains an unresolved `$(...)` says so
   before it reaches clangd.
 
   Toolchain-derived properties and the toolset's own system include directories now reach the
   database too, once `generate` discovers a Visual Studio installation to evaluate against.
 
-- msvclsp can now find the actual compiler and Windows SDK headers on your machine, not just the
+- sln2cc can now find the actual compiler and Windows SDK headers on your machine, not just the
   ones your project files mention. Given a located Visual Studio installation, it reads which MSVC
   toolset version it defaults to, finds that toolset's `include` directory, and finds the newest
   complete Windows SDK installed (skipping a newer one that's missing a piece, in favor of an older
   one that works) — so `#include <windows.h>` and the C runtime headers will resolve once these
   paths reach the generated database.
 
-- Warnings now come at two levels, so a long list is worth reading. A **warning** means msvclsp could
+- Warnings now come at two levels, so a long list is worth reading. A **warning** means sln2cc could
   not make sense of something and your flags may be wrong because of it — an unresolved `$(...)`, a
   `<Choose>` block, a wildcard whose source files are therefore missing, a setting whose value it does
   not recognize. A **note** means it is unusual but harmless: a solution saved by a newer Visual
@@ -100,10 +100,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   labelled `warning:` or `note:`, and both ride in the `warnings` array under `--json` with a
   `severity` of `"warning"` or `"note"`.
 
-  Everything msvclsp reports now says what it means for you rather than just what it saw, and there
+  Everything sln2cc reports now says what it means for you rather than just what it saw, and there
   is a full list of what it can report in the engineering spec.
 
-- msvclsp can now find your Visual Studio installation on its own, the same way the VS installers
+- sln2cc can now find your Visual Studio installation on its own, the same way the VS installers
   register themselves — by asking `vswhere` which installed instances have the C++ compiler toolset
   and picking the newest one. Toolset and Windows SDK include paths, which is what actually makes
   `#include <windows.h>` resolve, are the next piece.
@@ -115,7 +115,7 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 - The Neovim plugin can now find your project root: it walks up from the buffer you're editing
   looking for a configured marker (`.git` by default), the same way Neovim's built-in LSP clients
-  do, and falls back to your current working directory if nothing matches. `.msvclsp/` will be
+  do, and falls back to your current working directory if nothing matches. `.sln2cc/` will be
   created there.
 
 - The Neovim plugin can now find `.sln` files under your project root on its own, skipping
@@ -131,37 +131,37 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 - `Condition` attributes can now use `HasTrailingSlash(...)`, alongside `Exists(...)`, instead of
   failing generation outright.
 
-- The Neovim plugin now has real commands: `:MsvclspGenerate` regenerates
+- The Neovim plugin now has real commands: `:Sln2ccGenerate` regenerates
   `compile_commands.json` for whichever configuration/platform you last picked (and tells you to
-  run `:MsvclspSelectConfig` first if you haven't picked one yet), `:MsvclspSelectConfig` opens the
-  configuration/platform picker, `:MsvclspRescan` re-scans your project tree for `.sln` files, and
-  `:MsvclspRestart` restarts `clangd` against the current database. `:MsvclspGenerate` and
-  `:MsvclspSelectConfig` restart `clangd` automatically afterward unless you've turned that off
-  (`auto_restart_clangd = false`). Running any of these before `require("msvclsp").setup()` tells
+  run `:Sln2ccSelectConfig` first if you haven't picked one yet), `:Sln2ccSelectConfig` opens the
+  configuration/platform picker, `:Sln2ccRescan` re-scans your project tree for `.sln` files, and
+  `:Sln2ccRestart` restarts `clangd` against the current database. `:Sln2ccGenerate` and
+  `:Sln2ccSelectConfig` restart `clangd` automatically afterward unless you've turned that off
+  (`auto_restart_clangd = false`). Running any of these before `require("sln2cc").setup()` tells
   you so instead of Neovim's generic "not an editor command."
 
 - A project file can now use `$(Property.StartsWith('...'))`, `EndsWith`, `Contains`, or `Equals`
   — the common way a solution brands a subset of projects for special handling — as a `Condition`
   or in an ordinary property value, instead of generation failing outright.
 
-- `:checkhealth msvclsp` now does real checks instead of always erroring: the `msvclsp` binary is
+- `:checkhealth sln2cc` now does real checks instead of always erroring: the `sln2cc` binary is
   present and runnable (its version is reported), `clangd` is on `PATH`, your project root was
   actually found via a root marker rather than silently falling back to the current directory, a
   `.sln` was found, and — once a configuration/platform is selected — its `compile_commands.json`
-  really exists on disk. Each failure names what to run next (`:MsvclspSelectConfig`,
-  `:MsvclspRescan`, and so on) instead of leaving you to guess.
+  really exists on disk. Each failure names what to run next (`:Sln2ccSelectConfig`,
+  `:Sln2ccRescan`, and so on) instead of leaving you to guess.
 
-- The Neovim plugin now has real user documentation: `:help msvclsp` covers installation, a
+- The Neovim plugin now has real user documentation: `:help sln2cc` covers installation, a
   minimal `setup()` example, a first-use walkthrough, every command and configuration option,
   suggested (not bound) keymaps, and a troubleshooting section built around `:checkhealth`. The
   README's "Using the Neovim plugin" section covers the same install steps for anyone not yet
-  inside Neovim, pointing at `:help msvclsp` for everything past getting started.
+  inside Neovim, pointing at `:help sln2cc` for everything past getting started.
 
-- `:MsvclspGenerate!` (the bang form) forces regeneration past the CLI's own staleness cache,
+- `:Sln2ccGenerate!` (the bang form) forces regeneration past the CLI's own staleness cache,
   reaching the `--force` flag `generate` has always accepted from the command line. Plain
-  `:MsvclspGenerate` is unchanged.
+  `:Sln2ccGenerate` is unchanged.
 
-- `:MsvclspSelectSolution` lets you switch which `.sln` msvclsp targets when more than one is
+- `:Sln2ccSelectSolution` lets you switch which `.sln` sln2cc targets when more than one is
   found under your project root, and remembers your choice across restarts so you're not asked
   again next session. Switching now also restores that solution's own remembered
   configuration/platform, regenerates `compile_commands.json` if needed, and restarts clangd
@@ -181,18 +181,25 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   configuration/platform and regenerating visibly changes the flags clangd receives.
 
 - CLI failures reported by the Neovim plugin now include a one-line, kind-specific suggestion —
-  "run `:MsvclspSelectConfig`", "install/repair Visual Studio", "delete `.msvclsp/state.json`
+  "run `:Sln2ccSelectConfig`", "install/repair Visual Studio", "delete `.sln2cc/state.json`
   and regenerate", and so on — instead of just the bare underlying error message. Evaluation
   warnings (an unsupported MSBuild construct, an unfamiliar solution format, and the like) now
-  also reach you as a notification after `:MsvclspGenerate`/`:MsvclspSelectConfig` instead of
+  also reach you as a notification after `:Sln2ccGenerate`/`:Sln2ccSelectConfig` instead of
   disappearing once the run succeeds.
 
 ### Changed
 
+- The project is renamed from `msvclsp` to `sln2cc` — `msvclsp` implied an LSP the tool has never
+  been; `sln2cc` names what it actually does (`.sln` in, `compile_commands.json` out). The CLI
+  binary, the Neovim plugin's Lua module (`require("sln2cc")`), its user commands
+  (`:Sln2ccGenerate` and siblings, previously `:Msvclsp*`), and the generated artifact directory
+  (`.sln2cc/`, previously `.msvclsp/`) all changed names accordingly. See
+  [ADR 53](adr/53-rename-msvclsp-to-sln2cc.md).
+
 - The Neovim plugin now requires Neovim 0.12+ (previously 0.9+), since project root detection
   uses `vim.fs.root()`.
 
-- `:MsvclspSelectConfig` now always regenerates `compile_commands.json` for the configuration/
+- `:Sln2ccSelectConfig` now always regenerates `compile_commands.json` for the configuration/
   platform you pick, even if no project file changed since the last run. The CLI's staleness
   cache only tracks file modification times, not which configuration/platform it was last
   built for, so picking a different one without touching any files used to silently keep
@@ -215,18 +222,18 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   of being split apart on the space inside the quotes.
 
 - A property value with XML elements inside it no longer loses them without saying so. It is not
-  valid MSBuild and msvclsp still keeps just the text, but it now names the value and the line.
+  valid MSBuild and sln2cc still keeps just the text, but it now names the value and the line.
 
 - Generating against a real Visual Studio solution no longer fails outright the moment evaluation
   reaches the VS installation's own `.props`/`.targets`. Those files use MSBuild constructs well
-  outside what msvclsp evaluates; a `Condition` or `<Import>` it cannot resolve there is now
+  outside what sln2cc evaluates; a `Condition` or `<Import>` it cannot resolve there is now
   skipped with a warning instead of stopping generation, while the same construct in your own
   project files is still reported as a hard failure.
 
 - A project whose source-file list is declared before the `ItemDefinitionGroup`s that configure it
   — a real-world project shape, not an edge case — no longer generates a `compile_commands.json`
   with every entry silently missing its defines, include directories, and warning settings. The
-  affected files used to compile cleanly according to msvclsp and then have clangd flag every
+  affected files used to compile cleanly according to sln2cc and then have clangd flag every
   project-specific symbol as undefined, with nothing on stderr to explain why.
 
 - `generate` no longer fails outright when a solution has a `Makefile`/NMake-configuration member
@@ -235,7 +242,7 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
   explaining why, instead of aborting generation for the whole solution.
 
 - If your active solution's `.sln` has been deleted or moved since you last picked it,
-  `:MsvclspGenerate` and `:MsvclspSelectConfig` no longer fail with a raw CLI file-not-found
+  `:Sln2ccGenerate` and `:Sln2ccSelectConfig` no longer fail with a raw CLI file-not-found
   error. They now detect it, rescan, and reopen the solution picker so you can choose a
   replacement, then continue with whatever you picked.
 
@@ -247,7 +254,7 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Security
 
-- A project file with pathologically nested XML no longer takes msvclsp down with it. Around 1.5 KB
+- A project file with pathologically nested XML no longer takes sln2cc down with it. Around 1.5 KB
   of deeply nested elements used to crash the process outright — no message, no exit code, nothing
   for the editor to report, just a tool that vanished. Such a file is now refused with an error that
   names it and an exit code your shell can act on. The limit is 32 levels of nesting; real project

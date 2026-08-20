@@ -33,15 +33,15 @@ local function fake_client(opts)
   end
 end
 
-describe("msvclsp.lsp", function()
+describe("sln2cc.lsp", function()
   local lsp
   local notify_calls, restore_notify
   local original_get_bufname
 
   before_each(function()
-    package.loaded["msvclsp.lsp"] = nil
-    package.loaded["msvclsp.config"] = nil
-    lsp = require("msvclsp.lsp")
+    package.loaded["sln2cc.lsp"] = nil
+    package.loaded["sln2cc.config"] = nil
+    lsp = require("sln2cc.lsp")
     notify_calls, restore_notify = stub_notify()
     original_get_bufname = vim.api.nvim_buf_get_name
   end)
@@ -54,8 +54,8 @@ describe("msvclsp.lsp", function()
   describe("compile_commands_dir", function()
     it("returns the dirname of the given database path", function()
       MiniTest.expect.equality(
-        lsp.compile_commands_dir("/root/.msvclsp/App-abcd1234/compile_commands.json"),
-        "/root/.msvclsp/App-abcd1234"
+        lsp.compile_commands_dir("/root/.sln2cc/App-abcd1234/compile_commands.json"),
+        "/root/.sln2cc/App-abcd1234"
       )
     end)
   end)
@@ -73,13 +73,13 @@ describe("msvclsp.lsp", function()
         table.insert(enable_calls, name)
       end
 
-      lsp.start("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.start("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       MiniTest.expect.equality(#set_calls, 1)
       MiniTest.expect.equality(set_calls[1].name, "clangd")
       MiniTest.expect.equality(
         set_calls[1].cfg.cmd[#set_calls[1].cfg.cmd],
-        "--compile-commands-dir=/root/.msvclsp/App-abcd1234"
+        "--compile-commands-dir=/root/.sln2cc/App-abcd1234"
       )
       MiniTest.expect.equality(type(set_calls[1].cfg.root_dir), "function")
       MiniTest.expect.equality(enable_calls, { "clangd" })
@@ -96,13 +96,13 @@ describe("msvclsp.lsp", function()
       end
       lsp._enable = function() end
 
-      lsp.start("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.start("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       MiniTest.expect.equality(set_calls[1].cfg.on_attach, sentinel_on_attach)
       -- cmd itself is fully replaced (it has to be, to control the trailing flag), not merged.
       MiniTest.expect.equality(
         set_calls[1].cfg.cmd[#set_calls[1].cfg.cmd],
-        "--compile-commands-dir=/root/.msvclsp/App-abcd1234"
+        "--compile-commands-dir=/root/.sln2cc/App-abcd1234"
       )
     end)
 
@@ -116,7 +116,7 @@ describe("msvclsp.lsp", function()
       end
       lsp._enable = function() end
 
-      lsp.start("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.start("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       vim.api.nvim_buf_get_name = function()
         return "/root/src/main.cpp"
@@ -139,7 +139,7 @@ describe("msvclsp.lsp", function()
       end
       lsp._enable = function() end
 
-      lsp.start("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.start("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       vim.api.nvim_buf_get_name = function()
         return "/elsewhere/other.cpp"
@@ -184,7 +184,7 @@ describe("msvclsp.lsp", function()
       lsp._set_config = function() end
       lsp._enable = function() end
 
-      lsp.restart("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.restart("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       MiniTest.expect.equality(stopped_ours(), true)
       MiniTest.expect.equality(stopped_theirs(), false)
@@ -205,7 +205,7 @@ describe("msvclsp.lsp", function()
         table.insert(enable_calls, name)
       end
 
-      lsp.restart("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.restart("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       MiniTest.expect.equality(#set_calls, 1)
       MiniTest.expect.equality(enable_calls, { "clangd" })
@@ -226,7 +226,7 @@ describe("msvclsp.lsp", function()
         table.insert(enable_calls, name)
       end
 
-      lsp.restart("/root/.msvclsp/App-abcd1234/compile_commands.json", "/root")
+      lsp.restart("/root/.sln2cc/App-abcd1234/compile_commands.json", "/root")
 
       MiniTest.expect.equality(#set_calls, 1)
       MiniTest.expect.equality(enable_calls, { "clangd" })

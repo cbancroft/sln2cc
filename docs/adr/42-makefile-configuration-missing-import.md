@@ -40,7 +40,7 @@ directly, and the actual mechanism turned out to be nothing the title described:
   because it really is built via `nmake`
   (`<NMakeBuildCommandLine>...nmake</NMakeBuildCommandLine>`), not the normal C++ project system.
   Real Visual Studio solutions vendor dependencies like this routinely.
-- `Microsoft.Cpp.props` correctly takes the `Makefile` branch — msvclsp's own `Condition`
+- `Microsoft.Cpp.props` correctly takes the `Makefile` branch — sln2cc's own `Condition`
   evaluation is not at fault, mirroring what the earlier investigation already found — and imports
   `Microsoft.MakeFile.Targets`, which imports `$(MSBuildToolsPath)\Microsoft.Common.targets`.
   `$(MSBuildToolsPath)` is not among the properties `reserved.rs` seeds (deliberately — see ADR
@@ -67,7 +67,7 @@ discovery, project-extension imports) with no C++ relevance whatsoever, and well
 VS2019/2022 [C++] schemas are in scope" (CLAUDE.md §8). Even with ADR 32's `in_toolchain` downgrade
 absorbing whatever unsupported constructs it contains, walking into it buys nothing: a
 `ConfigurationType=Makefile` project has no `<ClCompile>` items for `items::settle()` to find
-either way, so every property that subtree would resolve is dead weight `msvclsp` would pay
+either way, so every property that subtree would resolve is dead weight `sln2cc` would pay
 parsing and evaluation cost for, for zero effect on the generated database.
 
 ## Decision

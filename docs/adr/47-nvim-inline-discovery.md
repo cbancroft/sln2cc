@@ -10,7 +10,7 @@
 
 `docs/todos.md` scoped V1-06 as: "Run discovery automatically when selection is requested and
 no cache exists, keeping it one user action instead of two." Read at face value, that
-describes a behavior change — some caller today would have to run a `:MsvclspRescan` (or
+describes a behavior change — some caller today would have to run a `:Sln2ccRescan` (or
 equivalent) before a picker could show anything, and this issue would collapse that into one
 step.
 
@@ -21,10 +21,10 @@ root in Neovim") — the module's own header comment has said so, unchanged, sin
 a single user action." `M.active_solution(root)` calls `M.solutions(root)` on its cold path,
 so it inherits the same laziness. `picker.lua`'s `M.pick_solution(root, on_choice)` (V1-03,
 ADR 45) calls `discovery.solutions(root)` directly with no precondition that a scan already
-ran. `commands.lua`'s `MsvclspGenerate` and `MsvclspSelectConfig` both reach discovery through
-`resolve_solution()`, and `MsvclspSelectSolution` reaches it through `M._select_solution()`'s
+ran. `commands.lua`'s `Sln2ccGenerate` and `Sln2ccSelectConfig` both reach discovery through
+`resolve_solution()`, and `Sln2ccSelectSolution` reaches it through `M._select_solution()`'s
 own call to `picker.pick_solution` — so all three already get inline discovery for free.
-(`MsvclspRestart` is the exception: it never calls `discovery.active_solution` at all, only
+(`Sln2ccRestart` is the exception: it never calls `discovery.active_solution` at all, only
 `discovery.project_root()` to key its own `last_database` cache, so it has no discovery step —
 inline or otherwise — to collapse. An earlier draft of this ADR listed it among
 `resolve_solution()`'s callers; it never was one. Corrected while researching V2-01, whose own
@@ -35,7 +35,7 @@ had already done as a matter of course, not a deliberate stopgap waiting to be f
 isn't quite identical, though. V1-04's own Outcome could point at tests that already existed
 verbatim. Here, no test exercised the specific combination the issue's own **Tests:** line
 named — "discovery runs then the picker appears." `test_picker.lua`'s existing
-`pick_solution` specs stub `msvclsp.discovery` wholesale (`fake_discovery`), and
+`pick_solution` specs stub `sln2cc.discovery` wholesale (`fake_discovery`), and
 `test_discovery.lua`'s "caches discovered solutions instead of rescanning" test exercises
 `discovery.solutions` in isolation, never through `picker.lua`. Nothing proved, end-to-end with
 the real (non-stubbed) discovery module, that a fresh `pick_solution` call with no prior scan
@@ -44,7 +44,7 @@ actually populates the picker.
 ## Decision
 
 No `cli/src/**` or `nvim/lua/**` change. Close V1-06 by adding the one test that was genuinely
-missing: `nvim/tests/test_picker.lua` gains a `describe("msvclsp.picker.pick_solution — inline
+missing: `nvim/tests/test_picker.lua` gains a `describe("sln2cc.picker.pick_solution — inline
 discovery", ...)` block that requires the real `discovery.lua` (not stubbed) against a real
 temp tree containing two `.sln` files, with only `vim.ui.select` stubbed per the file's
 existing convention, and asserts that `picker.pick_solution` sees both freshly-discovered

@@ -4,7 +4,7 @@
 - **Date:** 2026-08-12
 - **Issue:** [MVP-28 — Async CLI invocation and JSON decoding](../todos.md#neovim-plugin)
   (`feat/nvim-cli-bridge`)
-- **Affects:** `nvim/lua/msvclsp/cli.lua`, `nvim/tests/test_cli.lua`, `cli/src/cli.rs`
+- **Affects:** `nvim/lua/sln2cc/cli.lua`, `nvim/tests/test_cli.lua`, `cli/src/cli.rs`
   (`matches_the_argv_cli_lua_builds`), [engineering_spec.md](../engineering_spec.md) ("Neovim
   Plugin — Responsibilities"), [ADR 03](03-cli-surface-and-json-contract.md),
   [ADR 13](13-diagnostic-severity-and-wording.md), [ADR 33](33-nvim-solution-discovery.md), V2-04
@@ -38,7 +38,7 @@ place to put it.
 
 2. **The job runner is an overridable module field, `M._system`, defaulting to `vim.system`.**
    `cli.lua`'s own tests replace `cli._system` with a fake before calling `M.run`. This is
-   `cli.lua`'s *internal* seam, distinct from the `package.loaded["msvclsp.cli"]` swap every other
+   `cli.lua`'s *internal* seam, distinct from the `package.loaded["sln2cc.cli"]` swap every other
    module's tests use to avoid invoking the binary at all.
 
 3. **`M.run(args, on_done)` hands back the whole decoded envelope as `result` on success**, not
@@ -55,7 +55,7 @@ place to put it.
    { message = string, kind = string|nil, code = integer|nil }
    ```
 
-   `message` is always legible: stderr's trimmed text, or `"msvclsp exited with code N"` in the one
+   `message` is always legible: stderr's trimmed text, or `"sln2cc exited with code N"` in the one
    case stderr can be empty on a non-zero exit — a `clap` usage error (exit `2`), which per ADR 03
    writes its own text to stderr and leaves stdout undecodable. `kind` rides along when the
    envelope did decode and `has_error` was true, so V2-04 has something to branch on later without
@@ -68,7 +68,7 @@ place to put it.
 
 6. **`M.list_configs`/`M.generate` take an explicit `root` parameter**, appended as `--root`:
    `list_configs(solution, root, on_done)`, `generate(solution, config, root, on_done)`. `cli.lua`
-   does not `require("msvclsp.discovery")` — whichever module wires commands together resolves the
+   does not `require("sln2cc.discovery")` — whichever module wires commands together resolves the
    root and passes it in, keeping `cli.lua`'s only dependency the binary itself.
 
 7. **`M.discover` is deleted**, per ADR 33's note. Nothing calls it and it disagrees with ADR 03's

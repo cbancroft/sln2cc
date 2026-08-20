@@ -4,7 +4,7 @@
 - **Date:** 2026-08-13
 - **Issue:** [MVP-29 — Configuration/platform picker](../todos.md#neovim-plugin)
   (`feat/nvim-config-picker`)
-- **Affects:** `nvim/lua/msvclsp/picker.lua`, `nvim/tests/test_picker.lua`,
+- **Affects:** `nvim/lua/sln2cc/picker.lua`, `nvim/tests/test_picker.lua`,
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities"),
   [ADR 34](34-nvim-cli-invocation.md)
 
@@ -29,7 +29,7 @@ selection — but two things weren't settled by that description or by anything 
 ## Decision
 
 1. **`M.pick_config(solution, root, on_choice)`** — an explicit `root` parameter, following ADR
-   34's precedent exactly. `picker.lua` does not `require("msvclsp.discovery")`; its only
+   34's precedent exactly. `picker.lua` does not `require("sln2cc.discovery")`; its only
    dependency is `cli.lua`.
 
 2. **Every failure path converges on `on_choice(nil)`, preceded by a `vim.notify`:**
@@ -87,7 +87,7 @@ user declined to pick," worth its own `vim.notify` message rather than silently 
 alternative — some Neovim-idiomatic format like `"Debug (x64)"` — was rejected because
 `ConfigPlatform`'s `Display` impl (`cli/src/lib.rs`) already exists specifically so "error messages
 and pickers name a pair the way the user's own files do," per that impl's own doc comment. Matching
-it means a user who runs `msvclsp list-configs` from a terminal and then uses the picker sees the
+it means a user who runs `sln2cc list-configs` from a terminal and then uses the picker sees the
 same vocabulary in both places.
 
 ## Consequences

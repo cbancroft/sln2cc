@@ -341,7 +341,7 @@ fn dedup<T: PartialEq>(entries: Vec<T>) -> Vec<T> {
 //   PrecompiledHeader, PrecompiledHeaderFile (`/Yu`, `/Yc`)
 //       `/Yu` injects nothing — a source using a precompiled header still `#include`s it — so
 //       skipping costs no parse fidelity, while emitting it points clangd at a `.pch` that no
-//       msvclsp run produces.
+//       sln2cc run produces.
 //
 //   DisableLanguageExtensions (`/Za`)
 //       clang-cl rejects it, which would fail the whole command rather than one flag.

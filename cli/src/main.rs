@@ -10,9 +10,9 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use msvclsp::cli::{self, Cli, Envelope, Outcome, Render};
-use msvclsp::toolchain::vswhere::VsWhereToolchain;
-use msvclsp::{Diagnostic, Error, Reporter};
+use sln2cc::cli::{self, Cli, Envelope, Outcome, Render};
+use sln2cc::toolchain::vswhere::VsWhereToolchain;
+use sln2cc::{Diagnostic, Error, Reporter};
 
 fn main() -> ExitCode {
     // A usage error never reaches us: clap writes its own message to stderr and exits 2,
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
             // A failed write is usually a closed pipe. Report it, but do not pretend the
             // command itself failed in a way the plugin should classify.
             Err(error) => {
-                let _ = writeln!(io::stderr(), "msvclsp: writing output failed: {error}");
+                let _ = writeln!(io::stderr(), "sln2cc: writing output failed: {error}");
                 ExitCode::from(1)
             }
         },
@@ -76,7 +76,7 @@ fn write_failure(cli: &Cli, error: &Error, warnings: Vec<Diagnostic>) {
     // the exit code is the part that still has to be right.
     let stderr = io::stderr();
     let mut err = stderr.lock();
-    let _ = writeln!(err, "msvclsp: {error}");
+    let _ = writeln!(err, "sln2cc: {error}");
 
     // Error::Context renders only its own message, so the chain is where the specifics are.
     let mut cause = error.source();
@@ -107,7 +107,7 @@ fn write_warnings(cli: &Cli, warnings: &[Diagnostic]) {
     }
 
     // The root is where paths are shortened against at default verbosity, so it comes from the
-    // same place `.msvclsp/` would: `--root`, or the solution's own directory.
+    // same place `.sln2cc/` would: `--root`, or the solution's own directory.
     let root = cli.command.solution_args().root();
 
     let stderr = io::stderr();

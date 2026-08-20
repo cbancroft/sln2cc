@@ -40,7 +40,7 @@ local function make_sln(tree, rel_path)
   fd:close()
 end
 
-describe("msvclsp.discovery", function()
+describe("sln2cc.discovery", function()
   local discovery
 
   before_each(function()
@@ -48,9 +48,9 @@ describe("msvclsp.discovery", function()
     -- calls, so a previous test's cached values must not leak into the next one's assertions.
     -- config is reset too, since a test overriding scan_max_depth must not bleed into the
     -- next test's default-depth expectations.
-    package.loaded["msvclsp.discovery"] = nil
-    package.loaded["msvclsp.config"] = nil
-    discovery = require("msvclsp.discovery")
+    package.loaded["sln2cc.discovery"] = nil
+    package.loaded["sln2cc.config"] = nil
+    discovery = require("sln2cc.discovery")
   end)
 
   it("finds the project root from configured root markers", function()
@@ -221,8 +221,8 @@ describe("msvclsp.discovery", function()
       discovery.set_active_solution(tree, tree .. "/Other.sln")
 
       -- Drop every module-level cache by reloading, mirroring a fresh Neovim session.
-      package.loaded["msvclsp.discovery"] = nil
-      local reloaded = require("msvclsp.discovery")
+      package.loaded["sln2cc.discovery"] = nil
+      local reloaded = require("sln2cc.discovery")
 
       MiniTest.expect.equality(reloaded.active_solution(tree), tree .. "/Other.sln")
     end)
@@ -319,8 +319,8 @@ describe("msvclsp.discovery", function()
 
       -- The clear reached disk too, not just the in-memory cache -- a fresh require (simulated
       -- restart) must not resurrect the dead persisted choice either.
-      package.loaded["msvclsp.discovery"] = nil
-      local reloaded = require("msvclsp.discovery")
+      package.loaded["sln2cc.discovery"] = nil
+      local reloaded = require("sln2cc.discovery")
       local reloaded_solution, reloaded_vanished = reloaded.active_solution(tree)
       MiniTest.expect.equality(reloaded_vanished, nil)
       MiniTest.expect.equality(reloaded_solution, tree .. "/Other.sln")
@@ -358,8 +358,8 @@ describe("msvclsp.discovery", function()
     local tree, cleanup = make_tree()
     local ok, err = pcall(function()
       make_sln(tree, "App.sln")
-      vim.fn.mkdir(tree .. "/.msvclsp", "p")
-      local fd = assert(io.open(tree .. "/.msvclsp/nvim-solution.json", "w"))
+      vim.fn.mkdir(tree .. "/.sln2cc", "p")
+      local fd = assert(io.open(tree .. "/.sln2cc/nvim-solution.json", "w"))
       fd:write("{ not valid json")
       fd:close()
 
@@ -412,7 +412,7 @@ describe("msvclsp.discovery", function()
   it("does not descend past the configured max depth", function()
     local tree, cleanup = make_tree()
     local ok, err = pcall(function()
-      require("msvclsp.config").setup({ scan_max_depth = 1 })
+      require("sln2cc.config").setup({ scan_max_depth = 1 })
       -- Two levels below tree: deeper than the configured max_depth of 1.
       make_sln(tree, "a/b/TooDeep.sln")
       MiniTest.expect.equality(discovery.solutions(tree), {})
@@ -438,7 +438,7 @@ describe("msvclsp.discovery", function()
       make_sln(tree, "Other.sln")
       discovery.set_active_solution(tree, tree .. "/App.sln")
 
-      require("msvclsp.config").setup({ pinned_solution = tree .. "/Other.sln" })
+      require("sln2cc.config").setup({ pinned_solution = tree .. "/Other.sln" })
 
       local solution, vanished, pin_error = discovery.active_solution(tree)
       MiniTest.expect.equality(solution, tree .. "/Other.sln")
@@ -458,7 +458,7 @@ describe("msvclsp.discovery", function()
       make_sln(tree, "App.sln")
       make_sln(tree, "Other.sln")
 
-      require("msvclsp.config").setup({ pinned_solution = tree .. "/Other.sln" })
+      require("sln2cc.config").setup({ pinned_solution = tree .. "/Other.sln" })
 
       MiniTest.expect.equality(discovery.active_solution(tree), tree .. "/Other.sln")
     end)
@@ -474,7 +474,7 @@ describe("msvclsp.discovery", function()
       make_sln(tree, "App.sln")
       local missing = tree .. "/Ghost.sln"
 
-      require("msvclsp.config").setup({ pinned_solution = missing })
+      require("sln2cc.config").setup({ pinned_solution = missing })
 
       local solution, vanished, pin_error = discovery.active_solution(tree)
       MiniTest.expect.equality(solution, nil)

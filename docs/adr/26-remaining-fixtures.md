@@ -58,7 +58,7 @@ to include it, not for a second generate invocation.
 Each fixture gets exactly one `#[test]` in `generate.rs`, the same one-line shape as
 `simple_solution_matches_golden`: a call into `support::assert_matches_golden`.
 `props_inheritance_matches_golden`'s `#[ignore]` and `todo!()` are removed. Golden files were
-produced with `MSVCLSP_UPDATE_GOLDEN=1` and reviewed by hand against `msbuild/flags.rs`'s flag
+produced with `SLN2CC_UPDATE_GOLDEN=1` and reviewed by hand against `msbuild/flags.rs`'s flag
 tables before committing, per ADR 25's established workflow.
 
 ## Discussion

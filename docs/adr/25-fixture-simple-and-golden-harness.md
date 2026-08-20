@@ -64,14 +64,14 @@ crate boundary. Sharing a helper module within `cli/tests/` itself crosses no su
 
 - Runs `generate` for `Debug|x64` under a fixed `support::fake_toolchain()` (moved out of
   `generate.rs`'s own former private helper, byte-identical to it), pointing `--root` at a
-  throwaway temp directory rather than the fixture's own directory — `generate` writes `.msvclsp/`
+  throwaway temp directory rather than the fixture's own directory — `generate` writes `.sln2cc/`
   under `SolutionArgs::root()`, and running the suite must never leave a generated artifact inside
   the checked-in `fixtures/` tree.
 - Normalizes the written `compile_commands.json` before comparing: every JSON-escaped path
   separator (`\\`, the only place this crate's own tests ever produce a backslash) becomes `/`,
   and the fixture directory's own absolute path is replaced with the literal token `<FIXTURE>`.
   The result is byte-identical across machines, checkout locations, and Windows vs. Linux.
-- Under `MSVCLSP_UPDATE_GOLDEN=1`, writes the normalized result to `golden_path` instead of
+- Under `SLN2CC_UPDATE_GOLDEN=1`, writes the normalized result to `golden_path` instead of
   comparing, still under `FakeToolchain` so the rewritten file stays reproducible. This is how
   `cli/tests/golden/simple.json` was produced — generated once, then read by hand before
   committing.
@@ -109,8 +109,8 @@ apart silently the first time someone updated one without the other, defeating t
 golden file as a single source of truth for "what does this fixture produce."
 
 **Why `--root` is a throwaway temp directory rather than `fixtures/simple` itself.** The simpler
-call — run `generate` with no `--root` override, letting `.msvclsp/` land next to the fixture the
-way a real invocation would — was considered. Rejected because `.msvclsp/` is gitignored but real:
+call — run `generate` with no `--root` override, letting `.sln2cc/` land next to the fixture the
+way a real invocation would — was considered. Rejected because `.sln2cc/` is gitignored but real:
 running `cargo test` would litter the checked-in fixture tree with generated output on every run,
 and an interrupted test run could leave it there for a developer to stumble on later, wondering
 whether it was meant to be committed.

@@ -1,6 +1,6 @@
 # Overview
 
-This document contains the initial brainstorming of what the MSVC LSP is trying to accomplish.
+This document contains the initial brainstorming of what the sln2cc is trying to accomplish.
 
 # Goals
 

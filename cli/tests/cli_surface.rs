@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Cargo builds the binary before running integration tests and exposes its path here, so
 /// these tests need neither `assert_cmd` nor a hardcoded target directory.
-const BIN: &str = env!("CARGO_BIN_EXE_msvclsp");
+const BIN: &str = env!("CARGO_BIN_EXE_sln2cc");
 
 fn run(args: &[&str]) -> Output {
     Command::new(BIN)
@@ -21,7 +21,7 @@ fn run(args: &[&str]) -> Output {
 }
 
 /// A directory removed when the test that made it ends, holding a `.sln` (and whatever else a
-/// test writes into it, e.g. a seeded `.msvclsp/state.json`).
+/// test writes into it, e.g. a seeded `.sln2cc/state.json`).
 ///
 /// `cli/src/testing.rs::TempTree` is `pub(crate)` inside the lib crate and unreachable from this
 /// integration-test binary, so this is a small reimplementation rather than a shared dependency.
@@ -38,7 +38,7 @@ impl TempSolution {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
 
         let dir = std::env::temp_dir().join(format!(
-            "msvclsp-cli-surface-{}-{name}-{}",
+            "sln2cc-cli-surface-{}-{name}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -54,17 +54,17 @@ impl TempSolution {
         self.0.join("app.sln")
     }
 
-    /// The directory itself, used as `--root` so `.msvclsp/` lands beside the solution.
+    /// The directory itself, used as `--root` so `.sln2cc/` lands beside the solution.
     fn root(&self) -> &Path {
         &self.0
     }
 
-    /// Write `.msvclsp/state.json` directly, for tests that need a pre-recorded selection without
+    /// Write `.sln2cc/state.json` directly, for tests that need a pre-recorded selection without
     /// a working `generate`/`set_active_config` CLI path to produce one.
     fn seed_state(&self, contents: &str) {
-        let msvclsp_dir = self.0.join(".msvclsp");
-        std::fs::create_dir_all(&msvclsp_dir).expect("the temp directory is writable");
-        std::fs::write(msvclsp_dir.join("state.json"), contents)
+        let sln2cc_dir = self.0.join(".sln2cc");
+        std::fs::create_dir_all(&sln2cc_dir).expect("the temp directory is writable");
+        std::fs::write(sln2cc_dir.join("state.json"), contents)
             .expect("the temp directory is writable");
     }
 }
@@ -298,7 +298,7 @@ fn verbose_reports_progress_on_stderr_without_touching_stdout() {
     assert_eq!(code(&quiet), code(&loud));
 
     // The progress line names the subcommand and the solution it was handed.
-    let progress = "msvclsp: list-configs: missing.sln";
+    let progress = "sln2cc: list-configs: missing.sln";
     assert!(
         stderr(&loud).contains(progress),
         "stderr under -v was:\n{}",
@@ -318,7 +318,7 @@ fn verbose_does_not_write_progress_to_stdout_in_human_mode() {
     let output = run(&["list-configs", "missing.sln", "-v"]);
 
     assert_eq!(stdout(&output), "");
-    assert!(stderr(&output).contains("msvclsp: list-configs: missing.sln"));
+    assert!(stderr(&output).contains("sln2cc: list-configs: missing.sln"));
 }
 
 /// MVP-13 added a second severity, so this owes an assertion on the wire string too — the
@@ -378,7 +378,7 @@ fn warnings_ride_in_the_envelope() {
 
 /// The end-to-end path through `sln::parse_sln`, replacing the placeholder that stood in for it
 /// while `list-configs` returned `Error::Unimplemented`. `available` must list both declared
-/// pairs in declaration order, and `active` must be `null` — no `.msvclsp/state.json` exists yet
+/// pairs in declaration order, and `active` must be `null` — no `.sln2cc/state.json` exists yet
 /// for this solution.
 #[test]
 fn list_configs_reports_available_configurations_with_no_active_selection() {
@@ -430,8 +430,8 @@ fn list_configs_reports_the_resolved_database_path_even_with_no_active_selection
         "database path was {database}"
     );
     assert!(
-        Path::new(database).starts_with(solution.root().join(".msvclsp")),
-        "database path {database} was not namespaced under .msvclsp"
+        Path::new(database).starts_with(solution.root().join(".sln2cc")),
+        "database path {database} was not namespaced under .sln2cc"
     );
 }
 
@@ -470,7 +470,7 @@ fn list_configs_creates_the_output_directory_without_generating_a_database() {
 }
 
 /// Proves `list-configs` actually consults `db::Store` rather than always reporting `active:
-/// null` — `.msvclsp/state.json` is seeded directly (matching the shape `db.rs`'s own tests
+/// null` — `.sln2cc/state.json` is seeded directly (matching the shape `db.rs`'s own tests
 /// write and round-trip) since no working `generate`/`set_active_config` CLI path exists yet to
 /// produce one.
 #[test]

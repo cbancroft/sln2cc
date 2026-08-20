@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Issue:** [MVP-30 — clangd lifecycle](../todos.md#neovim-plugin) (`feat/nvim-clangd-lifecycle`)
-- **Affects:** `nvim/lua/msvclsp/lsp.lua`, `nvim/lua/msvclsp/config.lua`,
+- **Affects:** `nvim/lua/sln2cc/lsp.lua`, `nvim/lua/sln2cc/config.lua`,
   `nvim/tests/test_lsp.lua`, [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin —
   Responsibilities"), [ADR 34](34-nvim-cli-invocation.md), [ADR 35](35-nvim-config-picker.md)
 
@@ -17,7 +17,7 @@ buffers), and warn instead of starting a client when no database exists yet — 
 mechanism.
 
 A first pass at this plan designed a private client: `vim.lsp.start()` under a made-up name
-(`msvclsp_clangd`), with `lsp.lua` hand-tracking which buffers were attached so `M.restart` could
+(`sln2cc_clangd`), with `lsp.lua` hand-tracking which buffers were attached so `M.restart` could
 reattach them. That was rejected in review: Neovim 0.11+ already ships a mechanism for exactly
 this — `vim.lsp.config(name, cfg)` overrides a named server's launch config, and `vim.lsp.enable
 (name)` installs a `FileType` autocmd that starts and attaches that config's client to any
@@ -58,7 +58,7 @@ this solution's `--compile-commands-dir` — wrong, and silently so.
 3. **`lsp.lua` calls `vim.lsp.enable("clangd")` itself**, in both `M.start` and (after stopping
    existing clients) `M.restart`. Confirmed with the user — the alternative, requiring the user to
    call `vim.lsp.enable('clangd')` in their own config first, would mean a user could install
-   msvclsp, pick a configuration, and still see nothing happen on opening a `.cpp` file, directly
+   sln2cc, pick a configuration, and still see nothing happen on opening a `.cpp` file, directly
    contradicting CLAUDE.md §1's framing of the project as closing the gap end-to-end.
 
 4. **`root_dir` is a function scoped to `root`, not a static string.** The merged config's
@@ -114,10 +114,10 @@ this solution's `--compile-commands-dir` — wrong, and silently so.
 satisfied the issue's Tests: block (a distinguishable start/restart, a specific
 `--compile-commands-dir` argument, reattachment, a missing-database notification), but at the
 cost of clangd only ever starting through an explicit `M.start`/`M.restart` call — no `FileType`
-autocmd, no "opens the file, clangd is there" behavior msvclsp is supposed to preserve. It also
+autocmd, no "opens the file, clangd is there" behavior sln2cc is supposed to preserve. It also
 duplicated bookkeeping (`attached_buffers` tracking, dedup-by-config) that
 `$VIMRUNTIME/lua/vim/lsp.lua` already does correctly for every other LSP server a user runs. The
-private client name (`msvclsp_clangd`) was itself a symptom: it existed only to avoid colliding
+private client name (`sln2cc_clangd`) was itself a symptom: it existed only to avoid colliding
 with a user's *own* `clangd` config, which is exactly the collision that disappears once this
 module edits that same config instead of parking a second one beside it.
 
@@ -133,7 +133,7 @@ instead of a literal; both are cheap next to silently breaking someone else's co
 
 **Why `lsp.lua` calls `vim.lsp.enable` itself instead of leaving it to the user.** The tempting
 alternative treats "enabling clangd" as configuration the user owns, the same way they'd choose
-`lua_ls` for a separate Lua project — msvclsp would only ever adjust `vim.lsp.config`, never
+`lua_ls` for a separate Lua project — sln2cc would only ever adjust `vim.lsp.config`, never
 `vim.lsp.enable`. It was rejected because the project's whole premise (`CLAUDE.md` §1) is that
 users on an MSVC codebase currently have *no* working clangd setup to enable in the first place;
 requiring one extra manual step undercuts "closes that gap" for the exact audience this plugin is
@@ -189,7 +189,7 @@ the same underlying reason (ADR 34).
   change to how Neovim resolves/starts LSP configs is inherited for free rather than needing a
   parallel update here.
 - A user who already configures `clangd` themselves (directly, or via nvim-lspconfig/
-  mason-lspconfig) keeps their `on_attach`/`capabilities`/`settings` after msvclsp starts
+  mason-lspconfig) keeps their `on_attach`/`capabilities`/`settings` after sln2cc starts
   overriding `cmd`/`root_dir`/`filetypes` for the same config name.
 - A second MSVC solution, an unrelated CMake project, or any other buffer outside the active
   solution's `root` is untouched by this override — `M.start`/`M.restart` neither starts nor stops

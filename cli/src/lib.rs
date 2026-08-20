@@ -1,4 +1,4 @@
-//! MSVC LSP — parses Visual Studio solutions and generates a `compile_commands.json`
+//! sln2cc — parses Visual Studio solutions and generates a `compile_commands.json`
 //! compilation database that `clangd` can consume directly.
 //!
 //! The binary (`main.rs`) is intentionally thin; everything meaningful lives here so that

@@ -47,15 +47,15 @@ local function envelope(overrides)
   return vim.tbl_extend("force", base, overrides or {})
 end
 
-describe("msvclsp.cli", function()
+describe("sln2cc.cli", function()
   local cli
 
   before_each(function()
     -- Fresh module per test: `_system` is reassigned by nearly every test below, and it
     -- must not leak into the next one.
-    package.loaded["msvclsp.cli"] = nil
-    package.loaded["msvclsp.config"] = nil
-    cli = require("msvclsp.cli")
+    package.loaded["sln2cc.cli"] = nil
+    package.loaded["sln2cc.config"] = nil
+    cli = require("sln2cc.cli")
   end)
 
   it("decodes a successful envelope and hands it back whole", function()
@@ -99,7 +99,7 @@ describe("msvclsp.cli", function()
     cli._system = fake_system({
       code = 3,
       stdout = vim.json.encode(err_envelope),
-      stderr = "msvclsp: no such file\n",
+      stderr = "sln2cc: no such file\n",
     }, {})
 
     local got_result, got_err
@@ -113,7 +113,7 @@ describe("msvclsp.cli", function()
 
     MiniTest.expect.equality(got_result, nil)
     MiniTest.expect.equality(got_err.kind, "solution-not-found")
-    MiniTest.expect.equality(got_err.message, "msvclsp: no such file")
+    MiniTest.expect.equality(got_err.message, "sln2cc: no such file")
   end)
 
   it("builds a structured error from stderr alone when stdout does not decode", function()
@@ -136,7 +136,7 @@ describe("msvclsp.cli", function()
   end)
 
   it("reports a missing binary as a structured error instead of raising", function()
-    cli._system = throwing_system("ENOENT: msvclsp not found")
+    cli._system = throwing_system("ENOENT: sln2cc not found")
 
     local got_result, got_err
     local ok = pcall(cli.run, { "list-configs", "app.sln" }, function(result, err)
@@ -205,7 +205,7 @@ describe("msvclsp.cli", function()
 
       MiniTest.expect.equality(
         calls[1].cmd,
-        { "msvclsp", "list-configs", "C:/proj/app.sln", "--root", "C:/proj", "--json" }
+        { "sln2cc", "list-configs", "C:/proj/app.sln", "--root", "C:/proj", "--json" }
       )
       MiniTest.expect.equality(got_err, nil)
       MiniTest.expect.equality(got_result, payload)
@@ -218,7 +218,7 @@ describe("msvclsp.cli", function()
         error = { kind = "solution-parse", message = "bad xml", causes = {} },
       })
       cli._system =
-        fake_system({ code = 4, stdout = vim.json.encode(err_envelope), stderr = "msvclsp: bad xml\n" }, {})
+        fake_system({ code = 4, stdout = vim.json.encode(err_envelope), stderr = "sln2cc: bad xml\n" }, {})
 
       local got_result, got_err
       cli.list_configs("app.sln", "C:/proj", function(result, err)
@@ -265,7 +265,7 @@ describe("msvclsp.cli", function()
         warnings = {},
       })
       cli._system =
-        fake_system({ code = 4, stdout = vim.json.encode(err_envelope), stderr = "msvclsp: bad xml\n" }, {})
+        fake_system({ code = 4, stdout = vim.json.encode(err_envelope), stderr = "sln2cc: bad xml\n" }, {})
 
       local got_result, got_err, got_warnings
       cli.list_configs("app.sln", "C:/proj", function(result, err, warnings)
@@ -282,7 +282,7 @@ describe("msvclsp.cli", function()
   describe("generate", function()
     it("builds the generate argv including configuration, platform and --root", function()
       local calls = {}
-      local payload = { database = "C:/proj/.msvclsp/App-abcd1234/compile_commands.json", regenerated = true }
+      local payload = { database = "C:/proj/.sln2cc/App-abcd1234/compile_commands.json", regenerated = true }
       cli._system =
         fake_system({ code = 0, stdout = vim.json.encode(envelope({ result = payload })), stderr = "" }, calls)
 
@@ -301,7 +301,7 @@ describe("msvclsp.cli", function()
       end)
 
       MiniTest.expect.equality(calls[1].cmd, {
-        "msvclsp",
+        "sln2cc",
         "generate",
         "C:/proj/app.sln",
         "--configuration",
@@ -317,7 +317,7 @@ describe("msvclsp.cli", function()
     end)
 
     it("appends --force when asked, and nothing when not", function()
-      -- MVP-46: `:MsvclspGenerate!` reaches this. `--force` bypasses the CLI's own staleness
+      -- MVP-46: `:Sln2ccGenerate!` reaches this. `--force` bypasses the CLI's own staleness
       -- cache (MVP-21/22); the default argv above must stay exactly what it is today, which is
       -- what the sibling test pins.
       local calls = {}

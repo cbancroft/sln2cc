@@ -3,8 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Issue:** [V2-02 — Config-based solution pinning](../todos.md#v2) (`feat/solution-pin`)
-- **Affects:** `nvim/lua/msvclsp/config.lua`, `nvim/lua/msvclsp/discovery.lua`,
-  `nvim/lua/msvclsp/commands.lua`, `nvim/lua/msvclsp/health.lua`,
+- **Affects:** `nvim/lua/sln2cc/config.lua`, `nvim/lua/sln2cc/discovery.lua`,
+  `nvim/lua/sln2cc/commands.lua`, `nvim/lua/sln2cc/health.lua`,
   `nvim/tests/test_discovery.lua`, `nvim/tests/test_commands.lua`,
   `nvim/tests/test_health.lua`, [project_spec.md](../project_spec.md) ("Open Questions"),
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities"),
@@ -57,7 +57,7 @@ interactively, useless in a CI job or a headless script with nothing to answer t
    `solution` parameter throughout); a pin is aimed at scripts/CI that already know the exact
    path they want, so there is no root-relative resolution to silently guess at.
 
-5. **`:MsvclspSelectSolution` needed no change.** It calls `picker.pick_solution` directly, never
+5. **`:Sln2ccSelectSolution` needed no change.** It calls `picker.pick_solution` directly, never
    `discovery.active_solution`'s persisted-choice branch, so a manual pick still "succeeds" and
    persists via `set_active_solution` even while a pin is configured — but the very next call to
    `active_solution` (including that same command's own "(active)" marker on a later invocation)

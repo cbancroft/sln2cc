@@ -9,10 +9,10 @@
 
 ## Problem
 
-Every include path msvclsp can derive from `.vcxproj`/`.props` files runs out the moment a project
+Every include path sln2cc can derive from `.vcxproj`/`.props` files runs out the moment a project
 references `#include <windows.h>` or links against anything in the Windows SDK: those directories
 live under a Visual Studio installation, and there is no `$(...)` in the project that names where
-that installation is until msvclsp finds it first. `ToolchainProvider::discover()` has been a bare
+that installation is until sln2cc finds it first. `ToolchainProvider::discover()` has been a bare
 `todo!()` since `toolchain.rs` was scaffolded, and `msbuild/reserved.rs` (ADR 11) has left
 `$(VCTargetsPath)`/`$(VSInstallDir)` deliberately unseeded for the same reason — inventing plausible
 values would be exactly the silent-wrong-answer failure CLAUDE.md §3 refuses.
@@ -72,7 +72,7 @@ The workload ID was rejected because a standalone "Build Tools for Visual Studio
 on CI runners and for contributors who never open the IDE — carries the component without ever
 installing the workload that bundles it. Filtering on the workload would report "no usable Visual
 Studio installation" on a machine that can, in fact, run `cl.exe`. The component is the narrower,
-more accurate signal for "can this compile C++", which is the only thing msvclsp needs; ATL/MFC and
+more accurate signal for "can this compile C++", which is the only thing sln2cc needs; ATL/MFC and
 the rest of what the workload adds are irrelevant to a compilation database. This was confirmed with
 the user rather than decided silently, since it changes which real installations are found.
 
@@ -118,7 +118,7 @@ quirk would be a worse failure than picking imperfectly.
 singular — so `vswhere_path()` builds
 `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` and does not fall back to
 scanning `PATH` or `Program Files` (non-x86, relevant on ARM64 Windows). An installation vswhere
-itself can't find is exactly as unusable to msvclsp as no installation at all, so this collapses
+itself can't find is exactly as unusable to sln2cc as no installation at all, so this collapses
 into the same `ToolchainNotFound` case rather than needing a distinct one. Widening the search is
 cheap to add later against a real report of it mattering.
 

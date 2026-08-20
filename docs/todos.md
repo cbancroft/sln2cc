@@ -1,6 +1,6 @@
 # TODOs
 
-Issue tracker for msvclsp until the project has a real one. Each item is scoped to roughly
+Issue tracker for sln2cc until the project has a real one. Each item is scoped to roughly
 one developer hour to two developer days; anything larger should be split before starting.
 
 Check an item off when its branch is merged and its tests pass. Issues are roughly in
@@ -538,7 +538,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   merely unusual".
 
   **Outcome:** It does, and that is the decision the rest follows from. `Severity` gains **`Note`**,
-  split by one question — *could msvclsp's failure to model this have changed the compiler flags?* —
+  split by one question — *could sln2cc's failure to model this have changed the compiler flags?* —
   with `Reporter::note_at` beside `warn_at` so only the four sites that change severity change at
   all. The argument is volume: **MVP-15 is what makes this urgent**, because importing the Visual
   Studio installation's own sheets puts hundreds of `$(X) is not defined` findings in the same
@@ -1079,13 +1079,13 @@ Goal: one solution, one manually selected configuration/platform, producing a
 - [x] **MVP-17 — Serialize and write `compile_commands.json`**
   `feat/compdb-write` · ~5h
 
-  **Summary:** Write the database to `.msvclsp/<solution-name>-<hash>/compile_commands.json`,
+  **Summary:** Write the database to `.sln2cc/<solution-name>-<hash>/compile_commands.json`,
   creating directories as needed, where `<hash>` disambiguates two discovered solutions that
   share a filename in different directories.
 
   **Description:** Serialize with stable key and entry ordering so the file is diffable and
   golden tests are reproducible, and write atomically via a temporary file and rename so an
-  interrupted run can't leave clangd reading a truncated database. Create the `.msvclsp`
+  interrupted run can't leave clangd reading a truncated database. Create the `.sln2cc`
   directory tree on demand. Windows path separators must be escaped correctly in JSON —
   verify against a real clangd, since this is an easy place to emit something that parses but
   doesn't resolve.
@@ -1093,11 +1093,11 @@ Goal: one solution, one manually selected configuration/platform, producing a
   The output directory name is `<solution-name>-<hash>`: `<hash>` is the low 32 bits of a 64-bit
   FNV-1a hash (hand-rolled, not `std::collections::hash_map::DefaultHasher` — its algorithm is
   documented as unspecified across releases, which would silently reshuffle every existing
-  `.msvclsp` directory on a future Rust upgrade) of the lowercased, lexically-normalized absolute
+  `.sln2cc` directory on a future Rust upgrade) of the lowercased, lexically-normalized absolute
   path of the directory containing the `.sln`. Lowercasing matters because Windows paths are
   case-preserving but the filesystem is case-insensitive — hashing as-written would silently split
   one solution's artifacts across two directories depending on invocation casing. On a collision
-  (an existing `.msvclsp/<solution-name>-<hash>/` whose recorded source directory doesn't match the
+  (an existing `.sln2cc/<solution-name>-<hash>/` whose recorded source directory doesn't match the
   current one), fail loudly with a specific error rather than silently sharing or overwriting the
   directory — per CLAUDE.md §3, never silently guess. See "Storage Layout" in
   `engineering_spec.md` for the full scheme, including the accepted orphan-directory cost when a
@@ -1131,7 +1131,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 - [x] **MVP-18 — State file shape and store initialization**
   `feat/db-schema` · ~5h
 
-  **Summary:** Create the JSON state file under `.msvclsp/` with a solution-scoped shape and a
+  **Summary:** Create the JSON state file under `.sln2cc/` with a solution-scoped shape and a
   version field for future migrations.
 
   **Description:** Reframed by MVP-01, which chose a JSON file over SQLite. The shape covers
@@ -1151,7 +1151,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   **Outcome:** All four written as specified, plus a fifth covering the unsupported-version
   half of the version field's own purpose, since the original list didn't separately exercise
-  it. Single file at `.msvclsp/state.json` (`version` + a `solutions` map), not one per
+  it. Single file at `.sln2cc/state.json` (`version` + a `solutions` map), not one per
   solution. Solution identity turned out to need more than "keyed by the working directory
   surviving" implied: the working discussion surfaced that `--root` is documented to diverge
   from where the solution actually lives, so keys are the solution's path *relative to the
@@ -1194,7 +1194,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   overwriting an existing selection, and two solutions holding independent selections.
 
   All four written as specified, plus a fifth: `set_active_config_persists_to_disk`, opening a
-  second `Store` handle against the same `.msvclsp` directory to prove the write-through actually
+  second `Store` handle against the same `.sln2cc` directory to prove the write-through actually
   reaches `state.json` rather than only the in-memory copy.
 
 - [x] **MVP-20 — Modification-time staleness tracking**
@@ -1250,7 +1250,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   documented, since it is a contract with the plugin.
 
   **Outcome:** `list_configs` calls `sln::parse_sln`, opens `db::Store` at `args.root().join(
-  ".msvclsp")`, and reads `Store::active_config` — the first reachable caller of `Store::open`.
+  ".sln2cc")`, and reads `Store::active_config` — the first reachable caller of `Store::open`.
   Read-only: nothing in this subcommand records a selection, so `Store` is bound immutably,
   matching `active_config`'s own `&self` signature (ADR 21). No new `Error`/`ErrorKind` variant —
   `parse_sln` and `Store::open` already surface everything this path can fail with. Full reasoning
@@ -1268,7 +1268,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
 
   Written against a temp-tree `.sln` instead of the named fixtures, per the note above. Also
   covered: available pairs read back in declaration order, `active` reporting `null` with no
-  recorded selection versus the seeded selection from a hand-written `.msvclsp/state.json`, the
+  recorded selection versus the seeded selection from a hand-written `.sln2cc/state.json`, the
   `warnings_ride_in_the_envelope` placeholder unblocked with both severities exercised end to end,
   and a unit test in `cli.rs` proving the handler reaches `sln::parse_sln` rather than
   short-circuiting.
@@ -1344,13 +1344,13 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `Microsoft.Cpp.*.props/.targets` — those don't exist under `FakeToolchain`, and CI runs this
   suite on Linux too — extending the precedent ADR 24 already set for `generate.rs`'s own
   `TempProject`. The harness lives in `cli/tests/support/mod.rs` (`fake_toolchain`, a `TempRoot`
-  `--root` guard so `cargo test` never writes `.msvclsp/` inside `fixtures/`, and
+  `--root` guard so `cargo test` never writes `.sln2cc/` inside `fixtures/`, and
   `assert_matches_golden`), shared into `generate.rs` via `mod support;` — the standard Rust
   idiom for code shared within one integration-test crate, not the lib/test crate boundary ADR 23
   drew a line around. Normalization is textual: every JSON-escaped path separator becomes `/`,
   and the fixture's own absolute directory becomes the literal token `<FIXTURE>`, making
   `cli/tests/golden/simple.json` byte-identical across machines, checkout locations, and
-  Windows/Linux. `MSVCLSP_UPDATE_GOLDEN=1` regenerated it once, by hand, under review. Full
+  Windows/Linux. `SLN2CC_UPDATE_GOLDEN=1` regenerated it once, by hand, under review. Full
   reasoning in [ADR 25](adr/25-fixture-simple-and-golden-harness.md), which also resolves
   `engineering_spec.md`'s open question on the fixture corpus's source and scope.
 
@@ -1464,7 +1464,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   configured root markers.
 
   **Description:** Use the same marker convention Neovim's LSP clients already use so
-  `.msvclsp/` lands where users expect, walking upward from the buffer's directory and
+  `.sln2cc/` lands where users expect, walking upward from the buffer's directory and
   stopping at the first match. With no marker found, fall back to the current working
   directory rather than erroring, and cache the result per buffer since this runs on every
   command. Handle unnamed and non-file buffers without throwing.
@@ -1607,7 +1607,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   "Buffers reattaching" (this item's own Tests: line) is verified indirectly — the specs assert
   `M._enable("clangd")` is called after the stop loop, which is what triggers Neovim's own
   `FileType` re-trigger to reattach; the reattachment itself is `$VIMRUNTIME/lua/vim/lsp.lua`'s
-  behavior, not this module's, so there is nothing of msvclsp's own to simulate reattaching.
+  behavior, not this module's, so there is nothing of sln2cc's own to simulate reattaching.
   `lsp.lua` depends on `config.lua` only (`clangd_cmd`, `filetypes` — two new defaults), mirroring
   `cli.lua`/`picker.lua`'s explicit-parameter precedent for `database`/`root` rather than resolving
   either itself. No changelog entry: nothing calls `M.start`/`M.restart` yet, and `pick_config`'s
@@ -1618,38 +1618,38 @@ Goal: one solution, one manually selected configuration/platform, producing a
 - [x] **MVP-31 — User commands**
   `feat/nvim-commands` · ~3h
 
-  **Summary:** Register the `:Msvclsp*` commands and wire them to their implementations.
+  **Summary:** Register the `:Sln2cc*` commands and wire them to their implementations.
 
   **Description:** Register commands for generating the database, selecting a
   configuration/platform, rescanning, and restarting clangd, each with a description that
   reads well in command completion. Claim no keymaps — document suggested bindings instead —
-  and register lazily so the load guard in `plugin/msvclsp.lua` keeps startup cost at zero.
+  and register lazily so the load guard in `plugin/sln2cc.lua` keeps startup cost at zero.
   Commands invoked before `setup()` should say so clearly.
 
   **Tests:** mini.test specs asserting each command exists after `setup()`, dispatches to the
   right module, and that invocation before setup produces a clear error.
 
-  **Outcome:** Four commands registered — `MsvclspGenerate`, `MsvclspSelectConfig`,
-  `MsvclspRescan`, `MsvclspRestart` — not five: `MsvclspSelectSolution` stays out until V1-03
+  **Outcome:** Four commands registered — `Sln2ccGenerate`, `Sln2ccSelectConfig`,
+  `Sln2ccRescan`, `Sln2ccRestart` — not five: `Sln2ccSelectSolution` stays out until V1-03
   ships `picker.pick_solution` alongside it (ADR 33), since there's nothing it could do
   differently from the MVP's automatic first-found solution today. Registration moved to
-  `plugin/msvclsp.lua`'s load guard, called unconditionally at Neovim startup (cheap — five
+  `plugin/sln2cc.lua`'s load guard, called unconditionally at Neovim startup (cheap — five
   `nvim_create_user_command` calls, no filesystem access) rather than from `init.lua`'s
   `setup()`; an internal `M._ready` flag, flipped by `init.lua` once `config.setup()` succeeds,
   is what makes "commands invoked before setup() say so clearly" true without commands failing
-  to exist at all beforehand. `MsvclspGenerate` regenerates using `list-configs`' `.active` pair
-  rather than reprompting; no active configuration yet notifies to run `:MsvclspSelectConfig`.
+  to exist at all beforehand. `Sln2ccGenerate` regenerates using `list-configs`' `.active` pair
+  rather than reprompting; no active configuration yet notifies to run `:Sln2ccSelectConfig`.
   `picker.lua`'s `M.pick_config`'s `on_choice` widened to `(config, database)` — closing the gap
   ADR 35 and ADR 36 both flagged — so `commands.lua` can restart clangd against the right
-  database without a second CLI invocation. `MsvclspGenerate`/`MsvclspSelectConfig` call
+  database without a second CLI invocation. `Sln2ccGenerate`/`Sln2ccSelectConfig` call
   `lsp.restart` when `config.options.auto_restart_clangd` is set, gated on the option alone, not
   `GenerateResult.regenerated` — a no-op generate still means clangd should end up attached in a
-  fresh session. `MsvclspRestart` has no generate call of its own, so `commands.lua` caches the
+  fresh session. `Sln2ccRestart` has no generate call of its own, so `commands.lua` caches the
   last database per root from a successful generate/select-config; with nothing cached it
   delegates straight to `lsp.restart(nil, root)`, which already warns on its own. See
   [ADR 37](adr/37-nvim-user-commands.md).
 
-- [x] **MVP-32 — `:checkhealth msvclsp`**
+- [x] **MVP-32 — `:checkhealth sln2cc`**
   `feat/nvim-health` · ~4h
 
   **Summary:** Report on the environment conditions users most often get wrong.
@@ -1669,34 +1669,34 @@ Goal: one solution, one manually selected configuration/platform, producing a
   (`compdb::resolve_output_dir`) this issue didn't want duplicated in Lua. `SolutionConfigs`
   gained a `database: PathBuf` field (additive to the `--json` envelope, no `schema_version`
   bump) so `health.lua` can `stat` a path the CLI itself resolved. See
-  [ADR 39](adr/39-nvim-checkhealth.md). `nvim/doc/msvclsp.txt`'s troubleshooting section
+  [ADR 39](adr/39-nvim-checkhealth.md). `nvim/doc/sln2cc.txt`'s troubleshooting section
   (MVP-33) can now point at real `:checkhealth` behavior instead of a stub.
 
 - [x] **MVP-33 — User documentation**
   `docs/nvim-user-docs` · ~5h
 
-  **Summary:** Fill in `nvim/doc/msvclsp.txt` and expand the README's installation and usage
+  **Summary:** Fill in `nvim/doc/sln2cc.txt` and expand the README's installation and usage
   sections.
 
   **Description:** Cover installation, a minimal `setup()` example, every command and
   configuration option, suggested keymaps as documentation rather than defaults, and a
   troubleshooting section pointing at `:checkhealth`. Include the first-run walkthrough — open
   a project, pick a configuration, generate, see clangd attach — since that path is where a
-  new user either succeeds or gives up. Generate help tags so `:help msvclsp` works.
+  new user either succeeds or gives up. Generate help tags so `:help sln2cc` works.
 
   **Tests:** Manual — follow the written installation steps in a clean Neovim configuration
   and confirm they work end to end.
 
   **Outcome:** Pure documentation — no `cli/src/**` or `nvim/lua/**` change, so unlike every
   prior MVP issue there was no reference-sketch-then-implement cycle; the seven sections of
-  `nvim/doc/msvclsp.txt` and the README's new "Using the Neovim plugin" section were written
+  `nvim/doc/sln2cc.txt` and the README's new "Using the Neovim plugin" section were written
   directly. Two things surfaced along the way. First, `config.lua`'s `data_dir` option is
   declared and validated but read by nothing — the CLI always writes to a hardcoded
-  `.msvclsp/` under `--root` regardless of it — documented with an explicit "has no effect
+  `.sln2cc/` under `--root` regardless of it — documented with an explicit "has no effect
   yet" caveat rather than silently implied to work; wiring it up (or removing it) is
   implementation work outside this issue's scope. Second, installation can't point at a real
   plugin-manager spec or a released binary — both are still the "Release/distribution
-  strategy" open question in `engineering_spec.md` — so `:help msvclsp` documents today's only
+  strategy" open question in `engineering_spec.md` — so `:help sln2cc` documents today's only
   real path (a local checkout on the runtime path, `cargo install --path cli` for the
   binary) rather than a hypothetical one; whichever issue eventually settles distribution
   should update this section rather than leave it stale. MVP-34 can now follow this issue's
@@ -1761,9 +1761,9 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `Contoso3` headers) under both configurations, with completion working and zero missing-include
   diagnostics. Two non-blocking diagnostics did appear, identically under both configurations: an
   `ToolsArgParser.h`-not-used-directly hint and a `constexpr function never produces a constant
-  expression` note in an included header. Neither is a missing-include or a msvclsp flag-
+  expression` note in an included header. Neither is a missing-include or a sln2cc flag-
   generation defect — the second reproduced identically regardless of `/MTd`/`/MT` or the define
-  set, and the project sets no `LanguageStandard` property anywhere in its own tree for msvclsp
+  set, and the project sets no `LanguageStandard` property anywhere in its own tree for sln2cc
   to mistranslate, so this is upstream code the real MSVC compiler diagnoses differently (or not
   at all) from clang-cl's frontend — an inherent, out-of-scope consequence of
   [ADR 18](adr/18-compdb-entry-assembly.md)'s decision to keep flags in MSVC form and let
@@ -1781,7 +1781,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `Import` boundary." That diagnosis was wrong: `generate` fails outright with a hard
   `missing-import` error on a solution that has a genuine `ConfigurationType=Makefile` member
   project (a real NMake dependency, e.g. a vendored library built outside the normal C++ project
-  system), because its toolchain import chain needs `$(MSBuildToolsPath)` — a property msvclsp
+  system), because its toolchain import chain needs `$(MSBuildToolsPath)` — a property sln2cc
   deliberately doesn't seed.
 
   **Description:** Found running MVP-34's real-solution pass against a real external Contoso3
@@ -1914,29 +1914,58 @@ Goal: one solution, one manually selected configuration/platform, producing a
   `feat/nvim-force-regenerate` · ~2h
 
   **Summary:** `generate` already accepts `--force` (MVP-21/22), but nothing in the plugin can
-  reach it — `cli.lua`'s `M.generate` doesn't accept the flag, and `:MsvclspGenerate` always lets
+  reach it — `cli.lua`'s `M.generate` doesn't accept the flag, and `:Sln2ccGenerate` always lets
   the CLI's own staleness cache decide whether to regenerate. A user who edits a `.vcxproj` and
   wants a database rebuilt regardless of the cache — or suspects the cache is wrong — has no way
   to ask for that from the editor; they have to shell out to the CLI directly.
 
   **Description:** Thread `force` through `cli.lua`'s `M.generate` as an argument that appends
   `--force` to the invocation, then expose it from `commands.lua`. Open question for the plan:
-  whether that's a `!` bang on the existing `:MsvclspGenerate` (idiomatic Neovim for "force this
+  whether that's a `!` bang on the existing `:Sln2ccGenerate` (idiomatic Neovim for "force this
   action," and keeps `M.commands` from growing a near-duplicate entry) or a separate
-  `:MsvclspRegenerate` command — resolve with the user during planning rather than picking
-  silently, since it changes `M.commands`' surface and `nvim/doc/msvclsp.txt`'s command table
+  `:Sln2ccRegenerate` command — resolve with the user during planning rather than picking
+  silently, since it changes `M.commands`' surface and `nvim/doc/sln2cc.txt`'s command table
   either way.
 
   **Tests:** mini.test specs asserting `cli.lua`'s `M.generate` appends `--force` only when asked,
   and that the plugin-facing command reaches it (stub the CLI at the `cli.lua` boundary, per
   CLAUDE.md §4 — no real binary invocation).
 
-  **Outcome:** Resolved as a `!` bang on the existing `:MsvclspGenerate`, not a new command — see
+  **Outcome:** Resolved as a `!` bang on the existing `:Sln2ccGenerate`, not a new command — see
   [ADR 41](adr/41-nvim-force-regenerate.md). `cli.lua`'s `M.generate` gained a positional `force`
   parameter before `on_done`; `commands.lua`'s `M._generate(opts)` reads `opts.bang`, and only
-  `MsvclspGenerate`'s `nvim_create_user_command` call declares `bang = true`, so Neovim itself
+  `Sln2ccGenerate`'s `nvim_create_user_command` call declares `bang = true`, so Neovim itself
   rejects a bang on the other three. `picker.lua`'s internal `cli.generate` call passes `force =
   false` explicitly. No `cli/src/**` change — `--force` already existed there.
+
+- [x] **MVP-47 — Rename the project from msvclsp to sln2cc**
+  `chore/rename-to-sln2cc` · ~2h
+
+  **Summary:** The project stopped being an LSP-adjacent proxy back at the decision recorded in
+  the CLI/architecture split (the CLI is not an LSP server — it only emits a compilation
+  database), which left `msvclsp` naming a thing the tool no longer is. The name was raised as a
+  problem worth fixing rather than leaving to accumulate confusion for new contributors.
+
+  **Description:** Rename the crate, the Neovim plugin's Lua module namespace, its user commands
+  (`:MsvclspGenerate` and siblings), its generated artifact directory (`.msvclsp/`), and every
+  prose reference across the docs to `sln2cc` — chosen for describing what the tool actually does
+  (`.sln` in, `compile_commands.json` out) rather than claiming an LSP role it doesn't fill.
+  Mechanical across ~80 tracked files: `cli/Cargo.toml`'s package name, `nvim/lua/msvclsp/` →
+  `nvim/lua/sln2cc/` (and its `plugin/`/`doc/` siblings), every `:Msvclsp*` command, the
+  `CARGO_BIN_EXE_msvclsp`/`MSVCLSP_UPDATE_GOLDEN` test-harness constants, and prose in
+  `CLAUDE.md`, `README.md`, and `docs/**`. Gitignored generated `.msvclsp/` directories left over
+  from previous local runs (e.g. under `fixtures/`) are untracked scratch and regenerate as
+  `.sln2cc/` on the next `generate` — not part of the rename's scope.
+
+  **Tests:** No new tests — this is a rename, not a behavior change. The full existing suite
+  (`cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, and the Neovim `mini.test`
+  suite) must still pass unchanged under the new names, which is the actual verification: the
+  golden-file comparisons in particular prove the renamed `.sln2cc/` output directory still
+  produces byte-identical `compile_commands.json` content.
+
+  **Outcome:** Done. `sln2cc` builds, lints, and passes all 431 CLI unit tests, 32 CLI
+  integration/golden tests, and 139 Neovim `mini.test` cases unchanged. See
+  [ADR 53](adr/53-rename-msvclsp-to-sln2cc.md).
 
 ---
 
@@ -1953,23 +1982,23 @@ behind them have been tested.
   **Rejected:** discovery stays entirely the Neovim plugin's responsibility. The CLI's job is
   compiling a `compile_commands.json` for a solution it's handed, not locating solutions on
   disk — a `discover` subcommand would have made the CLI reach into a concern that belongs to
-  its caller. `nvim/lua/msvclsp/discovery.lua`'s existing scan (MVP-27) is the permanent design,
+  its caller. `nvim/lua/sln2cc/discovery.lua`'s existing scan (MVP-27) is the permanent design,
   not an MVP stopgap. See [ADR 44](adr/44-drop-cli-side-discovery.md).
 
 - [x] **V1-02 — Namespace output per solution** · `feat/output-namespacing` · ~4h
-  Write to `.msvclsp/<solution-name>/` so a previously-used solution's artifacts survive
+  Write to `.sln2cc/<solution-name>/` so a previously-used solution's artifacts survive
   switching away and back. Tests: two solutions generating into distinct directories without
   clobbering each other.
 
   **Outcome:** Already done, in the same sense as V1-04/V1-06. `compdb::resolve_output_dir`
   (`cli/src/compdb.rs`) has written every solution's output under
-  `.msvclsp/<solution-stem>-<hash>/` with a `.source` collision marker since MVP-17, and
+  `.sln2cc/<solution-stem>-<hash>/` with a `.source` collision marker since MVP-17, and
   `db::Store` (`cli/src/db.rs`) has kept `state.json` keyed per-solution path since MVP-18 —
   both predate this issue by over a week, so a previously-used solution's artifacts already
   survive switching away and back. Unlike V1-04, the exact test this issue's own Tests: line
   called for didn't already exist: `compdb.rs` and `db.rs` each unit-test cross-solution
   isolation in isolation, but nothing ran two real solutions through the full `generate`
-  pipeline sharing one `.msvclsp` root. Closed by adding that one integration test,
+  pipeline sharing one `.sln2cc` root. Closed by adding that one integration test,
   `cli/tests/generate.rs::two_solutions_generate_into_distinct_directories` — no `cli/src/**`
   or `nvim/lua/**` change. Also corrected two stale cross-references
   (`engineering_spec.md`, [ADR 39](adr/39-nvim-checkhealth.md)) that described this issue as
@@ -1993,9 +2022,9 @@ behind them have been tested.
   solution is inherently a scan-and-select concern), marks the active solution in `format_item`
   mirroring `pick_config`'s own marker, and calls `set_active_solution` before `on_choice`.
   Grepping V1-03 across `docs/` surfaced the gap ADR 37 named but didn't design for: `commands.lua`
-  now registers `MsvclspSelectSolution`, delegating to `pick_solution` and clearing its own
+  now registers `Sln2ccSelectSolution`, delegating to `pick_solution` and clearing its own
   per-root `last_database` cache on a successful pick, so a stale database path from the previous
-  solution can't leak into a later `:MsvclspRestart`. This issue deliberately does **not**
+  solution can't leak into a later `:Sln2ccRestart`. This issue deliberately does **not**
   regenerate `compile_commands.json` or restart clangd on a solution switch — restoring the newly
   active solution's own remembered configuration/platform is V1-05's job, not this one's. See
   [ADR 45](adr/45-nvim-solution-picker.md).
@@ -2006,20 +2035,20 @@ behind them have been tested.
 
   **Outcome:** Already done. MVP-31 (`feat/nvim-commands`) registered all four MVP-scope
   commands in one pass rather than splitting rescan into its own later issue, so
-  `discovery.rescan()` and `:MsvclspRescan` — along with the cache-drop-and-repopulate tests
+  `discovery.rescan()` and `:Sln2ccRescan` — along with the cache-drop-and-repopulate tests
   this issue calls for (`test_discovery.lua`'s "rescan refreshes the cache" and "a rescan does
-  not forget a persisted choice", `test_commands.lua`'s `MsvclspRescan` describe block) — were
+  not forget a persisted choice", `test_commands.lua`'s `Sln2ccRescan` describe block) — were
   already in place before this issue was ever started. See
   [ADR 37](adr/37-nvim-user-commands.md). No new code, tests, or changelog entry: the changelog
-  already covers `:MsvclspRescan` under `[Unreleased]` from MVP-31's own entry.
+  already covers `:Sln2ccRescan` under `[Unreleased]` from MVP-31's own entry.
 
 - [x] **V1-05 — Switch-solution command** · `feat/nvim-switch-solution` · ~5h
   Change the active solution, restore *that* solution's own remembered configuration/platform,
   regenerate if needed, and restart clangd. Tests: mini.test specs asserting per-solution
   configuration restoration rather than a carried-over global value.
 
-  **Outcome:** `commands.lua`'s `MsvclspSelectSolution` handler grows the same
-  `list_configs -> check active -> generate -> maybe_restart` tail `MsvclspGenerate` already
+  **Outcome:** `commands.lua`'s `Sln2ccSelectSolution` handler grows the same
+  `list_configs -> check active -> generate -> maybe_restart` tail `Sln2ccGenerate` already
   runs, called against whichever solution `picker.pick_solution` (V1-03) hands back rather than
   the previously active one — closing the gap ADR 45 named explicitly for this issue. The
   regenerate is unforced (unlike `pick_config`'s forced one): switching solutions changes which
@@ -2038,7 +2067,7 @@ behind them have been tested.
   — there was never a separate discover step a caller had to run first, and `picker.lua`'s
   `M.pick_solution` (V1-03) already relies on that laziness directly. Unlike V1-04, the exact
   test this issue's own Tests: line called for didn't already exist: every existing
-  `pick_solution` spec in `test_picker.lua` stubbed `msvclsp.discovery` wholesale, so nothing
+  `pick_solution` spec in `test_picker.lua` stubbed `sln2cc.discovery` wholesale, so nothing
   proved the real module's inline scan reaches the real picker with no prior scan. Closed by
   adding that one integration-style test — real `discovery.lua` against a real temp tree,
   through `picker.pick_solution`, only `vim.ui.select` stubbed — no `cli/src/**` or
@@ -2059,10 +2088,10 @@ behind them have been tested.
   just one already gone before Neovim opened the project. A vanished path is never silently
   replaced with a different solution the user never chose: the stale in-memory and persisted
   state is cleared, and `commands.lua`'s `resolve_solution` (now callback-based:
-  `resolve_solution(on_resolved)`, threaded through `MsvclspGenerate` and
-  `MsvclspSelectConfig`) rescans and reprompts via the existing `picker.pick_solution` before
+  `resolve_solution(on_resolved)`, threaded through `Sln2ccGenerate` and
+  `Sln2ccSelectConfig`) rescans and reprompts via the existing `picker.pick_solution` before
   continuing the original command with whatever gets picked. `picker.lua` needed no change —
-  its existing contract was already exactly what a reprompt needs. `MsvclspRestart` is
+  its existing contract was already exactly what a reprompt needs. `Sln2ccRestart` is
   unaffected; it never resolved the active solution to begin with. See
   [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
 
@@ -2079,7 +2108,7 @@ behind them have been tested.
   short-circuits on `pin_error` with a `vim.notify(ERROR)` and no rescan or reprompt, since a pin
   exists specifically so CI/scripting callers never see `picker.pick_solution`'s
   `vim.ui.select` — routing a missing pin into the vanished-solution recovery flow would block
-  on a prompt nothing can answer. `:MsvclspSelectSolution` needed no change: it calls
+  on a prompt nothing can answer. `:Sln2ccSelectSolution` needed no change: it calls
   `picker.pick_solution` directly, so a manual pick still persists while a pin is configured, but
   the pin resurfaces on the very next call to `active_solution` regardless, a direct consequence
   of the pin check running unconditionally rather than a new branch anywhere else.
@@ -2093,7 +2122,7 @@ behind them have been tested.
   vanish into a silent no-op. Tests: mini.test specs asserting each error kind produces a
   distinct, actionable notification.
 
-  **Outcome:** A new `nvim/lua/msvclsp/notify.lua` centralizes both renderers: `M.notify_error`
+  **Outcome:** A new `nvim/lua/sln2cc/notify.lua` centralizes both renderers: `M.notify_error`
   appends a kind-specific one-line remedy (`M.REMEDIES`, one row per `ErrorKind` wire string)
   after the CLI's own message, always at `ERROR`; `M.notify_warnings` batches an envelope's
   `warnings` array into one `vim.notify` per call (not one per diagnostic — ADR 13 already
@@ -2101,7 +2130,7 @@ behind them have been tested.
   `INFO`. `cli.lua`'s `M.list_configs`/`M.generate` gained a 3rd, additive `on_done` argument,
   `warnings`, so the envelope's `warnings` array — previously dropped after `M.run` handed back
   the full envelope for exactly this purpose (ADR 34) — actually reaches a renderer.
-  `commands.lua` and `picker.lua` route every `Msvclsp.CliError` through `notify.notify_error`
+  `commands.lua` and `picker.lua` route every `Sln2cc.CliError` through `notify.notify_error`
   and call `notify.notify_warnings` after every successful `list_configs`/`generate`.
   `health.lua`'s `:checkhealth` status check is deliberately untouched — its
   `vim.health.ok`/`warn`/`error` reporting is a different mechanism from `vim.notify`, and this

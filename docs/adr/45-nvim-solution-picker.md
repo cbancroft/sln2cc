@@ -4,8 +4,8 @@
 - **Date:** 2026-08-15
 - **Issue:** [V1-03 — Solution picker with persistence](../todos.md#v1)
   (`feat/nvim-solution-picker`)
-- **Affects:** `nvim/lua/msvclsp/discovery.lua`, `nvim/lua/msvclsp/picker.lua`,
-  `nvim/lua/msvclsp/commands.lua`, `nvim/tests/test_discovery.lua`,
+- **Affects:** `nvim/lua/sln2cc/discovery.lua`, `nvim/lua/sln2cc/picker.lua`,
+  `nvim/lua/sln2cc/commands.lua`, `nvim/tests/test_discovery.lua`,
   `nvim/tests/test_picker.lua`, `nvim/tests/test_commands.lua`,
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities", "Storage
   Layout"), [ADR 33](33-nvim-solution-discovery.md), [ADR 35](35-nvim-config-picker.md),
@@ -20,13 +20,13 @@ Three stubs, deferred across three prior issues, all converge on this one:
    already-stubbed `M.pick_solution` is already stubbed as the seam where that decision belongs."
 2. `picker.lua`'s `M.pick_solution(on_choice)` itself has always been `error("not yet
    implemented")`.
-3. ADR 37 (MVP-31) deliberately did not register `MsvclspSelectSolution` — "V1-03 adds it back
+3. ADR 37 (MVP-31) deliberately did not register `Sln2ccSelectSolution` — "V1-03 adds it back
    alongside `picker.pick_solution`" — and named a gap only this issue could close: "a new active
    solution under the same root invalidates the [per-root] cached database" that
-   `MsvclspRestart` reads.
+   `Sln2ccRestart` reads.
 
 `docs/todos.md`'s one-line description ("remember the choice per project root so later sessions
-don't re-prompt") doesn't by itself say *where* that memory lives. Every other piece of msvclsp
+don't re-prompt") doesn't by itself say *where* that memory lives. Every other piece of sln2cc
 state so far is CLI-owned (`db.rs`'s `state.json`), but ADR 44 already ruled that out here:
 "finding `.sln` files, choosing among them, remembering a choice" is `discovery.lua`'s and this
 issue's territory, never the CLI's — the CLI is only ever handed a solution path, never asked to
@@ -36,11 +36,11 @@ find or remember one.
 
 1. **A second, plugin-owned file, colocated with the CLI's own state.**
    `<root>/<config.options.data_dir>/nvim-solution.json` (default
-   `<root>/.msvclsp/nvim-solution.json`), holding `{"solution": "<absolute path>"}`. It sits
-   beside `db.rs`'s `state.json` inside the same per-root `.msvclsp` directory CLAUDE.md's Project
+   `<root>/.sln2cc/nvim-solution.json`), holding `{"solution": "<absolute path>"}`. It sits
+   beside `db.rs`'s `state.json` inside the same per-root `.sln2cc` directory CLAUDE.md's Project
    Goals section already designates for "generated artifacts," under a name that can't collide
    with the CLI's own private `STATE_FILE` constant. No root-to-file keying scheme is needed
-   (unlike `state.json`'s root-relative solution keys) because `.msvclsp` is already one directory
+   (unlike `state.json`'s root-relative solution keys) because `.sln2cc` is already one directory
    per project root.
 
 2. **`discovery.lua` gains `M.set_active_solution(root, solution)`.** It updates the in-memory
@@ -72,21 +72,21 @@ find or remember one.
    mirroring `pick_config`'s single-branch contract (ADR 35 point 2) — no `pick_config`, no
    `generate`, and no clangd restart happen from this picker at all.
 
-6. **`commands.lua`'s `MsvclspSelectSolution` only picks and invalidates, it never regenerates.**
+6. **`commands.lua`'s `Sln2ccSelectSolution` only picks and invalidates, it never regenerates.**
    The handler is `picker.pick_solution(root, function(solution) if solution then
    last_database[root] = nil end end)`. Restoring the newly chosen solution's own remembered
    configuration/platform, regenerating `compile_commands.json`, and restarting clangd is V1-05's
    ("Switch-solution command") explicit, separately-scoped job — this issue only changes *which*
    solution is active and makes sure a stale cached database path from the old solution can't leak
-   into a later `MsvclspRestart`.
+   into a later `Sln2ccRestart`.
 
 ## Discussion
 
-**Why not `stdpath("data")` instead of `.msvclsp`.** A single global file keyed by project root
-(the way some Neovim plugins persist cross-session state) was considered. Rejected: msvclsp
+**Why not `stdpath("data")` instead of `.sln2cc`.** A single global file keyed by project root
+(the way some Neovim plugins persist cross-session state) was considered. Rejected: sln2cc
 already has a per-project-root artifacts directory doing exactly this job for every other piece of
-state, and a second storage location would mean two different answers to "where does msvclsp keep
-its state" for no benefit — `.msvclsp` is already gitignored, already created on demand, and
+state, and a second storage location would mean two different answers to "where does sln2cc keep
+its state" for no benefit — `.sln2cc` is already gitignored, already created on demand, and
 already scoped correctly per root with zero extra keying logic.
 
 **Why JSON instead of a bare path string.** A one-line text file would work and is simpler to
@@ -119,13 +119,13 @@ issue's design instead of leaving the seam ADR 37 already pointed at.
 - `discovery.lua`'s `M.active_solution()` and `M.set_active_solution()` are now the single source
   of truth for which solution is active, backed by disk — `commands.lua` and any future caller can
   trust a value read after a Neovim restart without re-scanning or re-prompting.
-- `MsvclspSelectSolution` exists and is registered, closing the five-command surface ADR 37's
+- `Sln2ccSelectSolution` exists and is registered, closing the five-command surface ADR 37's
   `M.commands` table originally described minus one.
 - `commands.lua`'s `last_database` cache is now correctly invalidated on a solution switch; a
-  stale database path from a previous solution can no longer leak into `MsvclspRestart`.
+  stale database path from a previous solution can no longer leak into `Sln2ccRestart`.
 - V1-05 inherits a concrete starting point: `picker.pick_solution`'s `on_choice` already hands back
   the newly active solution path, so V1-05's own handler can call `discovery.active_solution` or
   read that value directly, then look up *that* solution's own remembered configuration/platform
   via `cli.list_configs`, regenerate, and restart — none of which this issue attempts.
-- Changelog entry added: `:MsvclspSelectSolution` is the first user-facing way to change which
-  solution msvclsp targets, and the choice now survives a restart.
+- Changelog entry added: `:Sln2ccSelectSolution` is the first user-facing way to change which
+  solution sln2cc targets, and the choice now survives a restart.

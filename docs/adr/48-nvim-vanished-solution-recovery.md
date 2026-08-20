@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Issue:** [V2-01 — Handle a vanished active solution](../todos.md#v2) (`fix/missing-solution`)
-- **Affects:** `nvim/lua/msvclsp/discovery.lua`, `nvim/lua/msvclsp/commands.lua`,
+- **Affects:** `nvim/lua/sln2cc/discovery.lua`, `nvim/lua/sln2cc/commands.lua`,
   `nvim/tests/test_discovery.lua`, `nvim/tests/test_commands.lua`,
   [project_spec.md](../project_spec.md) ("Multiple Solution Handling", "Open Questions"),
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities"),
@@ -81,10 +81,10 @@ silently picking an answer to a named spec Open Question:
 
    **`M._restart` is unaffected.** It never called `resolve_solution` — it replays
    `last_database[root]` directly, without re-resolving the active solution at all. A vanished
-   `.sln` therefore doesn't surface through `:MsvclspRestart`; that command isn't touching
+   `.sln` therefore doesn't surface through `:Sln2ccRestart`; that command isn't touching
    solution state, just restarting clangd against whatever database path a prior generate
    produced. This surfaced (and fixed, in the same change as this ADR) a factual error in
-   **ADR 47**'s own prose (Problem section), which had listed `MsvclspRestart` among
+   **ADR 47**'s own prose (Problem section), which had listed `Sln2ccRestart` among
    `resolve_solution`'s callers — it never was. Correcting a factual claim isn't the kind of
    decision reversal CLAUDE.md's "never rewrite" convention protects; that convention is about
    not relitigating a settled decision, not about leaving a landed ADR's prose wrong once it's
@@ -123,8 +123,8 @@ already exactly what a vanished-solution reprompt needs, provided the caller res
 is the same reuse `ADR 47` found for V1-06: the pieces this issue needed already existed, and
 the only genuine gap was orchestrating them from `resolve_solution`.
 
-**Cost.** One `fs_stat` per `resolve_solution` call (every `:MsvclspGenerate` and
-`:MsvclspSelectConfig` invocation), which is the same order of cost as the `vim.fs.root()` call
+**Cost.** One `fs_stat` per `resolve_solution` call (every `:Sln2ccGenerate` and
+`:Sln2ccSelectConfig` invocation), which is the same order of cost as the `vim.fs.root()` call
 `M.project_root()` already makes on every command — not a new category of expense.
 `resolve_solution`'s signature change from synchronous to callback-based is the one real
 structural cost, touching both of its call sites; no alternative avoided this once auto-invoking
@@ -135,8 +135,8 @@ the picker (Decision from the forked question) was chosen over a notify-only rec
 - Resolves `project_spec.md`'s Open Question: a vanished active solution now degrades to a
   reprompt through the existing picker, not a raw CLI error or a silent substitution.
 - `M._restart` is explicitly out of scope — see Decision 4. A solution vanishing has no effect
-  on `:MsvclspRestart`, which never looks at the active solution to begin with.
+  on `:Sln2ccRestart`, which never looks at the active solution to begin with.
 - `docs/adr/47-nvim-inline-discovery.md`'s prose has been corrected in this same change: it no
-  longer claims `MsvclspRestart` called `resolve_solution`.
+  longer claims `Sln2ccRestart` called `resolve_solution`.
 - Changelog entry added: a vanished active solution (deleted or moved) is now detected and
   prompts for a replacement instead of a raw CLI error.

@@ -19,7 +19,7 @@ has something to index.
 | `multi-config/`      | Multiple configuration/platform pairs, including custom names.|
 | `item-definition-order/` | A source `ItemGroup` declared before the `ItemDefinitionGroup`s that apply to it. |
 
-Running the tool against these will create `.msvclsp/` directories inside them; those are
+Running the tool against these will create `.sln2cc/` directories inside them; those are
 gitignored.
 
 All four are hand-authored, schema-realistic solutions rather than sanitized real-world examples —

@@ -4,7 +4,7 @@
 - **Date:** 2026-08-11
 - **Issue:** [MVP-25 — Configuration defaults and `setup()`](../todos.md#neovim-plugin)
   (`feat/nvim-config`)
-- **Affects:** `nvim/lua/msvclsp/config.lua`, `nvim/tests/test_config.lua`
+- **Affects:** `nvim/lua/sln2cc/config.lua`, `nvim/tests/test_config.lua`
 
 ## Problem
 

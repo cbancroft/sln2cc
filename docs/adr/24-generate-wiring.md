@@ -85,7 +85,7 @@ all until someone runs it by hand on a Visual Studio box.
 
 **Why unbuilt projects are indexed rather than skipped.** Matching what an actual MSBuild invocation
 would compile — skip anything unchecked in Configuration Manager — was the other candidate, and it
-is defensible: it is literally what "build" means. It was rejected because msvclsp's stated purpose
+is defensible: it is literally what "build" means. It was rejected because sln2cc's stated purpose
 (CLAUDE.md §1) is giving `clangd` real language support for files MSBuild can compile, not mirroring
 exactly what the last build produced. A project unchecked for one configuration is still a real,
 evaluable project whose files a developer may open and expect completions for. The cost is that

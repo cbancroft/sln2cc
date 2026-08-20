@@ -1,11 +1,11 @@
--- health.lua stubs msvclsp.discovery and msvclsp.cli wholesale (package.loaded swap, the
+-- health.lua stubs sln2cc.discovery and sln2cc.cli wholesale (package.loaded swap, the
 -- commands.lua/test_commands.lua pattern per CLAUDE.md §4), plus its own three seams
 -- (_executable, _system, _stat) the way cli.lua stubs _system for its own tests (ADR 34) --
 -- health.lua's tests are the ones that have to intercept the real side effects it owns.
 -- vim.fs.root and vim.health are Neovim/stdlib surfaces, stubbed directly for the duration
 -- of each test that needs them, mirroring test_lsp.lua's approach to vim.lsp/vim.api.
 
---- Builds a fake `msvclsp.discovery`. `pin_error` (V2-02) mirrors what the real module reports
+--- Builds a fake `sln2cc.discovery`. `pin_error` (V2-02) mirrors what the real module reports
 --- when `config.options.pinned_solution` is set but doesn't exist on disk -- distinct from
 --- `solution == nil` on its own, which means no `.sln` was found at all. See ADR 49.
 --- @param opts { root: string|nil, solution: string|nil, pin_error: string|nil }|nil
@@ -22,7 +22,7 @@ local function fake_discovery(opts)
   }
 end
 
---- Builds a fake `msvclsp.cli`. `list_configs_result` is a `{ result, err }` pair handed
+--- Builds a fake `sln2cc.cli`. `list_configs_result` is a `{ result, err }` pair handed
 --- straight to `on_done`, synchronously -- health.lua's own `vim.wait` loop tolerates a
 --- synchronous callback exactly as well as an async one, since it only polls for either
 --- value having been set.
@@ -35,7 +35,7 @@ local function fake_cli(opts)
   local fake = {
     list_configs = function(solution, root, on_done)
       table.insert(calls, { solution = solution, root = root })
-      local lc = opts.list_configs or { result = { active = nil, database = "C:/proj/.msvclsp/App-abcd1234/compile_commands.json" } }
+      local lc = opts.list_configs or { result = { active = nil, database = "C:/proj/.sln2cc/App-abcd1234/compile_commands.json" } }
       on_done(lc.result, lc.err)
     end,
   }
@@ -117,10 +117,10 @@ end
 --- @param fakes { discovery: table, cli: table }
 --- @return table health
 local function load_health(fakes)
-  package.loaded["msvclsp.health"] = nil
-  package.loaded["msvclsp.discovery"] = fakes.discovery
-  package.loaded["msvclsp.cli"] = fakes.cli
-  return require("msvclsp.health")
+  package.loaded["sln2cc.health"] = nil
+  package.loaded["sln2cc.discovery"] = fakes.discovery
+  package.loaded["sln2cc.cli"] = fakes.cli
+  return require("sln2cc.health")
 end
 
 --- @param calls table[] as captured by stub_health
@@ -155,14 +155,14 @@ local function has_remedy(calls, level, substring)
   return false
 end
 
-describe("msvclsp.health", function()
+describe("sln2cc.health", function()
   local health_calls, restore_health
   local original_fs_root
   local config
 
   before_each(function()
-    package.loaded["msvclsp.config"] = nil
-    config = require("msvclsp.config")
+    package.loaded["sln2cc.config"] = nil
+    config = require("sln2cc.config")
     config.setup({})
     health_calls, restore_health = stub_health()
     original_fs_root = vim.fs.root
@@ -174,7 +174,7 @@ describe("msvclsp.health", function()
   end)
 
   it("all healthy: every check reports ok, including the database on disk", function()
-    local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
+    local database = "/root/.sln2cc/App-abcd1234/compile_commands.json"
     local health = load_health({
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
       cli = (fake_cli({
@@ -186,8 +186,8 @@ describe("msvclsp.health", function()
         },
       })),
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     health._stat = fake_stat({ database })
     vim.fs.root = function()
       return "/root"
@@ -210,8 +210,8 @@ describe("msvclsp.health", function()
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
       cli = cli,
     })
-    health._executable = fake_executable({ "clangd" }) -- msvclsp itself is absent
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, system_calls)
+    health._executable = fake_executable({ "clangd" }) -- sln2cc itself is absent
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, system_calls)
     vim.fs.root = function()
       return "/root"
     end
@@ -231,7 +231,7 @@ describe("msvclsp.health", function()
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
       cli = cli,
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
+    health._executable = fake_executable({ "sln2cc", "clangd" })
     health._system = fake_system({ code = 1, stdout = "", stderr = "panic!" }, {})
     vim.fs.root = function()
       return "/root"
@@ -252,8 +252,8 @@ describe("msvclsp.health", function()
         list_configs = { err = { message = "solution not found", kind = "solution-not-found", code = 3 } },
       })),
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     vim.fs.root = function()
       return "/root"
     end
@@ -277,14 +277,14 @@ describe("msvclsp.health", function()
         list_configs = {
           result = {
             active = { configuration = "Debug", platform = "x64" },
-            database = "/root/.msvclsp/App-abcd1234/compile_commands.json",
+            database = "/root/.sln2cc/App-abcd1234/compile_commands.json",
           },
         },
       })),
     })
-    health._executable = fake_executable({ "msvclsp" }) -- clangd itself is absent
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
-    health._stat = fake_stat({ "/root/.msvclsp/App-abcd1234/compile_commands.json" })
+    health._executable = fake_executable({ "sln2cc" }) -- clangd itself is absent
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
+    health._stat = fake_stat({ "/root/.sln2cc/App-abcd1234/compile_commands.json" })
     vim.fs.root = function()
       return "/root"
     end
@@ -302,7 +302,7 @@ describe("msvclsp.health", function()
     MiniTest.expect.equality(count(health_calls, "ok"), 4)
   end)
 
-  it("no solution found: a warning naming :MsvclspRescan, list_configs never called", function()
+  it("no solution found: a warning naming :Sln2ccRescan, list_configs never called", function()
     local list_configs_calls
     local cli
     cli, list_configs_calls = fake_cli()
@@ -310,8 +310,8 @@ describe("msvclsp.health", function()
       discovery = fake_discovery({ root = "/root", solution = nil }),
       cli = cli,
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     vim.fs.root = function()
       return "/root"
     end
@@ -321,7 +321,7 @@ describe("msvclsp.health", function()
     -- health.lua must never call list_configs with no solution to hand it.
     MiniTest.expect.equality(#list_configs_calls, 0)
 
-    MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspRescan"), true)
+    MiniTest.expect.equality(has_remedy(health_calls, "warn", "Sln2ccRescan"), true)
   end)
 
   -- Config-based solution pinning -- V2-02. A missing pinned solution is a distinct, sharper
@@ -340,8 +340,8 @@ describe("msvclsp.health", function()
       }),
       cli = cli,
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     vim.fs.root = function()
       return "/root"
     end
@@ -359,11 +359,11 @@ describe("msvclsp.health", function()
     MiniTest.expect.equality(named_pin, true)
     -- The generic "no .sln found" warning must not also fire -- a pinned, missing solution is
     -- reported once, as the sharper diagnosis, not twice.
-    MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspRescan"), false)
+    MiniTest.expect.equality(has_remedy(health_calls, "warn", "Sln2ccRescan"), false)
   end)
 
   it("no database generated: an active config but no file on disk warns with a remedy", function()
-    local database = "/root/.msvclsp/App-abcd1234/compile_commands.json"
+    local database = "/root/.sln2cc/App-abcd1234/compile_commands.json"
     local health = load_health({
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
       cli = (fake_cli({
@@ -375,8 +375,8 @@ describe("msvclsp.health", function()
         },
       })),
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     health._stat = fake_stat({}) -- nothing exists on disk
     vim.fs.root = function()
       return "/root"
@@ -385,21 +385,21 @@ describe("msvclsp.health", function()
     health.check()
 
     MiniTest.expect.equality(count(health_calls, "error"), 0)
-    MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspGenerate"), true)
+    MiniTest.expect.equality(has_remedy(health_calls, "warn", "Sln2ccGenerate"), true)
   end)
 
-  it("no configuration selected: warns naming :MsvclspSelectConfig, never stats a path", function()
+  it("no configuration selected: warns naming :Sln2ccSelectConfig, never stats a path", function()
     local stat_calls = {}
     local health = load_health({
       discovery = fake_discovery({ root = "/root", solution = "/root/app.sln" }),
       cli = (fake_cli({
         list_configs = {
-          result = { active = nil, database = "/root/.msvclsp/App-abcd1234/compile_commands.json" },
+          result = { active = nil, database = "/root/.sln2cc/App-abcd1234/compile_commands.json" },
         },
       })),
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
     health._stat = function(path)
       table.insert(stat_calls, path)
       return nil
@@ -411,7 +411,7 @@ describe("msvclsp.health", function()
     health.check()
 
     MiniTest.expect.equality(#stat_calls, 0)
-    MiniTest.expect.equality(has_remedy(health_calls, "warn", "MsvclspSelectConfig"), true)
+    MiniTest.expect.equality(has_remedy(health_calls, "warn", "Sln2ccSelectConfig"), true)
   end)
 
   it("root falls back to the current directory: warns even though project_root() still resolves", function()
@@ -421,14 +421,14 @@ describe("msvclsp.health", function()
         list_configs = {
           result = {
             active = { configuration = "Debug", platform = "x64" },
-            database = "/fallback/cwd/.msvclsp/App-abcd1234/compile_commands.json",
+            database = "/fallback/cwd/.sln2cc/App-abcd1234/compile_commands.json",
           },
         },
       })),
     })
-    health._executable = fake_executable({ "msvclsp", "clangd" })
-    health._system = fake_system({ code = 0, stdout = "msvclsp 0.1.0\n", stderr = "" }, {})
-    health._stat = fake_stat({ "/fallback/cwd/.msvclsp/App-abcd1234/compile_commands.json" })
+    health._executable = fake_executable({ "sln2cc", "clangd" })
+    health._system = fake_system({ code = 0, stdout = "sln2cc 0.1.0\n", stderr = "" }, {})
+    health._stat = fake_stat({ "/fallback/cwd/.sln2cc/App-abcd1234/compile_commands.json" })
     -- No root marker matched anywhere -- discovery.project_root() would have fallen back to cwd.
     vim.fs.root = function()
       return nil
