@@ -40,8 +40,10 @@ installed, since toolchain and Windows SDK discovery depend on it.
 
 ## Using the Neovim plugin
 
-There's no published release yet, so installation today is a local checkout added to your
-runtime path. With `lazy.nvim`:
+There's no published release yet. The plugin lives at `nvim/`, alongside `cli/`, not at the
+repository root, which affects how you point a plugin manager at it.
+
+With `lazy.nvim`, a local checkout works directly since `dir =` accepts any path:
 
 ```lua
 {
@@ -51,8 +53,20 @@ runtime path. With `lazy.nvim`:
 }
 ```
 
-You'll also need the `sln2cc` binary itself on `PATH` (`cargo install --path cli` from a
-checkout, or point the plugin's `bin` option at a `cargo build` output) and `clangd` on
+With Neovim's built-in `vim.pack.add()`, a local `dir =`-style override doesn't exist — it
+clones a git ref and puts that clone's root on `runtimepath`, so it can't reach into a `nvim/`
+subdirectory of the main repo. Point it instead at `nvim-plugin`, a branch CI keeps mirrored
+to `nvim/`'s current contents (see [ADR 54](docs/adr/54-nvim-pack-subtree-branch.md)):
+
+```lua
+vim.pack.add({
+  { src = "https://github.com/cbancroft/sln2cc", version = "nvim-plugin" },
+})
+require("sln2cc").setup({})
+```
+
+Either way, you'll also need the `sln2cc` binary itself on `PATH` (`cargo install --path cli`
+from a checkout, or point the plugin's `bin` option at a `cargo build` output) and `clangd` on
 `PATH`. Once both are in place and `setup()` has run, open a file inside a solution's tree,
 run `:Sln2ccSelectConfig` to pick a configuration/platform, and `clangd` attaches
 automatically.

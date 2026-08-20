@@ -1967,6 +1967,30 @@ Goal: one solution, one manually selected configuration/platform, producing a
   integration/golden tests, and 139 Neovim `mini.test` cases unchanged. See
   [ADR 53](adr/53-rename-msvclsp-to-sln2cc.md).
 
+- [ ] **MVP-48 — Publish the Neovim plugin as a `vim.pack` target**
+  `feat/nvim-pack-subtree` · ~3h
+
+  **Summary:** Neovim's built-in `vim.pack.add()` clones a git ref wholesale and adds exactly
+  that clone's root to `runtimepath` — it has no `dir`/subdirectory option. `plugin/`,
+  `lua/sln2cc/`, and `doc/` live under `nvim/`, alongside `cli/`, so `main` can never be a
+  `vim.pack` target as-is.
+
+  **Description:** Maintain a second branch, `nvim-plugin`, whose root mirrors the current
+  contents of `nvim/` — generated with `git subtree split --prefix=nvim`. A CI job regenerates
+  and force-pushes that branch on every push to `main` that touches `nvim/**`, so it never
+  drifts from what `main` ships. Users install with `vim.pack.add({ { src =
+  "<repo-url>", version = "nvim-plugin" } })`. Leaves `cli/`/`nvim/` as siblings and every
+  path in CLAUDE.md §2 unchanged — the alternative (promoting `nvim/`'s contents to the
+  repository root) was rejected for touching the documented tree layout, the CI path filters,
+  and both `.claude/skills/` for no benefit beyond this one install path. See
+  [ADR 54](adr/54-nvim-pack-subtree-branch.md).
+
+  **Tests:** No automated test — a generated branch's correctness is that `vim.pack.add`
+  against it actually loads the plugin, which is a manual check (clone the branch fresh, point
+  a scratch Neovim config's `vim.pack.add` at the local path, confirm `:Sln2ccSelectConfig`
+  exists). CI's own verification is structural: the job only runs after the `nvim` test job
+  passes, so a broken plugin never reaches the published branch.
+
 ---
 
 # V1 — Multi-solution and workflow polish
