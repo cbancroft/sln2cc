@@ -15,6 +15,10 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Added
 
+- The Neovim plugin can now be installed with Neovim's built-in `vim.pack.add()`, via a
+  `nvim-plugin` branch CI keeps mirrored to the `nvim/` directory's contents. See
+  "Using the Neovim plugin" in the README.
+
 - A command line: `sln2cc list-configs <solution>` and `sln2cc generate <solution>
   --configuration <name> --platform <name>`, both accepting `--root` to say where `.sln2cc/`
   should live. `--json` switches stdout to a machine-readable envelope for the Neovim plugin;

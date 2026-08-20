@@ -73,3 +73,43 @@ jobs:
           nvim --headless --noplugin -u tests/minimal_init.lua \
             -c "lua require('mini.test').setup()" \
             -c "lua MiniTest.run()"
+
+  # Neovim's built-in `vim.pack.add()` clones a git ref and adds exactly that clone's root to
+  # runtimepath — there's no subdirectory option, so `main` (where nvim/ sits beside cli/) can
+  # never be a vim.pack target directly. This job projects nvim/'s current contents onto a
+  # dedicated `nvim-plugin` branch, whose root *is* what a `vim.pack` install needs. See
+  # docs/adr/54-nvim-pack-subtree-branch.md for the full reasoning.
+  #
+  # Gated on `nvim` passing, so a broken plugin never reaches the branch users install from.
+  # Only runs on pushes to main that actually touch nvim/, to avoid force-pushing an unchanged
+  # branch on every unrelated cli/-only commit.
+  publish-nvim-plugin:
+    needs: nvim
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check whether nvim/ changed in this push
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # BEFORE is all-zeros on a branch's first push (or a force-push with no common
+          # ancestor available) — treat that as "changed" rather than diffing against a commit
+          # that doesn't exist.
+          if [ -z "${BEFORE//0/}" ] || ! git diff --quiet "$BEFORE" "${{ github.sha }}" -- nvim/; then
+            echo "nvim_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nvim_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Split nvim/ onto nvim-plugin and force-push
+        if: steps.changed.outputs.nvim_changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git subtree split --prefix=nvim -b nvim-plugin
+          git push origin nvim-plugin --force
