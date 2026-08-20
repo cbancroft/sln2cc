@@ -16,14 +16,14 @@ local function stub_notify()
   end
 end
 
-describe("msvclsp.config", function()
+describe("sln2cc.config", function()
   local config
 
   before_each(function()
     -- Fresh module state per test: config.lua persists M.options across setup() calls, so a
     -- previous test's state must not leak into the next one's assertions.
-    package.loaded["msvclsp.config"] = nil
-    config = require("msvclsp.config")
+    package.loaded["sln2cc.config"] = nil
+    config = require("sln2cc.config")
   end)
 
   it("resolves to exactly the defaults when setup() is called with no options", function()
@@ -35,10 +35,10 @@ describe("msvclsp.config", function()
   end)
 
   it("overrides a scalar default, leaving siblings untouched", function()
-    local result = config.setup({ bin = "custom-msvclsp" })
+    local result = config.setup({ bin = "custom-sln2cc" })
 
-    MiniTest.expect.equality(result.bin, "custom-msvclsp")
-    MiniTest.expect.equality(config.options.bin, "custom-msvclsp")
+    MiniTest.expect.equality(result.bin, "custom-sln2cc")
+    MiniTest.expect.equality(config.options.bin, "custom-sln2cc")
     MiniTest.expect.equality(config.options.data_dir, config.defaults.data_dir)
     MiniTest.expect.equality(config.options.auto_restart_clangd, config.defaults.auto_restart_clangd)
   end)

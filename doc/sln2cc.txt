@@ -1,18 +1,18 @@
-*msvclsp.txt*   clangd support for Visual Studio solutions
+*sln2cc.txt*   clangd support for Visual Studio solutions
 
 ==============================================================================
-CONTENTS                                                    *msvclsp-contents*
+CONTENTS                                                    *sln2cc-contents*
 
-  1. Introduction ......................... |msvclsp-introduction|
-  2. Setup ................................ |msvclsp-setup|
-  3. First use ............................ |msvclsp-first-use|
-  4. Commands ............................. |msvclsp-commands|
-  5. Keymaps ............................... |msvclsp-keymaps|
-  6. Configuration ........................ |msvclsp-configuration|
-  7. Troubleshooting ...................... |msvclsp-troubleshooting|
+  1. Introduction ......................... |sln2cc-introduction|
+  2. Setup ................................ |sln2cc-setup|
+  3. First use ............................ |sln2cc-first-use|
+  4. Commands ............................. |sln2cc-commands|
+  5. Keymaps ............................... |sln2cc-keymaps|
+  6. Configuration ........................ |sln2cc-configuration|
+  7. Troubleshooting ...................... |sln2cc-troubleshooting|
 
 ==============================================================================
-1. INTRODUCTION                                         *msvclsp-introduction*
+1. INTRODUCTION                                         *sln2cc-introduction*
 
 `clangd` needs a `compile_commands.json` compilation database to know how each
 file in a project is compiled. CMake generates one automatically; Visual
@@ -20,9 +20,9 @@ Studio solutions don't, so C/C++ codebases built with MSBuild get no real
 language support outside Visual Studio itself, short of hand-converting the
 project to CMake.
 
-msvclsp closes that gap with two pieces working together:
+sln2cc closes that gap with two pieces working together:
 
-- A Rust CLI (installed separately, see |msvclsp-setup|) that parses a `.sln`
+- A Rust CLI (installed separately, see |sln2cc-setup|) that parses a `.sln`
   and its `.vcxproj`/`.props` files for one configuration/platform and writes
   a `compile_commands.json`.
 - This plugin, which drives that CLI and points `clangd` at the database it
@@ -30,217 +30,217 @@ msvclsp closes that gap with two pieces working together:
 
 There is no daemon and no LSP proxy: the CLI writes a file, the plugin starts
 `clangd` against it, and `clangd` does all the real language work from there.
-See |msvclsp-troubleshooting| if something in that chain isn't working.
+See |sln2cc-troubleshooting| if something in that chain isn't working.
 
 ==============================================================================
-2. SETUP                                                       *msvclsp-setup*
+2. SETUP                                                       *sln2cc-setup*
 
 Prerequisites ~
-                                                    *msvclsp-prerequisites*
+                                                    *sln2cc-prerequisites*
 - Neovim 0.12+ (project root detection uses |vim.fs.root()|, and clangd
   lifecycle management uses `vim.lsp.config`/`vim.lsp.enable`).
-- The `msvclsp` binary, built and put on your `PATH` (or pointed at
-  explicitly via the |msvclsp-config-bin| option). There is no published
-  release yet; from a checkout of the msvclsp repository: >sh
+- The `sln2cc` binary, built and put on your `PATH` (or pointed at
+  explicitly via the |sln2cc-config-bin| option). There is no published
+  release yet; from a checkout of the sln2cc repository: >sh
     cd cli
     cargo install --path .
 <
   This installs to Cargo's own bin directory (`~/.cargo/bin` by default),
   which most Rust installs already have on `PATH`. If you'd rather not
-  install it, `cargo build` and point |msvclsp-config-bin| at the resulting
-  `target/debug/msvclsp` (or `target/release/msvclsp`) instead.
+  install it, `cargo build` and point |sln2cc-config-bin| at the resulting
+  `target/debug/sln2cc` (or `target/release/sln2cc`) instead.
 - `clangd`, on `PATH`.
 - Real use (actually generating a working database) needs Windows with
   Visual Studio 2019 or 2022 installed, since toolchain discovery depends on
   it. The plugin itself has no such requirement.
 
 Installation ~
-                                                     *msvclsp-installation*
-msvclsp isn't published to a plugin registry yet (see the "Release/
+                                                     *sln2cc-installation*
+sln2cc isn't published to a plugin registry yet (see the "Release/
 distribution strategy" open question in the project's own engineering
 spec), so today's install is a local checkout added to your runtime path.
 With lazy.nvim: >lua
     {
-      dir = "/path/to/msvclsp/nvim",
-      main = "msvclsp",
+      dir = "/path/to/sln2cc/nvim",
+      main = "sln2cc",
       opts = {},
     }
 <
 Or, without a plugin manager, prepend the `nvim/` subdirectory of a checkout
 to `runtimepath` yourself and call `setup()` from your config: >lua
-    vim.opt.runtimepath:prepend("/path/to/msvclsp/nvim")
-    require("msvclsp").setup({})
+    vim.opt.runtimepath:prepend("/path/to/sln2cc/nvim")
+    require("sln2cc").setup({})
 <
 Either way, `setup()` is the only required call — see
-|msvclsp-configuration| for what it accepts. Calling it with no arguments
+|sln2cc-configuration| for what it accepts. Calling it with no arguments
 (`{}`) is enough to get started; every option has a working default.
 
 ==============================================================================
-3. FIRST USE                                               *msvclsp-first-use*
+3. FIRST USE                                               *sln2cc-first-use*
 
 1. Open a source file that lives somewhere under a `.sln`. The plugin finds
    your project root the same way Neovim's built-in LSP clients do —
    walking up from the buffer for a `.git` directory by default
-   (configurable via |msvclsp-config-root_markers|) — and then scans down
+   (configurable via |sln2cc-config-root_markers|) — and then scans down
    from there for `.sln` files (configurable via
-   |msvclsp-config-scan_ignore_dirs| and |msvclsp-config-scan_max_depth|).
+   |sln2cc-config-scan_ignore_dirs| and |sln2cc-config-scan_max_depth|).
    Both are cached; nothing here requires a command.
-2. Run |:MsvclspSelectConfig|. This lists the configuration/platform pairs
+2. Run |:Sln2ccSelectConfig|. This lists the configuration/platform pairs
    your solution declares (e.g. `Debug` + `x64`, `Release` + `x64`, ...) via
    |vim.ui.select()|. Picking one generates `compile_commands.json` for it.
 3. `clangd` attaches automatically once generation finishes — this is
-   |msvclsp-config-auto_restart_clangd|'s default (`true`). No further
+   |sln2cc-config-auto_restart_clangd|'s default (`true`). No further
    command is needed.
-4. Confirm it worked: `:checkhealth msvclsp` should report every check `OK`,
+4. Confirm it worked: `:checkhealth sln2cc` should report every check `OK`,
    and `:LspInfo` should show `clangd` attached to the buffer with your
    `compile_commands.json`'s directory as its root. Completion,
    go-to-definition, and diagnostics should all work, with no "missing
    include" errors from files your project actually builds.
 
 To pick a different configuration/platform later (Debug vs. Release, x64
-vs. Win32), run |:MsvclspSelectConfig| again — it always shows the full
-list, not just the ones you haven't picked. |:MsvclspGenerate| re-runs
+vs. Win32), run |:Sln2ccSelectConfig| again — it always shows the full
+list, not just the ones you haven't picked. |:Sln2ccGenerate| re-runs
 generation for whichever pair is already active, useful after the
 `.sln`/`.vcxproj` files
 themselves change.
 
 ==============================================================================
-4. COMMANDS                                                 *msvclsp-commands*
+4. COMMANDS                                                 *sln2cc-commands*
 
 None of these exist as bindable functions outside a `:` command — call them
-by name, or bind your own keymap to the command (see |msvclsp-keymaps|).
+by name, or bind your own keymap to the command (see |sln2cc-keymaps|).
 Every command notifies a clear error rather than doing nothing if
-`require("msvclsp").setup()` hasn't been called yet, or hasn't succeeded (an
+`require("sln2cc").setup()` hasn't been called yet, or hasn't succeeded (an
 invalid `opts` table notifies and leaves nothing registered as ready — see
-|msvclsp-configuration|).
+|sln2cc-configuration|).
 
-                                                          *:MsvclspGenerate*
-:MsvclspGenerate
+                                                          *:Sln2ccGenerate*
+:Sln2ccGenerate
     Regenerate `compile_commands.json` for the solution's currently active
-    configuration/platform (whatever |:MsvclspSelectConfig| last picked).
-    Nothing picked yet → notifies you to run |:MsvclspSelectConfig| instead
+    configuration/platform (whatever |:Sln2ccSelectConfig| last picked).
+    Nothing picked yet → notifies you to run |:Sln2ccSelectConfig| instead
     of guessing one. Restarts `clangd` afterward if
-    |msvclsp-config-auto_restart_clangd| is on. A no-op regenerate (nothing
+    |sln2cc-config-auto_restart_clangd| is on. A no-op regenerate (nothing
     on disk actually changed) still restarts `clangd` if it isn't already
     attached — e.g. right after a fresh Neovim start.
 
-:MsvclspGenerate!
-    Same as |:MsvclspGenerate|, but forces regeneration even if the CLI's
+:Sln2ccGenerate!
+    Same as |:Sln2ccGenerate|, but forces regeneration even if the CLI's
     own staleness check would otherwise call the database up to date. Reach
     for this after a change the check can't see coming (e.g. an imported
     `.props` file outside the project tree), or if you simply don't trust
     the cache right now. No other command accepts a bang.
 
-                                                     *:MsvclspSelectConfig*
-:MsvclspSelectConfig
+                                                     *:Sln2ccSelectConfig*
+:Sln2ccSelectConfig
     Prompt (via |vim.ui.select()|) for one of the solution's declared
     configuration/platform pairs, marking whichever is currently active, and
     generate `compile_commands.json` for whatever you pick. Cancelling the
     prompt (`<Esc>`) does nothing. Restarts `clangd` afterward under the same
-    rule as |:MsvclspGenerate|.
+    rule as |:Sln2ccGenerate|.
 
-                                                            *:MsvclspRescan*
-:MsvclspRescan
+                                                            *:Sln2ccRescan*
+:Sln2ccRescan
     Re-scan the project tree for `.sln` files and report how many were
     found. Needed after adding, moving, or removing a solution file — the
     scan result is otherwise cached for the life of the session. Does not
     touch clangd or the compilation database.
 
-                                                           *:MsvclspRestart*
-:MsvclspRestart
+                                                           *:Sln2ccRestart*
+:Sln2ccRestart
     Restart `clangd` against whatever `compile_commands.json` was last
-    generated this session (by |:MsvclspGenerate| or |:MsvclspSelectConfig|).
+    generated this session (by |:Sln2ccGenerate| or |:Sln2ccSelectConfig|).
     With nothing generated yet, this is a no-op with a warning rather than
     starting `clangd` with no database. Useful if `clangd` has wedged itself
     without the database actually changing.
 
 Not yet available: a command to switch between multiple solutions found
-under one project root (`:MsvclspSelectSolution`) — the plugin currently
+under one project root (`:Sln2ccSelectSolution`) — the plugin currently
 picks the first one found, alphabetically. See the project's own `docs/
 todos.md` (V1-03) if you're reading this from a checkout and want to track
 that.
 
 ==============================================================================
-5. KEYMAPS                                                   *msvclsp-keymaps*
+5. KEYMAPS                                                   *sln2cc-keymaps*
 
-msvclsp does not bind any keymaps itself — see |msvclsp-commands| for why.
+sln2cc does not bind any keymaps itself — see |sln2cc-commands| for why.
 Something like this in your own config covers all four: >lua
-    vim.keymap.set("n", "<leader>mg", "<cmd>MsvclspGenerate<cr>",
-      { desc = "msvclsp: Generate compile_commands.json" })
-    vim.keymap.set("n", "<leader>mc", "<cmd>MsvclspSelectConfig<cr>",
-      { desc = "msvclsp: Select configuration/platform" })
-    vim.keymap.set("n", "<leader>ms", "<cmd>MsvclspRescan<cr>",
-      { desc = "msvclsp: Rescan for solutions" })
-    vim.keymap.set("n", "<leader>mr", "<cmd>MsvclspRestart<cr>",
-      { desc = "msvclsp: Restart clangd" })
+    vim.keymap.set("n", "<leader>mg", "<cmd>Sln2ccGenerate<cr>",
+      { desc = "sln2cc: Generate compile_commands.json" })
+    vim.keymap.set("n", "<leader>mc", "<cmd>Sln2ccSelectConfig<cr>",
+      { desc = "sln2cc: Select configuration/platform" })
+    vim.keymap.set("n", "<leader>ms", "<cmd>Sln2ccRescan<cr>",
+      { desc = "sln2cc: Rescan for solutions" })
+    vim.keymap.set("n", "<leader>mr", "<cmd>Sln2ccRestart<cr>",
+      { desc = "sln2cc: Restart clangd" })
 <
 Adjust the `<leader>m*` prefix to whatever doesn't collide with your own
 config; nothing about these bindings is load-bearing.
 
 ==============================================================================
-6. CONFIGURATION                                       *msvclsp-configuration*
+6. CONFIGURATION                                       *sln2cc-configuration*
 
-Everything below is a key in the table passed to `require("msvclsp").setup()`
-(`nvim/lua/msvclsp/config.lua`'s `M.defaults`, if you're reading this from a
+Everything below is a key in the table passed to `require("sln2cc").setup()`
+(`nvim/lua/sln2cc/config.lua`'s `M.defaults`, if you're reading this from a
 checkout). An unknown key, or a value of the wrong type, rejects the whole
 call with a `vim.notify` error naming every problem found and leaves nothing
 configured — `setup()` never partially applies a bad table. Calling
 `setup()` more than once always resolves fresh against the defaults below,
 not against whatever an earlier call left in place. >lua
-    require("msvclsp").setup({
+    require("sln2cc").setup({
       -- any subset of the keys below
     })
 <
-                                                          *msvclsp-config-bin*
+                                                          *sln2cc-config-bin*
 bin ~
-    Type: `string`  Default: `"msvclsp"`
-    Path to the `msvclsp` binary. `"msvclsp"` resolves via `PATH`; point
+    Type: `string`  Default: `"sln2cc"`
+    Path to the `sln2cc` binary. `"sln2cc"` resolves via `PATH`; point
     this at an absolute path (e.g. a `cargo build` output under
-    `target/debug/msvclsp`) if you haven't installed it. See
-    |msvclsp-prerequisites|.
+    `target/debug/sln2cc`) if you haven't installed it. See
+    |sln2cc-prerequisites|.
 
-                                                 *msvclsp-config-root_markers*
+                                                 *sln2cc-config-root_markers*
 root_markers ~
     Type: `string[]`  Default: `{ ".git" }`
     Files/directories `vim.fs.root()` looks for while walking up from a
     buffer to find the project root — the same mechanism Neovim's built-in
-    LSP clients use. `.msvclsp/` (generated artifacts) is created here.
+    LSP clients use. `.sln2cc/` (generated artifacts) is created here.
 
-                                                     *msvclsp-config-data_dir*
+                                                     *sln2cc-config-data_dir*
 data_dir ~
-    Type: `string`  Default: `".msvclsp"`
+    Type: `string`  Default: `".sln2cc"`
     Directory name for generated artifacts, intended to be relative to the
     project root. Currently has no effect: nothing in the plugin or the CLI
-    reads this option yet, and the CLI always writes to `.msvclsp/`
+    reads this option yet, and the CLI always writes to `.sln2cc/`
     regardless of what this is set to. Documented for completeness since
     `setup()` accepts and validates it; don't rely on changing it doing
     anything.
 
-                                          *msvclsp-config-auto_restart_clangd*
+                                          *sln2cc-config-auto_restart_clangd*
 auto_restart_clangd ~
     Type: `boolean`  Default: `true`
-    Restart `clangd` automatically after |:MsvclspGenerate| or
-    |:MsvclspSelectConfig| regenerates the database. Turn off if you'd
-    rather restart it yourself (|:MsvclspRestart|) — e.g. to batch several
+    Restart `clangd` automatically after |:Sln2ccGenerate| or
+    |:Sln2ccSelectConfig| regenerates the database. Turn off if you'd
+    rather restart it yourself (|:Sln2ccRestart|) — e.g. to batch several
     configuration switches before reattaching.
 
-                                          *msvclsp-config-scan_ignore_dirs*
+                                          *sln2cc-config-scan_ignore_dirs*
 scan_ignore_dirs ~
     Type: `string[]`
-    Default: `{ ".git", ".msvclsp", "node_modules", "bin", "obj",
+    Default: `{ ".git", ".sln2cc", "node_modules", "bin", "obj",
     "packages", "Debug", "Release", "x64", "x86", "Win32" }`
     Directory names skipped while scanning for `.sln` files below the
     project root. Matched by name anywhere in the tree, not by path — a
     directory named `bin` is skipped everywhere, not just at the root.
 
-                                            *msvclsp-config-scan_max_depth*
+                                            *sln2cc-config-scan_max_depth*
 scan_max_depth ~
     Type: `number`  Default: `6`
     Maximum directory levels descended below the project root while
     scanning for `.sln` files. Bounds worst-case scan cost on a deep or
     unexpectedly large tree.
 
-                                              *msvclsp-config-clangd_cmd*
+                                              *sln2cc-config-clangd_cmd*
 clangd_cmd ~
     Type: `string[]`  Default: `{ "clangd" }`
     Command used to launch `clangd`. Add your own arguments after the
@@ -248,34 +248,34 @@ clangd_cmd ~
     "--header-insertion=never" }`); `--compile-commands-dir=<dir>` is
     always appended automatically and should not be added here.
 
-                                                *msvclsp-config-filetypes*
+                                                *sln2cc-config-filetypes*
 filetypes ~
     Type: `string[]`  Default: `{ "c", "cpp" }`
     Filetypes `clangd` is started for.
 
 ==============================================================================
-7. TROUBLESHOOTING                                   *msvclsp-troubleshooting*
+7. TROUBLESHOOTING                                   *sln2cc-troubleshooting*
 
-Run `:checkhealth msvclsp` first. It checks the five things most likely to
+Run `:checkhealth sln2cc` first. It checks the five things most likely to
 be wrong, in this order, and each failure names what to run or check next:
 
-1. The `msvclsp` binary is present and runnable (its version is reported).
-   Not executable → install it or set |msvclsp-config-bin|
-   (|msvclsp-prerequisites|). Executable but doesn't respond to `--version`
-   → run `msvclsp --version` by hand to see the underlying failure.
+1. The `sln2cc` binary is present and runnable (its version is reported).
+   Not executable → install it or set |sln2cc-config-bin|
+   (|sln2cc-prerequisites|). Executable but doesn't respond to `--version`
+   → run `sln2cc --version` by hand to see the underlying failure.
 2. `clangd` is on `PATH`. Not executable → install it and put it on `PATH`.
 3. The project root was found via a configured root marker, not a silent
    fallback to the current directory. Fell back → open a file inside your
-   solution's tree, or add a marker via |msvclsp-config-root_markers|.
+   solution's tree, or add a marker via |sln2cc-config-root_markers|.
 4. A `.sln` was found under the project root. None found → run
-   |:MsvclspRescan| after adding or moving a solution into the tree, or
-   check |msvclsp-config-scan_ignore_dirs|/|msvclsp-config-scan_max_depth|
+   |:Sln2ccRescan| after adding or moving a solution into the tree, or
+   check |sln2cc-config-scan_ignore_dirs|/|sln2cc-config-scan_max_depth|
    aren't excluding it.
 5. A configuration/platform is selected, and its `compile_commands.json`
-   actually exists on disk. Nothing selected → run |:MsvclspSelectConfig|.
-   Selected but nothing generated → run |:MsvclspGenerate|. The `list-
+   actually exists on disk. Nothing selected → run |:Sln2ccSelectConfig|.
+   Selected but nothing generated → run |:Sln2ccGenerate|. The `list-
    configs` call itself failed → the error names the underlying CLI
-   failure; running the same `msvclsp list-configs <solution> --root <root>`
+   failure; running the same `sln2cc list-configs <solution> --root <root>`
    invocation by hand shows the full output.
 
 If `:checkhealth` is all green and `clangd` still isn't giving you
@@ -283,9 +283,9 @@ completions or diagnostics:
 
 - Check `:LspInfo` — is a `clangd` client attached to the buffer, and does
   its root match your project root?
-- Check the generated `compile_commands.json` under `.msvclsp/` actually
+- Check the generated `compile_commands.json` under `.sln2cc/` actually
   contains an entry for the file you have open. A file the solution doesn't
-  build (excluded from every configuration) won't have one — msvclsp can
+  build (excluded from every configuration) won't have one — sln2cc can
   only cover what MSBuild would actually compile.
 - `clangd`'s own logs (`:LspLog`) often explain a flag it rejected or a
   header it couldn't find, faster than guessing from symptoms.

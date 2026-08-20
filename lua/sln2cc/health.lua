@@ -1,12 +1,12 @@
---- `:checkhealth msvclsp`
+--- `:checkhealth sln2cc`
 ---
 --- Verifies the pieces a user is most likely to get wrong: the binary being present and
 --- runnable, clangd being on PATH, a project root being detectable, a solution having
 --- been selected, and a configuration/platform having been selected with a database on disk.
 
-local config = require("msvclsp.config")
-local discovery = require("msvclsp.discovery")
-local cli = require("msvclsp.cli")
+local config = require("sln2cc.config")
+local discovery = require("sln2cc.discovery")
+local cli = require("sln2cc.cli")
 
 local M = {}
 
@@ -32,7 +32,7 @@ local function check_binary()
   if M._executable(bin) ~= 1 then
     vim.health.error(
       ("%q is not executable"):format(bin),
-      { "Install msvclsp and ensure it is on PATH, or set `bin` in setup()."}
+      { "Install sln2cc and ensure it is on PATH, or set `bin` in setup()."}
     )
     return false
   end
@@ -78,7 +78,7 @@ local function check_solution(root)
   if not solution then
     vim.health.warn(
       "no .sln found under " .. root,
-      { "Run :MsvclspRescan after adding or moving a solution into the project tree."}
+      { "Run :Sln2ccRescan after adding or moving a solution into the project tree."}
     )
     return nil
   end
@@ -100,7 +100,7 @@ local function check_database(solution, root)
 
   if err then
     vim.health.error(
-      "msvclsp list-configs failed: " .. err.message,
+      "sln2cc list-configs failed: " .. err.message,
       {
         ("Run `%s list-configs %s --root %s` by hand to see the underlying failure."):format(
           config.options.bin,
@@ -115,7 +115,7 @@ local function check_database(solution, root)
   if not result.active then
     vim.health.warn(
       "no configuration/platform selected",
-      { "Run :MsvclspSelectConfig."}
+      { "Run :Sln2ccSelectConfig."}
     )
     return
   end
@@ -124,7 +124,7 @@ local function check_database(solution, root)
   if not stat then
     vim.health.warn(
       "configuration selected but no database generated at " .. result.database,
-      { "Run :MsvclspGenerate."}
+      { "Run :Sln2ccGenerate."}
     )
   else
     vim.health.ok("database present: " .. result.database)
@@ -144,7 +144,7 @@ local function check_clangd()
 end
 
 function M.check()
-  vim.health.start("msvclsp")
+  vim.health.start("sln2cc")
 
   local binary_ok = check_binary()
   check_clangd()

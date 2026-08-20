@@ -1,21 +1,21 @@
 --- User command registration.
-local config = require("msvclsp.config")
-local discovery = require("msvclsp.discovery")
-local cli = require("msvclsp.cli")
-local picker = require("msvclsp.picker")
-local lsp = require("msvclsp.lsp")
-local notify = require("msvclsp.notify")
+local config = require("sln2cc.config")
+local discovery = require("sln2cc.discovery")
+local cli = require("sln2cc.cli")
+local picker = require("sln2cc.picker")
+local lsp = require("sln2cc.lsp")
+local notify = require("sln2cc.notify")
 
 local M = {}
 
 --- Commands exposed to the user. Keymaps are left to the user's config rather than
 --- claiming bindings by default.
 M.commands = {
-  MsvclspGenerate = "Regenerate compile_commands.json for the active solution",
-  MsvclspSelectConfig = "Choose the configuration/platform for the active solution",
-  MsvclspRescan = "Re-scan the project tree for .sln files",
-  MsvclspRestart = "Restart clangd against the current compilation database",
-  MsvclspSelectSolution = "Choose the active solution among discovered .sln files"
+  Sln2ccGenerate = "Regenerate compile_commands.json for the active solution",
+  Sln2ccSelectConfig = "Choose the configuration/platform for the active solution",
+  Sln2ccRescan = "Re-scan the project tree for .sln files",
+  Sln2ccRestart = "Restart clangd against the current compilation database",
+  Sln2ccSelectSolution = "Choose the active solution among discovered .sln files"
 }
 
 --- Flipped by init.lua once config.setup() succeeds. Commands registerd before this is 
@@ -23,7 +23,7 @@ M.commands = {
 M._ready = false
 
 --- root -> last database path a generate produced for it. Convenience for 
---- MsvclspRestart. No other module needs it.
+--- Sln2ccRestart. No other module needs it.
 local last_database = {}
 
 -- Marks commands live. Called by init.lua after config.setup().
@@ -47,7 +47,7 @@ local function ensure_ready()
   if M._ready then
     return true
   end
-  vim.notify("msvclsp: call require('msvclsp').setup() first", vim.log.levels.ERROR)
+  vim.notify("sln2cc: call require('sln2cc').setup() first", vim.log.levels.ERROR)
   return false
 end
 
@@ -65,7 +65,7 @@ local function resolve_solution(on_resolved)
 
   if pin_error then
     vim.notify(
-      "msvclsp: pinned solution does not exist: " .. pin_error,
+      "sln2cc: pinned solution does not exist: " .. pin_error,
       vim.log.levels.ERROR
     )
     on_resolved(nil, root)
@@ -74,7 +74,7 @@ local function resolve_solution(on_resolved)
 
   if vanished then
     vim.notify(
-      "msvclsp: active solution no longer exists: " .. vanished .. ". Pick a replacement.",
+      "sln2cc: active solution no longer exists: " .. vanished .. ". Pick a replacement.",
       vim.log.levels.WARN
     )
     discovery.rescan(root)
@@ -85,7 +85,7 @@ local function resolve_solution(on_resolved)
   end
 
   if not solution then
-    vim.notify("msvclsp: no solution found under " .. root, vim.log.levels.WARN)
+    vim.notify("sln2cc: no solution found under " .. root, vim.log.levels.WARN)
     on_resolved(nil, root)
     return
   end
@@ -107,9 +107,9 @@ local function generate_and_restart(solution, root, force)
 
     if not result.active then
       vim.notify(
-        "msvclsp: no configuration selected yet for "
+        "sln2cc: no configuration selected yet for "
         .. solution
-        .. ". Run :MsvclspSelectConfig",
+        .. ". Run :Sln2ccSelectConfig",
         vim.log.levels.WARN
       )
       return
@@ -181,7 +181,7 @@ function M._rescan()
 
   local root = discovery.project_root()
   local found = discovery.rescan(root)
-  vim.notify(("msvclsp: found %d solutions"):format(#found), vim.log.levels.INFO)
+  vim.notify(("sln2cc: found %d solutions"):format(#found), vim.log.levels.INFO)
 end
 
 function M._restart()
@@ -194,18 +194,18 @@ function M._restart()
 end
 
 local handlers = {
-  MsvclspGenerate = M._generate,
-  MsvclspSelectConfig = M._select_config,
-  MsvclspRescan = M._rescan,
-  MsvclspRestart = M._restart,
-  MsvclspSelectSolution = M._select_solution,
+  Sln2ccGenerate = M._generate,
+  Sln2ccSelectConfig = M._select_config,
+  Sln2ccRescan = M._rescan,
+  Sln2ccRestart = M._restart,
+  Sln2ccSelectSolution = M._select_solution,
 }
 
 --- Registers every command in M.commands
 function M.register()
   for name, desc in pairs(M.commands) do
     local attrs = { desc = desc }
-    if name == "MsvclspGenerate" then
+    if name == "Sln2ccGenerate" then
       attrs.bang = true
     end
     vim.api.nvim_create_user_command(name, handlers[name], attrs)

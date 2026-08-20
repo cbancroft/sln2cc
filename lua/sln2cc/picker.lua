@@ -1,7 +1,7 @@
 --- `vim.ui.select` wrappers for choosing a solution and a configuration/platform.
-local cli = require("msvclsp.cli")
-local discovery = require("msvclsp.discovery")
-local notify = require("msvclsp.notify")
+local cli = require("sln2cc.cli")
+local discovery = require("sln2cc.discovery")
+local notify = require("sln2cc.notify")
 
 local M = {}
 
@@ -36,7 +36,7 @@ function M.pick_config(solution, root, on_choice)
     notify.notify_warnings(warnings)
 
     if #configs.available == 0 then
-      vim.notify("msvclsp: no configurations declared in " .. solution, vim.log.levels.WARN)
+      vim.notify("sln2cc: no configurations declared in " .. solution, vim.log.levels.WARN)
       on_choice(nil, nil)
       return
     end
@@ -52,7 +52,7 @@ function M.pick_config(solution, root, on_choice)
         return
       end
 
-      vim.notify("msvclsp: generating compile_commands.json...", vim.log.levels.INFO)
+      vim.notify("sln2cc: generating compile_commands.json...", vim.log.levels.INFO)
       -- Forced: the CLI's mtime-based staleness check knows nothing about which
       -- configuration/platform was requested, so switching to a different one with no file
       -- changes would otherwise silently reuse the old database.
@@ -77,7 +77,7 @@ end
 function M.pick_solution(root, on_choice)
   local solutions = discovery.solutions(root)
   if #solutions == 0 then
-    vim.notify("msvclsp: no solutions found under " .. root, vim.log.levels.WARN)
+    vim.notify("sln2cc: no solutions found under " .. root, vim.log.levels.WARN)
     on_choice(nil)
     return
   end
