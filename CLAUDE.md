@@ -46,6 +46,7 @@ See [docs/engineering_spec.md](docs/engineering_spec.md) for the full design, an
 sln2cc/
 ├── CLAUDE.md                     This file.
 ├── README.md                     User-facing intro, build and test instructions.
+├── LICENSE                       MIT. Mirrored into cli/LICENSE so `cargo package` includes it.
 ├── .gitignore                    Ignores cli/target/, generated .sln2cc/ dirs, and .plans/.
 ├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), build (Windows), MSRV check, plugin tests.
 ├── .claude/skills/               Claude Code skills for this repo's own workflow.
@@ -54,6 +55,8 @@ sln2cc/
 │
 ├── cli/                          Rust CLI binary. All cargo commands run from here.
 │   ├── Cargo.toml                Four deps (see section 5), MSRV 1.85. Cargo.lock is committed.
+│   ├── README.md                 crates.io-facing readme (`readme` must stay inside the package root).
+│   ├── LICENSE                   Mirror of the root LICENSE; `cargo package` needs it in-tree.
 │   ├── src/
 │   │   ├── main.rs               Thin entry point: arg parsing and dispatch only.
 │   │   ├── lib.rs                Public API surface; Result alias, ConfigPlatform.
