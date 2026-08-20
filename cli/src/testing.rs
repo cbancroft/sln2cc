@@ -25,7 +25,7 @@ impl TempTree {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
 
         let path = std::env::temp_dir().join(format!(
-            "msvclsp-{}-{name}-{}",
+            "sln2cc-{}-{name}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

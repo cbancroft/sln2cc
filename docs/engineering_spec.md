@@ -1,6 +1,6 @@
 # Engineering Spec
 
-This document defines the technical requirements for *how* MSVC LSP is built: tech stack,
+This document defines the technical requirements for *how* sln2cc is built: tech stack,
 architecture and system design, engineering requirements, and testing strategy. It implements the
 product intent described in [project_spec.md](project_spec.md) and [brainstorm.md](brainstorm.md).
 Several details remain open and are tracked at the end of this document rather than guessed at.
@@ -64,7 +64,7 @@ import.
 last-used selection per solution, and dependency mtimes — a few KB of key-value data. Against that,
 `rusqlite` on Windows effectively requires the `bundled` feature, because there is no system SQLite
 dev library to link; `bundled` compiles the SQLite C amalgamation via `cc`, making a working C
-toolchain a hard requirement to build msvclsp at all. That is a poor trade when building from source
+toolchain a hard requirement to build sln2cc at all. That is a poor trade when building from source
 is a live distribution option and the plugin's users are Neovim users, not necessarily C developers.
 
 *Tradeoffs accepted:* SQLite would have given transactional writes for free, so two Neovim
@@ -108,7 +108,7 @@ clear cargo message rather than a confusing compile error.
 edition 2021 needs only Rust 1.56, so staying on it would have locked out nobody — but it would
 have protected nobody either, since `clap` sets the real gate. The lever for actually supporting
 older toolchains is `clap` 4.5, which holds MSRV 1.74 across all its patch releases; that was
-rejected because msvclsp only *runs* on Windows, where Rust arrives via rustup rather than a distro
+rejected because sln2cc only *runs* on Windows, where Rust arrives via rustup rather than a distro
 package, so the population stranded between 1.74 and 1.85 is small and `rustup update` fixes it.
 Migrating while the codebase was still stubs made the change free; the cost only grows once the
 evaluator exists. Note that edition 2024 also selects style edition 2024, which changes `use`
@@ -462,7 +462,7 @@ Rough module breakdown implied by the parsing pipeline:
   sorting happens in `build` itself — determinism is inherited from the `Vec`-based structures ADR 12
   already made stable end to end. See [ADR 18](adr/18-compdb-entry-assembly.md). `compdb::write`
   (serializing and persisting the result) is MVP-17.
-- **Persistence (JSON state file)** — a single file, `.msvclsp/state.json`, holding a schema
+- **Persistence (JSON state file)** — a single file, `.sln2cc/state.json`, holding a schema
   `version` and a `solutions` map keyed by each solution's path *relative to the workspace
   root* (root-relative rather than absolute so relocating the whole workspace — a clone to a
   new path, a drive letter change — doesn't orphan every entry; `..`-climbing when the
@@ -500,14 +500,14 @@ Rough module breakdown implied by the parsing pipeline:
 Settled by MVP-03; see [ADR 03](adr/03-cli-surface-and-json-contract.md) for the reasoning.
 
 ```
-msvclsp [--json] [-v] <COMMAND>
+sln2cc [--json] [-v] <COMMAND>
 
 Commands:
   list-configs  List the configuration/platform pairs a solution declares
   generate      Generate compile_commands.json for one configuration/platform
 
-msvclsp list-configs <SOLUTION> [--root <DIR>]
-msvclsp generate <SOLUTION> --configuration <NAME> --platform <NAME> [--root <DIR>] [--force]
+sln2cc list-configs <SOLUTION> [--root <DIR>]
+sln2cc generate <SOLUTION> --configuration <NAME> --platform <NAME> [--root <DIR>] [--force]
 ```
 
 The plugin always spells flags in full; `-c` and `-p` exist for invoking the tool by hand.
@@ -515,7 +515,7 @@ The plugin always spells flags in full; `-c` and `-p` exist for invoking the too
 | Argument | Applies to | Meaning |
 | -------- | ---------- | ------- |
 | `<SOLUTION>` | both | Required positional; the `.sln` to read. |
-| `--root <DIR>` | both | Project root to create `.msvclsp/` under. Defaults to the solution's own directory. The plugin passes the root it detected from Neovim's LSP root markers, which often is not where the solution lives. |
+| `--root <DIR>` | both | Project root to create `.sln2cc/` under. Defaults to the solution's own directory. The plugin passes the root it detected from Neovim's LSP root markers, which often is not where the solution lives. |
 | `--configuration <NAME>`, `-c` | `generate` | Required. Separate from `--platform` so no shell has to quote a pipe character. |
 | `--platform <NAME>`, `-p` | `generate` | Required. |
 | `--force` | `generate` | Regenerate even when the staleness cache is current. |
@@ -557,12 +557,12 @@ above owns the *channel*; this owns what travels on it.
 A `Diagnostic` carries a severity, a message, and the file and line it is attributable to. There are
 two severities, and which one a finding gets is decided by a single question:
 
-> **Could msvclsp's failure to model this have changed the compiler flags?**
+> **Could sln2cc's failure to model this have changed the compiler flags?**
 
 | Severity | Wire string | Meaning |
 | -------- | ----------- | ------- |
 | `Warning` | `"warning"` | Yes. Something was skipped, dropped, or left unresolved, and clangd may now be told something the build never says. |
-| `Note` | `"note"` | No. The construct is unusual, or msvclsp did exactly what MSBuild would have. Worth mentioning only because silence is how a real problem gets missed. |
+| `Note` | `"note"` | No. The construct is unusual, or sln2cc did exactly what MSBuild would have. Worth mentioning only because silence is how a real problem gets missed. |
 
 Anything *fatal* is an [`Error`](#error-handling) rather than a third level. Both severities reach
 stderr and both ride in the envelope: notes are not suppressed by default and not held behind `-v`,
@@ -707,7 +707,7 @@ belongs to `main.rs`.
   `scan_max_depth` levels, both configurable with defaults in `config.lua`. Both `M.solutions` and
   `M.active_solution` scan and populate their cache lazily, on first call, so a command requesting
   a solution for the first time in a session triggers the scan inline rather than requiring a
-  prior `:MsvclspRescan` — see [ADR 47](adr/47-nvim-inline-discovery.md). Results are cached per
+  prior `:Sln2ccRescan` — see [ADR 47](adr/47-nvim-inline-discovery.md). Results are cached per
   project root; `M.rescan(root?)` is the single invalidation entry point, kept independent of
   `M.project_root()`'s own per-buffer cache. `M.active_solution(root?)` checks
   `config.options.pinned_solution` first — when set, it wins unconditionally over any persisted
@@ -728,8 +728,8 @@ belongs to `main.rs`.
   `M.solutions(root)` via `vim.ui.select` (marking the active one, mirroring `pick_config`'s own
   marker), and on selection calls the setter before invoking `on_choice(chosen)`. It does not
   itself regenerate `compile_commands.json` or restart clangd; `commands.lua`'s
-  `MsvclspSelectSolution` handler does that immediately after, through the same
-  `generate_and_restart(solution, root, force)` helper `MsvclspGenerate` calls (threading its own
+  `Sln2ccSelectSolution` handler does that immediately after, through the same
+  `generate_and_restart(solution, root, force)` helper `Sln2ccGenerate` calls (threading its own
   `force` through from `--bang`) — `list_configs` for the newly chosen solution specifically
   (never reusing whichever configuration was active for the solution being switched away from),
   `generate` called unforced when an active configuration is found, then `maybe_restart`. No
@@ -765,7 +765,7 @@ belongs to `main.rs`.
   `health.lua`'s) is unaffected. See [ADR 34](adr/34-nvim-cli-invocation.md) and
   [ADR 50](adr/50-nvim-error-surfacing.md).
 - Error and warning presentation: `notify.lua`'s `M.notify_error(err)` and
-  `M.notify_warnings(warnings)` are the plugin's only renderers for a `Msvclsp.CliError` and an
+  `M.notify_warnings(warnings)` are the plugin's only renderers for a `Sln2cc.CliError` and an
   envelope's `warnings` array, respectively. `M.notify_error` always notifies at `ERROR`,
   appending a kind-specific one-line remedy from `M.REMEDIES` (one row per `ErrorKind` wire
   string) when `err.kind` has one; `err.kind == nil` (a spawn failure, or a `clap` usage error)
@@ -777,7 +777,7 @@ belongs to `main.rs`.
   `cli.list_configs`/`cli.generate`; `health.lua`'s `:checkhealth` status check is deliberately
   untouched. See [ADR 50](adr/50-nvim-error-surfacing.md).
 - Compilation database generation: invoke the CLI to (re)generate `compile_commands.json` into
-  `.msvclsp/<solution-name>-<hash>/`.
+  `.sln2cc/<solution-name>-<hash>/`.
 - `clangd` lifecycle: `lsp.lua`'s `M.start(database, root)` / `M.restart(database, root)` point
   `clangd` explicitly at `database` — the absolute `compile_commands.json` path from `generate`'s
   JSON envelope (`GenerateResult.database`, `cli.rs`); the plugin never constructs this path
@@ -802,39 +802,39 @@ belongs to `main.rs`.
   (mirrors `cli.lua`'s `M._system`, ADR 34). `root` and `database` are threaded in explicitly by
   the caller — `lsp.lua` depends on `config.lua` only, not `discovery.lua`, the same pattern
   `cli.lua`/`picker.lua` already establish. See [ADR 36](adr/36-nvim-clangd-lifecycle.md).
-- User commands: `commands.lua`'s `M.register()` creates `:MsvclspGenerate`,
-  `:MsvclspSelectConfig`, `:MsvclspRescan`, `:MsvclspRestart`, and `:MsvclspSelectSolution`.
-  `:MsvclspSelectSolution` delegates to `picker.pick_solution(root, on_choice)`; on a successful
+- User commands: `commands.lua`'s `M.register()` creates `:Sln2ccGenerate`,
+  `:Sln2ccSelectConfig`, `:Sln2ccRescan`, `:Sln2ccRestart`, and `:Sln2ccSelectSolution`.
+  `:Sln2ccSelectSolution` delegates to `picker.pick_solution(root, on_choice)`; on a successful
   pick it clears `commands.lua`'s own per-root `last_database` cache, since a cached database path
-  belongs to the previous solution and would otherwise leak into a later `:MsvclspRestart`. It does
+  belongs to the previous solution and would otherwise leak into a later `:Sln2ccRestart`. It does
   not regenerate or restart clangd itself — see [ADR 45](adr/45-nvim-solution-picker.md).
   Registration happens
-  unconditionally from `plugin/msvclsp.lua` at Neovim startup, not from `setup()` — cheap enough
+  unconditionally from `plugin/sln2cc.lua` at Neovim startup, not from `setup()` — cheap enough
   (five `nvim_create_user_command` calls, no filesystem access) not to violate "never scan the
   filesystem at startup." Each handler checks an internal `M._ready` flag first, flipped by
   `init.lua` once `config.setup()` succeeds; before that, invoking any command notifies a specific
   error rather than either failing silently or being absent from command completion.
-  `MsvclspGenerate` regenerates using `list-configs`' `.active` pair rather than prompting — no
-  active configuration yet notifies the user to run `:MsvclspSelectConfig` instead of guessing one.
-  `MsvclspGenerate` and `MsvclspSelectConfig` both resolve the active solution through a shared
+  `Sln2ccGenerate` regenerates using `list-configs`' `.active` pair rather than prompting — no
+  active configuration yet notifies the user to run `:Sln2ccSelectConfig` instead of guessing one.
+  `Sln2ccGenerate` and `Sln2ccSelectConfig` both resolve the active solution through a shared
   `resolve_solution(on_resolved)` helper; if `discovery.active_solution` reports the resolved path
   has vanished (its `.sln` deleted or moved away), `resolve_solution` clears the stale choice,
   rescans, and reprompts via `picker.pick_solution` before continuing the original command with
   whatever gets picked — rather than failing on a raw CLI file-not-found error or silently
-  substituting a different solution. `MsvclspRestart` is unaffected: it never calls
+  substituting a different solution. `Sln2ccRestart` is unaffected: it never calls
   `resolve_solution`, replaying `last_database[root]` directly. See
   [ADR 48](adr/48-nvim-vanished-solution-recovery.md).
-  `MsvclspGenerate!` (the bang form) passes `--force` through to bypass the CLI's own staleness
+  `Sln2ccGenerate!` (the bang form) passes `--force` through to bypass the CLI's own staleness
   cache; the other three commands don't accept a bang. See
   [ADR 41](adr/41-nvim-force-regenerate.md).
-  `MsvclspGenerate`/`MsvclspSelectConfig` both call `lsp.restart` when
+  `Sln2ccGenerate`/`Sln2ccSelectConfig` both call `lsp.restart` when
   `config.options.auto_restart_clangd` is set, gated on the option alone rather than
   `GenerateResult.regenerated` — a no-op generate still means clangd should end up attached, e.g. a
-  fresh session with no client running yet. `MsvclspRestart` has no generate call of its own, so
+  fresh session with no client running yet. `Sln2ccRestart` has no generate call of its own, so
   `commands.lua` caches the database path from the last successful generate/select-config per root;
   with nothing cached it calls `lsp.restart(nil, root)` directly, relying on that call's own
   warning rather than duplicating it. See [ADR 37](adr/37-nvim-user-commands.md).
-- `:checkhealth msvclsp`: `health.lua`'s `M.check()` runs five independent checks — the binary
+- `:checkhealth sln2cc`: `health.lua`'s `M.check()` runs five independent checks — the binary
   present and runnable (reporting its version), `clangd` on `PATH`, a project root detectable via a
   configured marker (distinct from silently falling back to the current directory), a solution
   found, and a configuration/platform selected with its `compile_commands.json` present on disk —
@@ -850,9 +850,9 @@ belongs to `main.rs`.
 
 ## Storage Layout
 
-- `.msvclsp/` at the project root (project root = same root markers Neovim's LSP clients use; see
+- `.sln2cc/` at the project root (project root = same root markers Neovim's LSP clients use; see
   [ADR 28](adr/28-nvim-root-detection.md) for how the plugin resolves it).
-- Namespaced by solution: `.msvclsp/<solution-name>-<hash>/compile_commands.json`, where
+- Namespaced by solution: `.sln2cc/<solution-name>-<hash>/compile_commands.json`, where
   `<solution-name>` is the `.sln` file's stem and `<hash>` is the low 32 bits of a 64-bit FNV-1a
   hash of the lowercased, lexically-normalized absolute path of the directory containing the
   `.sln`, formatted as 8 lowercase hex digits (e.g. `App-abcd1234`). This disambiguates two
@@ -861,32 +861,32 @@ belongs to `main.rs`.
   deferred, since nothing implements the old bare-name scheme yet).
   - **FNV-1a, hand-rolled, not `std::collections::hash_map::DefaultHasher`.** `DefaultHasher`'s
     documented algorithm is explicitly unspecified "over releases" — a future Rust/std upgrade
-    could silently change every hash, orphaning every existing `.msvclsp` directory on the next
+    could silently change every hash, orphaning every existing `.sln2cc` directory on the next
     rebuild. FNV-1a is small enough to own directly (consistent with the stdlib-first dependency
     policy in "Dependency Decisions" above) and its output never changes underneath the project.
   - **Lowercased before hashing**, via Unicode-aware `.to_lowercase()` rather than
     `.to_ascii_lowercase()` since a path can contain non-ASCII characters. Windows paths are
     case-preserving but the filesystem is case-insensitive; without folding, `C:\Code\App` and
     `C:\CODE\APP` — the same directory — would hash to different suffixes and silently split one
-    solution's artifacts across two `.msvclsp` entries depending on invocation casing.
+    solution's artifacts across two `.sln2cc` entries depending on invocation casing.
   - **A collision is detected and errors loudly**, never silently shared or overwritten, per
-    "never silently guess" (CLAUDE.md §3). Each `.msvclsp/<solution-name>-<hash>/` carries a small
+    "never silently guess" (CLAUDE.md §3). Each `.sln2cc/<solution-name>-<hash>/` carries a small
     marker file, `.source`, recording the absolute (lowercased, normalized) directory it was
     created for; before writing, an existing directory's marker is checked against the current
     one, and a mismatch is a specific, actionable error naming both directories rather than a
     silent overwrite. See [ADR 19](adr/19-hashed-storage-directory-write.md).
-  - **A moved solution directory orphans its old `.msvclsp/<solution-name>-<hash>/` with no
+  - **A moved solution directory orphans its old `.sln2cc/<solution-name>-<hash>/` with no
     cleanup**, accepted as a known v1 cost consistent with the state file's own already-accepted
     "last-writer-wins, no locking" tradeoff (see `db.rs`'s module doc). Not addressed until it
     proves to be a real problem.
-- A single JSON state file, `.msvclsp/state.json`, holds discovery cache, per-solution
+- A single JSON state file, `.sln2cc/state.json`, holds discovery cache, per-solution
   configuration/platform state, and file modification timestamps. Keyed by each solution's path
-  *relative to the workspace root* (the `.msvclsp` directory's own parent), independent of the
+  *relative to the workspace root* (the `.sln2cc` directory's own parent), independent of the
   hash-suffixed directory naming above — `db.rs` scopes its API by `&Path`, not by name, and
   derives the root itself from where it was opened rather than taking it as a separate
   parameter. See [ADR 20](adr/20-state-file-shape.md) for the full shape and the reasoning
   behind root-relative (rather than absolute) keys.
-- A second, plugin-owned file, `.msvclsp/nvim-solution.json`, holds `{"solution": "<absolute
+- A second, plugin-owned file, `.sln2cc/nvim-solution.json`, holds `{"solution": "<absolute
   path>"}` — the solution `discovery.lua`'s `M.pick_solution` last chose for this root. Unlike
   `state.json`, this file is entirely Neovim's own (never read or written by the CLI); a missing
   or corrupt file degrades to "nothing remembered" rather than an error, since nothing downstream
@@ -926,7 +926,7 @@ MSBuild-evaluation surface area bounded.
   pipeline can resolve those without an actual VS install, and CI runs this suite on Linux too. The
   shared golden-comparison harness (`cli/tests/support::assert_matches_golden`) normalizes each
   fixture's own absolute path and path-separator style out of the comparison, so one checked-in
-  golden file is byte-identical across machines and platforms; set `MSVCLSP_UPDATE_GOLDEN=1` to
+  golden file is byte-identical across machines and platforms; set `SLN2CC_UPDATE_GOLDEN=1` to
   regenerate one by hand. See [ADR 25](adr/25-fixture-simple-and-golden-harness.md).
 - **Manual end-to-end verification against real `clangd`** for now: actually launching `clangd`
   against generated output and confirming completion/diagnostics behave correctly is a manual smoke

@@ -61,7 +61,7 @@ pub struct Deferred {
 /// A `Condition` or `<Import>` this evaluator cannot resolve is fatal for a file outside it (a
 /// user's own project or property sheet), but merely skipped-with-a-warning for a file underneath
 /// it — Microsoft's own `.props`/`.targets` use constructs well outside the supported subset, and
-/// msvclsp does not need what they would have computed anyway: MVP-15 resolves toolset include
+/// sln2cc does not need what they would have computed anyway: MVP-15 resolves toolset include
 /// paths directly rather than by evaluating MSBuild's own resolution logic. See MVP-36 and
 /// [ADR 32](../../../docs/adr/32-toolchain-unsupported-construct-policy.md).
 ///

@@ -4,7 +4,7 @@
 --- If no cache exists when a solution is first needed, discovery runs inline so selection
 --- stays a single user action.
 
-local config = require("msvclsp.config")
+local config = require("sln2cc.config")
 
 local M = {}
 
@@ -19,7 +19,7 @@ local active_cache = {}
 
 local SOLUTION_STATE_FILE = "nvim-solution.json"
 
---- Path to the persisted active solution file for `root`, under its own `.msvclsp` equivalent data directory.
+--- Path to the persisted active solution file for `root`, under its own `.sln2cc` equivalent data directory.
 local function persisted_path(root)
   return root .. '/' .. config.options.data_dir .. '/' .. SOLUTION_STATE_FILE
 end
@@ -109,7 +109,7 @@ local function write_persisted(root, solution)
   vim.fn.mkdir(dir, "p")
   local fd = io.open(persisted_path(root), "w")
   if not fd then
-    vim.notify("msvclsp: could not persist the selected solution for " .. root, vim.log.levels.WARN)
+    vim.notify("sln2cc: could not persist the selected solution for " .. root, vim.log.levels.WARN)
     return
   end
   fd:write(vim.json.encode( { solution = solution }))

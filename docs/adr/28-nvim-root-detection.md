@@ -4,12 +4,12 @@
 - **Date:** 2026-08-11
 - **Issue:** [MVP-26 — Project root detection](../todos.md#neovim-plugin)
   (`feat/nvim-root-detection`)
-- **Affects:** `nvim/lua/msvclsp/discovery.lua`, `nvim/tests/test_discovery.lua`, `README.md`
+- **Affects:** `nvim/lua/sln2cc/discovery.lua`, `nvim/tests/test_discovery.lua`, `README.md`
 
 ## Problem
 
 `discovery.lua` was four functions that all `error("not yet implemented")`. Every later
-command needs a project root before it can locate `.msvclsp/` or scan for `.sln` files, and
+command needs a project root before it can locate `.sln2cc/` or scan for `.sln` files, and
 the todos entry specifies the shape: walk upward from the current buffer for a configured root
 marker — "the same marker convention Neovim's LSP clients already use" — falling back to the
 current working directory when nothing matches, caching per buffer since this runs on every
@@ -69,7 +69,7 @@ Left as an open question below rather than silently decided either way.
 - The plugin no longer runs on Neovim 0.9–0.11. Nothing else in the codebase currently depends
   on that range, so the cost is contained to the README's stated floor.
 - **Open question:** whether the per-buffer root cache and MVP-27's solutions cache should share
-  an invalidation mechanism (e.g. both cleared by the same `:MsvclspRescan`) or stay independent,
+  an invalidation mechanism (e.g. both cleared by the same `:Sln2ccRescan`) or stay independent,
   since a root only changes if the user opens a buffer belonging to a different project — an
   event `discovery.lua` has no way to observe today. Whoever implements MVP-27's `M.rescan()`
   should decide this explicitly rather than inherit it by omission.

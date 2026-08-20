@@ -150,11 +150,11 @@ pub fn run(
 fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<SolutionConfigs> {
     let solution = sln::parse_sln(&args.solution, reporter)?;
 
-    // `db::Store::open` wants `.msvclsp` itself, not a per-solution hashed subdirectory.
-    let msvclsp_dir = args.root().join(".msvclsp");
-    let store = db::Store::open(&msvclsp_dir)?;
+    // `db::Store::open` wants `.sln2cc` itself, not a per-solution hashed subdirectory.
+    let sln2cc_dir = args.root().join(".sln2cc");
+    let store = db::Store::open(&sln2cc_dir)?;
     let active = store.active_config(&solution.path)?;
-    let output_dir = compdb::resolve_output_dir(&msvclsp_dir, &solution.path)?;
+    let output_dir = compdb::resolve_output_dir(&sln2cc_dir, &solution.path)?;
 
     Ok(SolutionConfigs {
         solution: solution.path,
@@ -180,9 +180,9 @@ fn generate(
         });
     }
 
-    let msvclsp_dir = args.root().join(".msvclsp");
-    let mut store = db::Store::open(&msvclsp_dir)?;
-    let output_dir = compdb::resolve_output_dir(&msvclsp_dir, &solution.path)?;
+    let sln2cc_dir = args.root().join(".sln2cc");
+    let mut store = db::Store::open(&sln2cc_dir)?;
+    let output_dir = compdb::resolve_output_dir(&sln2cc_dir, &solution.path)?;
     let database = output_dir.join("compile_commands.json");
 
     let regenerated = if !force && store.is_up_to_date(&solution.path)? {
@@ -222,10 +222,10 @@ fn generate(
     })
 }
 
-/// Main CLI commands for `msvclsp`
+/// Main CLI commands for `sln2cc`
 #[derive(Debug, PartialEq, Parser)]
 #[command(
-    name = "msvclsp",
+    name = "sln2cc",
     version,
     about = "Generate a clangd compilation database from a Visual Studio Solution",
     long_about = None
@@ -256,7 +256,7 @@ pub struct Cli {
 /// The subcommands for the plugin.
 ///
 /// There is no `discover`. Locating a solution is the Neovim plugin's job
-/// (`nvim/lua/msvclsp/discovery.lua`) — see [ADR 44](../../docs/adr/44-drop-cli-side-discovery.md).
+/// (`nvim/lua/sln2cc/discovery.lua`) — see [ADR 44](../../docs/adr/44-drop-cli-side-discovery.md).
 /// The CLI is always handed a solution path, never asked to find one.
 #[derive(Debug, PartialEq, Subcommand)]
 pub enum Command {
@@ -315,7 +315,7 @@ pub struct SolutionArgs {
     /// Path to the `.sln` file to read.
     pub solution: PathBuf,
 
-    /// Project root to write the `.msvclsp/` under. Defaults to solution directory.
+    /// Project root to write the `.sln2cc/` under. Defaults to solution directory.
     ///
     /// The plugin passes the root it detected from Neovim's LSP root markers, which
     /// is often not the directory holding the solution.
@@ -324,7 +324,7 @@ pub struct SolutionArgs {
 }
 
 impl SolutionArgs {
-    /// The directory `.msvclsp/` is created under.
+    /// The directory `.sln2cc/` is created under.
     ///
     /// Falling back to the solutions directory keeps things
     /// functional even if a root isn't specified. `Path::parent` yields
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn parses_list_configs() {
-        let cli = Cli::try_parse_from(["msvclsp", "list-configs", "app.sln"]).expect("parses");
+        let cli = Cli::try_parse_from(["sln2cc", "list-configs", "app.sln"]).expect("parses");
 
         assert_eq!(
             cli.command,
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn parses_generate_with_every_flag() {
         let cli = Cli::try_parse_from([
-            "msvclsp",
+            "sln2cc",
             "generate",
             "app.sln",
             "--configuration",
@@ -507,9 +507,9 @@ mod tests {
 
     #[test]
     fn global_flags_parse_in_either_position() {
-        let before = Cli::try_parse_from(["msvclsp", "--json", "-v", "list-configs", "app.sln"])
+        let before = Cli::try_parse_from(["sln2cc", "--json", "-v", "list-configs", "app.sln"])
             .expect("parses");
-        let after = Cli::try_parse_from(["msvclsp", "list-configs", "app.sln", "--json", "-v"])
+        let after = Cli::try_parse_from(["sln2cc", "list-configs", "app.sln", "--json", "-v"])
             .expect("parses");
 
         assert_eq!(before, after);
@@ -521,10 +521,10 @@ mod tests {
     /// it builds any.
     #[test]
     fn both_subcommands_accept_json() {
-        assert!(Cli::try_parse_from(["msvclsp", "list-configs", "a.sln", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["sln2cc", "list-configs", "a.sln", "--json"]).is_ok());
         assert!(
             Cli::try_parse_from([
-                "msvclsp",
+                "sln2cc",
                 "generate",
                 "a.sln",
                 "--configuration",
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn matches_the_argv_cli_lua_builds() {
         let cli = Cli::try_parse_from([
-            "msvclsp",
+            "sln2cc",
             "list-configs",
             "app.sln",
             "--root",
@@ -561,7 +561,7 @@ mod tests {
         assert!(cli.json);
 
         let cli = Cli::try_parse_from([
-            "msvclsp",
+            "sln2cc",
             "generate",
             "app.sln",
             "--configuration",
@@ -588,9 +588,9 @@ mod tests {
     #[test]
     fn missing_required_arguments_are_usage_errors() {
         let cases: [&[&str]; 3] = [
-            &["msvclsp", "list-configs"],
-            &["msvclsp", "generate", "a.sln", "--platform", "x64"],
-            &["msvclsp", "generate", "a.sln", "--configuration", "Debug"],
+            &["sln2cc", "list-configs"],
+            &["sln2cc", "generate", "a.sln", "--platform", "x64"],
+            &["sln2cc", "generate", "a.sln", "--configuration", "Debug"],
         ];
 
         for args in cases {
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn generate_propagates_a_missing_solution() {
         let cli = Cli::try_parse_from([
-            "msvclsp",
+            "sln2cc",
             "generate",
             "no-such-solution.sln",
             "--configuration",
@@ -646,7 +646,7 @@ mod tests {
     /// nonexistent solution must surface as `SolutionNotFound`, not the retired `Unimplemented`.
     #[test]
     fn list_configs_propagates_a_missing_solution() {
-        let cli = Cli::try_parse_from(["msvclsp", "list-configs", "no-such-solution.sln"])
+        let cli = Cli::try_parse_from(["sln2cc", "list-configs", "no-such-solution.sln"])
             .expect("parses");
         let mut reporter = Reporter::new(false);
         let toolchain = fake_toolchain();
@@ -742,10 +742,10 @@ mod tests {
     fn subcommand_names_match_the_command_line() {
         let name = |args: &[&str]| Cli::try_parse_from(args).expect("parses").command.name();
 
-        assert_eq!(name(&["msvclsp", "list-configs", "a.sln"]), "list-configs");
+        assert_eq!(name(&["sln2cc", "list-configs", "a.sln"]), "list-configs");
         assert_eq!(
             name(&[
-                "msvclsp",
+                "sln2cc",
                 "generate",
                 "a.sln",
                 "--configuration",
@@ -760,7 +760,7 @@ mod tests {
     #[test]
     fn result_serializes_as_a_bare_object() {
         let outcome = Outcome::Generate(GenerateResult {
-            database: PathBuf::from(r"C:\proj\.msvclsp\app\compile_commands.json"),
+            database: PathBuf::from(r"C:\proj\.sln2cc\app\compile_commands.json"),
             regenerated: true,
         });
 
@@ -770,7 +770,7 @@ mod tests {
                 "schema_version": 1,
                 "has_error": false,
                 "result": {
-                    "database": r"C:\proj\.msvclsp\app\compile_commands.json",
+                    "database": r"C:\proj\.sln2cc\app\compile_commands.json",
                     "regenerated": true,
                 },
                 "error": null,

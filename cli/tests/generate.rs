@@ -1,7 +1,7 @@
 //! Fixture-driven integration tests, plus tests for `generate`'s own pipeline behavior against a
 //! hand-authored temp-tree project.
 //!
-//! Everything here calls [`msvclsp::cli::run`] directly with a [`msvclsp::toolchain::
+//! Everything here calls [`sln2cc::cli::run`] directly with a [`sln2cc::toolchain::
 //! FakeToolchain`] rather than spawning the compiled binary — `generate` now discovers a real
 //! toolchain to evaluate projects, and nothing in a subprocess can have that swapped out from
 //! outside. See [ADR 24](../../docs/adr/24-generate-wiring.md).
@@ -14,8 +14,8 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser;
 
-use msvclsp::cli::{Cli, Outcome};
-use msvclsp::{Reporter, Result};
+use sln2cc::cli::{Cli, Outcome};
+use sln2cc::{Reporter, Result};
 
 /// `fixtures/<name>`, built from `.parent()` rather than a `..` join so the result carries no
 /// literal `..` component — `support::assert_matches_golden` matches this path against
@@ -121,7 +121,7 @@ impl TempProject {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
 
         let dir = std::env::temp_dir().join(format!(
-            "msvclsp-generate-{}-{name}-{}",
+            "sln2cc-generate-{}-{name}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -212,7 +212,7 @@ impl Drop for TempProject {
 
 fn generate(sln: &Path) -> Result<Outcome> {
     let cli = Cli::try_parse_from([
-        "msvclsp",
+        "sln2cc",
         "generate",
         sln.to_str().expect("temp path is valid UTF-8"),
         "--configuration",
@@ -222,12 +222,12 @@ fn generate(sln: &Path) -> Result<Outcome> {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
+    sln2cc::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
 fn generate_forced(sln: &Path) -> Result<Outcome> {
     let cli = Cli::try_parse_from([
-        "msvclsp",
+        "sln2cc",
         "generate",
         sln.to_str().expect("temp path is valid UTF-8"),
         "--configuration",
@@ -238,15 +238,15 @@ fn generate_forced(sln: &Path) -> Result<Outcome> {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
+    sln2cc::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
 /// Like [`generate`], but with an explicit `--root` rather than the default (the solution's own
 /// directory) — the shape a real multi-solution workspace uses, and the only way to make two
-/// independent [`TempProject`]s share one `.msvclsp` parent.
+/// independent [`TempProject`]s share one `.sln2cc` parent.
 fn generate_with_root(sln: &Path, root: &Path) -> Result<Outcome> {
     let cli = Cli::try_parse_from([
-        "msvclsp",
+        "sln2cc",
         "generate",
         sln.to_str().expect("temp path is valid UTF-8"),
         "--configuration",
@@ -258,7 +258,7 @@ fn generate_with_root(sln: &Path, root: &Path) -> Result<Outcome> {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    msvclsp::cli::run(&cli, &mut reporter, &support::fake_toolchain())
+    sln2cc::cli::run(&cli, &mut reporter, &support::fake_toolchain())
 }
 
 fn database_path(outcome: Outcome) -> (PathBuf, bool) {
@@ -365,12 +365,12 @@ fn an_unbuilt_project_is_still_indexed() {
 
 /// `resolve_output_dir`'s collision-avoidance (ADR 19) is unit-tested in isolation in
 /// `compdb.rs`, but nothing before this exercised it through the real `generate` pipeline with
-/// two *different* solutions sharing one `.msvclsp` root — the actual multi-solution workspace
+/// two *different* solutions sharing one `.sln2cc` root — the actual multi-solution workspace
 /// shape V1-02 describes. Closes the gap between that todo item's `Tests:` line and what existed.
 #[test]
 fn two_solutions_generate_into_distinct_directories() {
     let shared_root = std::env::temp_dir().join(format!(
-        "msvclsp-generate-shared-root-{}",
+        "sln2cc-generate-shared-root-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&shared_root);

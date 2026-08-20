@@ -1,7 +1,7 @@
 -- picker.lua stubs cli.lua wholesale (package.loaded swap), the same seam every non-cli.lua
 -- module's tests use per CLAUDE.md §4 -- these specs never invoke the real binary.
 
---- Builds a fake `msvclsp.cli` module. `list_configs_result`/`generate_result` are each
+--- Builds a fake `sln2cc.cli` module. `list_configs_result`/`generate_result` are each
 --- `{ result, err, warnings }` triples handed straight to their respective `on_done`
 --- callbacks synchronously, since these tests don't need to exercise cli.lua's own async
 --- behavior -- that's test_cli.lua's job. `warnings` (V2-04) mirrors the real 3rd `on_done`
@@ -56,13 +56,13 @@ local function stub_notify()
   end
 end
 
-describe("msvclsp.picker.pick_config", function()
+describe("sln2cc.picker.pick_config", function()
   local picker
   local original_ui_select
 
   before_each(function()
-    package.loaded["msvclsp.picker"] = nil
-    package.loaded["msvclsp.cli"] = nil
+    package.loaded["sln2cc.picker"] = nil
+    package.loaded["sln2cc.cli"] = nil
     original_ui_select = vim.ui.select
   end)
 
@@ -72,10 +72,10 @@ describe("msvclsp.picker.pick_config", function()
 
   it("passes list_configs' available options to vim.ui.select", function()
     local available = { config("Debug", "x64"), config("Release", "x64") }
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = { result = { solution = "app.sln", available = available, active = nil } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
 
     local select_fn, calls = fake_select(available[1])
     vim.ui.select = select_fn
@@ -88,10 +88,10 @@ describe("msvclsp.picker.pick_config", function()
   it("marks the active pair in the formatted item text", function()
     local active = config("Release", "x64")
     local available = { config("Debug", "x64"), active }
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = { result = { solution = "app.sln", available = available, active = active } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
 
     local select_fn, calls = fake_select(available[1])
     vim.ui.select = select_fn
@@ -109,8 +109,8 @@ describe("msvclsp.picker.pick_config", function()
     local fake, generate_calls = fake_cli({
       list_configs = { result = { solution = "app.sln", available = available, active = nil } },
     })
-    package.loaded["msvclsp.cli"] = fake
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.cli"] = fake
+    picker = require("sln2cc.picker")
 
     vim.ui.select = select(1, fake_select(chosen))
 
@@ -128,13 +128,13 @@ describe("msvclsp.picker.pick_config", function()
 
   it("a successful generate calls on_choice with the picked config and the database", function()
     local chosen = config("Release", "x64")
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = {
         result = { solution = "app.sln", available = { chosen }, active = nil },
       },
-      generate = { result = { database = "/root/.msvclsp/App-abcd1234/compile_commands.json" } },
+      generate = { result = { database = "/root/.sln2cc/App-abcd1234/compile_commands.json" } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
     vim.ui.select = select(1, fake_select(chosen))
 
     local got, got_database
@@ -143,7 +143,7 @@ describe("msvclsp.picker.pick_config", function()
     end)
 
     MiniTest.expect.equality(got, chosen)
-    MiniTest.expect.equality(got_database, "/root/.msvclsp/App-abcd1234/compile_commands.json")
+    MiniTest.expect.equality(got_database, "/root/.sln2cc/App-abcd1234/compile_commands.json")
   end)
 
   it("cancelling calls on_choice(nil, nil) and never calls generate", function()
@@ -151,8 +151,8 @@ describe("msvclsp.picker.pick_config", function()
     local fake, generate_calls = fake_cli({
       list_configs = { result = { solution = "app.sln", available = available, active = nil } },
     })
-    package.loaded["msvclsp.cli"] = fake
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.cli"] = fake
+    picker = require("sln2cc.picker")
     -- vim.ui.select invokes its callback with nil, mirroring a user backing out (<Esc>).
     vim.ui.select = select(1, fake_select(nil))
 
@@ -168,10 +168,10 @@ describe("msvclsp.picker.pick_config", function()
   end)
 
   it("a failed list_configs notifies, calls on_choice(nil), never opens the selector", function()
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = { err = { message = "boom", kind = nil, code = 1 } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
 
     local select_called = false
     vim.ui.select = function()
@@ -191,13 +191,13 @@ describe("msvclsp.picker.pick_config", function()
 
   it("a failed generate after selection notifies and calls on_choice(nil, nil)", function()
     local chosen = config("Release", "x64")
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = {
         result = { solution = "app.sln", available = { chosen }, active = nil },
       },
       generate = { err = { message = "generate failed", kind = nil, code = 1 } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
     vim.ui.select = select(1, fake_select(chosen))
 
     local got, got_database, called = "sentinel", "sentinel", false
@@ -211,10 +211,10 @@ describe("msvclsp.picker.pick_config", function()
   end)
 
   it("an empty available list notifies, calls on_choice(nil), never opens the selector", function()
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = { result = { solution = "app.sln", available = {}, active = nil } },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
 
     local select_called = false
     vim.ui.select = function()
@@ -236,16 +236,16 @@ describe("msvclsp.picker.pick_config", function()
   -- selection previously had nowhere to go once cli.lua unwrapped envelope.warnings away.
   it("warnings from a successful generate after selection produce a notification", function()
     local chosen = config("Release", "x64")
-    package.loaded["msvclsp.cli"] = fake_cli({
+    package.loaded["sln2cc.cli"] = fake_cli({
       list_configs = {
         result = { solution = "app.sln", available = { chosen }, active = nil },
       },
       generate = {
-        result = { database = "/root/.msvclsp/App-abcd1234/compile_commands.json" },
+        result = { database = "/root/.sln2cc/App-abcd1234/compile_commands.json" },
         warnings = { { severity = "warning", message = "unsupported construct" } },
       },
     })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
     vim.ui.select = select(1, fake_select(chosen))
     local notify_calls, restore_notify = stub_notify()
 
@@ -260,11 +260,11 @@ describe("msvclsp.picker.pick_config", function()
   end)
 end)
 
--- pick_solution -- V1-03. Unlike pick_config, this depends on msvclsp.discovery rather than
--- msvclsp.cli: choosing a solution is inherently a discovery.lua concern (ADR 33, ADR 45),
+-- pick_solution -- V1-03. Unlike pick_config, this depends on sln2cc.discovery rather than
+-- sln2cc.cli: choosing a solution is inherently a discovery.lua concern (ADR 33, ADR 45),
 -- breaking ADR 35's "picker depends only on cli.lua" precedent deliberately.
 
---- Builds a fake `msvclsp.discovery`. `solutions_result` is the plain list `M.solutions`
+--- Builds a fake `sln2cc.discovery`. `solutions_result` is the plain list `M.solutions`
 --- returns; `active` is what `M.active_solution` returns before any pick is made.
 --- @param opts { solutions: string[], active: string|nil }
 --- @return table fake_discovery
@@ -285,13 +285,13 @@ local function fake_discovery(opts)
   return fake, set_calls
 end
 
-describe("msvclsp.picker.pick_solution", function()
+describe("sln2cc.picker.pick_solution", function()
   local picker
   local original_ui_select
 
   before_each(function()
-    package.loaded["msvclsp.picker"] = nil
-    package.loaded["msvclsp.discovery"] = nil
+    package.loaded["sln2cc.picker"] = nil
+    package.loaded["sln2cc.discovery"] = nil
     original_ui_select = vim.ui.select
   end)
 
@@ -301,8 +301,8 @@ describe("msvclsp.picker.pick_solution", function()
 
   it("passes discovery.solutions' result to vim.ui.select", function()
     local solutions = { "/root/App.sln", "/root/Other.sln" }
-    package.loaded["msvclsp.discovery"] = fake_discovery({ solutions = solutions })
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.discovery"] = fake_discovery({ solutions = solutions })
+    picker = require("sln2cc.picker")
 
     local select_fn, calls = fake_select(solutions[1])
     vim.ui.select = select_fn
@@ -314,9 +314,9 @@ describe("msvclsp.picker.pick_solution", function()
 
   it("marks the active solution in the formatted item text", function()
     local solutions = { "/root/App.sln", "/root/Other.sln" }
-    package.loaded["msvclsp.discovery"] =
+    package.loaded["sln2cc.discovery"] =
       fake_discovery({ solutions = solutions, active = "/root/Other.sln" })
-    picker = require("msvclsp.picker")
+    picker = require("sln2cc.picker")
 
     local select_fn, calls = fake_select(solutions[1])
     vim.ui.select = select_fn
@@ -331,8 +331,8 @@ describe("msvclsp.picker.pick_solution", function()
   it("selecting an option persists it and calls on_choice with it", function()
     local solutions = { "/root/App.sln", "/root/Other.sln" }
     local fake, set_calls = fake_discovery({ solutions = solutions })
-    package.loaded["msvclsp.discovery"] = fake
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.discovery"] = fake
+    picker = require("sln2cc.picker")
     vim.ui.select = select(1, fake_select(solutions[2]))
 
     local got, called = "sentinel", false
@@ -348,8 +348,8 @@ describe("msvclsp.picker.pick_solution", function()
   it("cancelling calls on_choice(nil) and never persists a choice", function()
     local solutions = { "/root/App.sln" }
     local fake, set_calls = fake_discovery({ solutions = solutions })
-    package.loaded["msvclsp.discovery"] = fake
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.discovery"] = fake
+    picker = require("sln2cc.picker")
     -- vim.ui.select invokes its callback with nil, mirroring a user backing out (<Esc>).
     vim.ui.select = select(1, fake_select(nil))
 
@@ -364,8 +364,8 @@ describe("msvclsp.picker.pick_solution", function()
   end)
 
   it("an empty solution list notifies, calls on_choice(nil), never opens the selector", function()
-    package.loaded["msvclsp.discovery"] = fake_discovery({ solutions = {} })
-    picker = require("msvclsp.picker")
+    package.loaded["sln2cc.discovery"] = fake_discovery({ solutions = {} })
+    picker = require("sln2cc.picker")
 
     local select_called = false
     vim.ui.select = function()
@@ -384,7 +384,7 @@ describe("msvclsp.picker.pick_solution", function()
 end)
 
 -- V1-06: inline first-run discovery. Every other pick_solution spec above stubs
--- msvclsp.discovery wholesale, so none of them can prove a fresh solution scan actually
+-- sln2cc.discovery wholesale, so none of them can prove a fresh solution scan actually
 -- happens as part of the pick rather than requiring a caller to discover/rescan first. This
 -- block uses the real discovery.lua against a real temp tree to close that specific gap;
 -- discovery.lua itself has been inline/lazy since MVP-27 (its M.solutions caches on first
@@ -413,15 +413,15 @@ local function make_sln(tree, name)
   fd:close()
 end
 
-describe("msvclsp.picker.pick_solution — inline discovery", function()
+describe("sln2cc.picker.pick_solution — inline discovery", function()
   local picker
   local original_ui_select
 
   before_each(function()
-    package.loaded["msvclsp.picker"] = nil
+    package.loaded["sln2cc.picker"] = nil
     -- Deliberately NOT stubbed: this block's whole point is exercising the real module.
-    package.loaded["msvclsp.discovery"] = nil
-    package.loaded["msvclsp.config"] = nil
+    package.loaded["sln2cc.discovery"] = nil
+    package.loaded["sln2cc.config"] = nil
     original_ui_select = vim.ui.select
   end)
 
@@ -435,7 +435,7 @@ describe("msvclsp.picker.pick_solution — inline discovery", function()
       make_sln(tree, "App.sln")
       make_sln(tree, "Other.sln")
 
-      picker = require("msvclsp.picker")
+      picker = require("sln2cc.picker")
 
       local select_fn, calls = fake_select(tree .. "/App.sln")
       vim.ui.select = select_fn

@@ -91,7 +91,7 @@ The combined form remains available later as an additional spelling if it is eve
 
 **`Unimplemented` rather than `todo!()`.** MVP-03's own description authorized `todo!()` in the
 handlers. It conflicts with CLAUDE.md §5's prohibition on panics in library paths reachable from
-the CLI, and the conflict is not theoretical: anyone running `msvclsp generate` by hand before
+the CLI, and the conflict is not theoretical: anyone running `sln2cc generate` by hand before
 MVP-22 lands would get a panic and exit 101. Worse, the exit-code and envelope plumbing this issue
 exists to build would have had no path exercising it end to end, so its tests could only have
 asserted on `clap`'s behavior. A leaf variant makes the failure structured, gives the integration

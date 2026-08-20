@@ -47,7 +47,7 @@ this issue's subject.
 
 ## Decision
 
-**`Severity` gains a second level, `Note`, split by one question:** *could msvclsp's failure to
+**`Severity` gains a second level, `Note`, split by one question:** *could sln2cc's failure to
 model this have changed the compiler flags?* Yes is a `Warning`; no is a `Note`. Wire strings are
 `"warning"` and `"note"`, written literally. `Reporter::warn_at` keeps its meaning and a sibling
 `Reporter::note_at` is added, so only the sites that change severity change at all. `Severity::label`
@@ -104,7 +104,7 @@ producer's — the plugin has a UI and knows what the user is doing, and the CLI
 the split buys is that the consumer now *can* decide; it does not require the CLI to decide first.
 
 **The classification's two arguable rows.** A repeat import is a note because MSBuild's own MSB4011
-rule is to import a file once per project — msvclsp did the same thing MSBuild would, so nothing was
+rule is to import a file once per project — sln2cc did the same thing MSBuild would, so nothing was
 lost, and a diamond-shaped sheet graph is common enough that warning would be noise on correct
 input. A *duplicate source declaration* goes the other way and stays a warning, even though the file
 still ends up in the database with flags: the dropped declaration may carry per-file metadata, so
@@ -114,7 +114,7 @@ still exist".
 **The wildcard rows are a bug fix wearing a severity change.** `specs` warned on any unexpanded
 wildcard, including one in a `Remove` or an `Exclude`. In the usual pairing that is a false
 positive: an `Include` wildcard is not expanded either, so the list an `Exclude` subtracts from
-never received the files it would have removed, and nothing is lost on input msvclsp handled
+never received the files it would have removed, and nothing is lost on input sln2cc handled
 correctly. It needed the severity split to fix properly, because the right answer is not silence —
 the construct really was not modelled, and MVP-37 may one day change what it means.
 

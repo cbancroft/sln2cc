@@ -13,7 +13,7 @@ use crate::msbuild::{EvaluatedProject, FileCompilation};
 use crate::toolchain::Toolchain;
 use crate::{Error, Result};
 
-/// Name of the file recording which solution directory a `.msvclsp/<name>-<hash>` directory
+/// Name of the file recording which solution directory a `.sln2cc/<name>-<hash>` directory
 /// belongs to, so a hash collision between two different solutions can be detected instead of
 /// silently overwriting output.
 /// See "Storage Layout" in `engineering_spec.md`
@@ -56,7 +56,7 @@ fn output_dir_name(sln_path: &Path) -> String {
     format!("{stem}-{hash:08x}")
 }
 
-/// Resolve the `.msvclsp/<solution-name>-<hash>` directory for `sln_path`, creating it (and
+/// Resolve the `.sln2cc/<solution-name>-<hash>` directory for `sln_path`, creating it (and
 /// `root`, if needed) and writing its collision marker on first use.
 ///
 /// A mismatched marker means a different solution's directory already claims this hash. The error
@@ -366,7 +366,7 @@ mod tests {
     // --- MVP-17: storage directory naming and collision detection ---
 
     /// A directory hashed under two different-case spellings must still land in the same
-    /// `.msvclsp` subdirectory — Windows paths are case-preserving but the filesystem is
+    /// `.sln2cc` subdirectory — Windows paths are case-preserving but the filesystem is
     /// case-insensitive, so hashing as-written would silently split one solution's artifacts
     /// across two directories depending on invocation casing.
     #[test]
@@ -386,7 +386,7 @@ mod tests {
     }
 
     /// Two solutions that happen to share a `.sln` filename in different directories must not
-    /// collide on their `.msvclsp` output directory name.
+    /// collide on their `.sln2cc` output directory name.
     #[test]
     fn output_dir_name_differs_for_different_source_directories() {
         let a = absolute(&["code", "a", "App.sln"]);
@@ -398,13 +398,13 @@ mod tests {
     #[test]
     fn resolve_output_dir_creates_the_directory_and_marker() {
         let tree = TempTree::new("resolve_output_dir_creates");
-        // `.msvclsp` itself does not exist yet, proving `create_dir_all` reaches all the way up.
-        let msvclsp_root = tree.path(".msvclsp");
+        // `.sln2cc` itself does not exist yet, proving `create_dir_all` reaches all the way up.
+        let sln2cc_root = tree.path(".sln2cc");
         let sln = tree.path("code/app/App.sln");
 
-        let output_dir = resolve_output_dir(&msvclsp_root, &sln).expect("resolves");
+        let output_dir = resolve_output_dir(&sln2cc_root, &sln).expect("resolves");
 
-        assert!(output_dir.starts_with(&msvclsp_root));
+        assert!(output_dir.starts_with(&sln2cc_root));
         let marker = std::fs::read_to_string(output_dir.join(".source")).expect("marker exists");
         assert_eq!(marker, normalized_source(&sln));
     }
@@ -412,11 +412,11 @@ mod tests {
     #[test]
     fn resolve_output_dir_is_idempotent_for_the_same_solution() {
         let tree = TempTree::new("resolve_output_dir_idempotent");
-        let msvclsp_root = tree.path(".msvclsp");
+        let sln2cc_root = tree.path(".sln2cc");
         let sln = tree.path("code/app/App.sln");
 
-        let first = resolve_output_dir(&msvclsp_root, &sln).expect("resolves");
-        let second = resolve_output_dir(&msvclsp_root, &sln).expect("resolves again");
+        let first = resolve_output_dir(&sln2cc_root, &sln).expect("resolves");
+        let second = resolve_output_dir(&sln2cc_root, &sln).expect("resolves again");
 
         assert_eq!(first, second);
     }
@@ -429,14 +429,14 @@ mod tests {
     #[test]
     fn resolve_output_dir_rejects_a_genuine_collision() {
         let tree = TempTree::new("resolve_output_dir_collision");
-        let msvclsp_root = tree.path(".msvclsp");
+        let sln2cc_root = tree.path(".sln2cc");
         let sln = tree.path("code/app/App.sln");
-        let output_dir = msvclsp_root.join(output_dir_name(&sln));
+        let output_dir = sln2cc_root.join(output_dir_name(&sln));
         std::fs::create_dir_all(&output_dir).expect("temp tree is writable");
         std::fs::write(output_dir.join(".source"), "d:\\code\\someone-else")
             .expect("temp tree is writable");
 
-        let result = resolve_output_dir(&msvclsp_root, &sln);
+        let result = resolve_output_dir(&sln2cc_root, &sln);
 
         assert!(matches!(result, Err(Error::StorageCollision { .. })));
         assert_eq!(

@@ -9,10 +9,10 @@ compiled. CMake generates one; Visual Studio solutions don't — so C/C++ codeba
 MSBuild can't get real language support outside Visual Studio without hand-converting the
 project to CMake.
 
-msvclsp closes that gap with two artifacts: a **Rust CLI** that parses a `.sln` and its
+sln2cc closes that gap with two artifacts: a **Rust CLI** that parses a `.sln` and its
 `.vcxproj`/`.props` files for a chosen configuration/platform and emits a
 `compile_commands.json`, and a **Neovim plugin** that drives the CLI and points `clangd` at
-the result. Generated artifacts live in `.msvclsp/` at the project root.
+the result. Generated artifacts live in `.sln2cc/` at the project root.
 
 Secondary (but real) goals: learn Rust on a non-trivial project, and learn how LSP tooling
 fits together.
@@ -43,10 +43,10 @@ See [docs/engineering_spec.md](docs/engineering_spec.md) for the full design, an
 [docs/project_spec.md](docs/project_spec.md) for product intent.
 
 ```
-msvclsp/
+sln2cc/
 ├── CLAUDE.md                     This file.
 ├── README.md                     User-facing intro, build and test instructions.
-├── .gitignore                    Ignores cli/target/, generated .msvclsp/ dirs, and .plans/.
+├── .gitignore                    Ignores cli/target/, generated .sln2cc/ dirs, and .plans/.
 ├── .github/workflows/ci.yml      CI: Rust lint+test (Linux), build (Windows), MSRV check, plugin tests.
 ├── .claude/skills/               Claude Code skills for this repo's own workflow.
 │   ├── start-issue/              Branch, plan, and write tests+docs for a docs/todos.md issue.
@@ -81,7 +81,7 @@ msvclsp/
 │       └── golden/               Expected output per fixture. Never regenerate from a live toolchain.
 │
 ├── nvim/                         Neovim plugin.
-│   ├── lua/msvclsp/
+│   ├── lua/sln2cc/
 │   │   ├── init.lua              setup() entry point.
 │   │   ├── config.lua            Defaults and user option merging.
 │   │   ├── cli.lua               Binary invocation and JSON decoding.
@@ -89,9 +89,9 @@ msvclsp/
 │   │   ├── picker.lua            vim.ui.select wrappers for solution and config choice.
 │   │   ├── lsp.lua               clangd start/restart against an explicit database path.
 │   │   ├── commands.lua          User command registration.
-│   │   └── health.lua            :checkhealth msvclsp.
-│   ├── plugin/msvclsp.lua        Load guard. Keep startup cost at zero.
-│   ├── doc/msvclsp.txt           Vimdoc.
+│   │   └── health.lua            :checkhealth sln2cc.
+│   ├── plugin/sln2cc.lua         Load guard. Keep startup cost at zero.
+│   ├── doc/sln2cc.txt            Vimdoc.
 │   └── tests/
 │       ├── minimal_init.lua      Headless test bootstrap; locates mini.test.
 │       └── test_*.lua            mini.test specs. CLI is stubbed, never really invoked.
@@ -125,7 +125,7 @@ msvclsp/
 
 ## 4. Nvim Plugin Guidelines
 
-- **Zero startup cost.** `plugin/msvclsp.lua` sets a load guard and nothing else. Real work
+- **Zero startup cost.** `plugin/sln2cc.lua` sets a load guard and nothing else. Real work
   happens on `setup()` or first command invocation. Never scan the filesystem at startup.
 - **Never block the UI.** CLI invocations are async; parsing a large solution takes real
   time. Use callbacks, and give the user feedback while work is in flight.
@@ -188,7 +188,7 @@ msvclsp/
   commit — see section 9.
 - A change that settles an architecture or design decision adds an ADR under `docs/adr/` in
   the same commit — see section 9.
-- Never commit generated artifacts: `cli/target/`, `.msvclsp/` (including inside
+- Never commit generated artifacts: `cli/target/`, `.sln2cc/` (including inside
   `fixtures/`). Both are gitignored — don't force-add them.
 - Never commit golden files regenerated against a real Visual Studio installation; they must
   come from `FakeToolchain` output.
@@ -277,7 +277,7 @@ The product is not functional yet, so calibrate expectations:
 | [docs/milestones.md](docs/milestones.md) | Feature groupings for MVP / V1 / V2 / future. No timelines. |
 | [docs/todos.md](docs/todos.md) | Issue tracker: per-release checklist of scoped work items, each with a branch name and required tests. **Stands in for GitHub issues** until the project has a repo host. |
 | [docs/changelog.md](docs/changelog.md) | Running log of features and bugfixes. **Updated as work lands, not at release time** — it's the source material for release notes. |
-| [docs/glossary.md](docs/glossary.md) | MSBuild and Visual Studio vocabulary as every other doc uses it, plus msvclsp's own terms. **Reference, not a decision record** — if a definition and a spec disagree, the spec wins and the glossary is wrong. |
+| [docs/glossary.md](docs/glossary.md) | MSBuild and Visual Studio vocabulary as every other doc uses it, plus sln2cc's own terms. **Reference, not a decision record** — if a definition and a spec disagree, the spec wins and the glossary is wrong. |
 | [docs/brainstorm.md](docs/brainstorm.md) | Original thinking. **Historical — partly superseded.** It describes an LSP-proxy architecture that was abandoned. Read for context, don't treat as current. |
 | [README.md](README.md) | User-facing intro, prerequisites, build and test instructions. |
 

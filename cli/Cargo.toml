@@ -1,5 +1,5 @@
 [package]
-name = "msvclsp"
+name = "sln2cc"
 version = "0.1.0"
 edition = "2024"
 # Forced by clap 4.6, the highest floor in the tree — and exactly what edition 2024 needs,
@@ -17,7 +17,7 @@ license = "MIT"
 #                     read-only DOM is the better fit for evaluation-order traversal.
 #   rusqlite          State is a few KB of config/platform selections and mtimes. `bundled`
 #                     would compile the SQLite C amalgamation, requiring a C toolchain to
-#                     build msvclsp at all. Persistence is a JSON file instead.
+#                     build sln2cc at all. Persistence is a JSON file instead.
 #   anyhow            Errors must carry a machine-readable kind for the plugin's JSON output
 #                     and exit codes; type erasure would mean downcasting to recover it.
 #   tracing / log     Unsupported-construct warnings are structured data in the JSON

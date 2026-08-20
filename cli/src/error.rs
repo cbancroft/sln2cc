@@ -419,9 +419,9 @@ mod tests {
             ),
             (
                 // MVP-17: two different solution directories hashed to the same
-                // `.msvclsp/<name>-<hash>` directory.
+                // `.sln2cc/<name>-<hash>` directory.
                 Error::StorageCollision {
-                    dir: PathBuf::from(r"C:\proj\.msvclsp\App-abcd1234"),
+                    dir: PathBuf::from(r"C:\proj\.sln2cc\App-abcd1234"),
                     expected: r"c:\proj\app".to_string(),
                     found: r"c:\other\app".to_string(),
                 },
@@ -429,14 +429,14 @@ mod tests {
             ),
             (
                 Error::StateParse {
-                    path: PathBuf::from(r"C:\proj\.msvclsp\state.json"),
+                    path: PathBuf::from(r"C:\proj\.sln2cc\state.json"),
                     source: serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
                 },
                 ErrorKind::StateParse,
             ),
             (
                 Error::StateVersion {
-                    path: PathBuf::from(r"C:\proj\.msvclsp\state.json"),
+                    path: PathBuf::from(r"C:\proj\.sln2cc\state.json"),
                     found: 9,
                     supported: 1,
                 },
@@ -508,12 +508,12 @@ mod tests {
         );
         assert_eq!(
             rendered[10],
-            r"C:\proj\.msvclsp\App-abcd1234: already claimed by c:\other\app; this solution's directory is c:\proj\app"
+            r"C:\proj\.sln2cc\App-abcd1234: already claimed by c:\other\app; this solution's directory is c:\proj\app"
         );
-        assert!(rendered[11].starts_with(r"C:\proj\.msvclsp\state.json: malformed state file: "));
+        assert!(rendered[11].starts_with(r"C:\proj\.sln2cc\state.json: malformed state file: "));
         assert_eq!(
             rendered[12],
-            r"C:\proj\.msvclsp\state.json: state file version 9 is not supported (expected 1)"
+            r"C:\proj\.sln2cc\state.json: state file version 9 is not supported (expected 1)"
         );
         assert_eq!(
             rendered[13],

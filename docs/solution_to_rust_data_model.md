@@ -1,6 +1,6 @@
-# From `.sln` to Rust: How msvclsp Models a Solution
+# From `.sln` to Rust: How sln2cc Models a Solution
 
-This document walks through how msvclsp turns a Visual Studio solution on disk into the Rust
+This document walks through how sln2cc turns a Visual Studio solution on disk into the Rust
 data structures it uses internally, and ultimately into `compile_commands.json`. It follows the
 CLI's own pipeline stage by stage, showing what each stage reads, what struct it produces, and
 why that struct is shaped the way it is. See `docs/engineering_spec.md` for the authoritative
@@ -109,13 +109,13 @@ A few mapping decisions worth calling out because they aren't obvious from the X
 - **Solution pair and project pair are two separate fields, not one.** A solution can present a
   single `Debug|x64` to the user while quietly building one member as `Debug|Win32` — this
   actually happens with mixed-architecture solutions. Collapsing the two into one `ConfigPlatform`
-  would lose the mapping msvclsp needs to hand each project's evaluator the pair *it* understands.
+  would lose the mapping sln2cc needs to hand each project's evaluator the pair *it* understands.
 - **`build: false` matters.** A project can have a row in `ProjectConfigurationPlatforms` without a
-  `Build.0` entry — that's what "unchecked in Configuration Manager" looks like on disk. msvclsp
+  `Build.0` entry — that's what "unchecked in Configuration Manager" looks like on disk. sln2cc
   still evaluates such a project, because its source files still need indexing for `clangd` even
   though the real build skips them; only the `build` flag would differ if that policy changed.
 
-At this point msvclsp knows *that* `Widget.vcxproj` exists and *which* configuration pair to
+At this point sln2cc knows *that* `Widget.vcxproj` exists and *which* configuration pair to
 evaluate it under. It knows nothing about the project's contents yet — that's every remaining
 stage.
 
@@ -201,11 +201,11 @@ silently dropped. A `<Choose>` block can gate which flags apply to a file — dr
 would produce a compilation database that looks fine and is wrong, which is exactly the outcome
 CLAUDE.md calls out as worse than a loud failure.
 
-### Every XML tag msvclsp processes
+### Every XML tag sln2cc processes
 
 The table below is every element `.vcxproj`/`.props`/`.targets` parsing actually branches on, what
 it becomes in the `Element`/`Item` IR, and what happens to it from there. `docs/glossary.md`
-explains what each of these *means* in MSBuild's own terms; this is about what msvclsp's reader
+explains what each of these *means* in MSBuild's own terms; this is about what sln2cc's reader
 specifically does with it.
 
 | Tag | Becomes | What happens to it |
@@ -216,16 +216,16 @@ specifically does with it.
 | `<ItemGroup>` | `Element::Items(ItemGroup)` | Also deferred, then settled in stage 5. Its children (`<ClCompile Include="...">`, etc.) become `Item`s; only `ClCompile` items go on to become `SourceItem`s and, eventually, `compile_commands.json` entries. |
 | `<Import>` | `Element::Import(Import)` (inside the *importing* file) | Resolved in stage 3: its `Project` attribute is macro-expanded, its `Condition` checked, and — if both allow it — the target file is parsed with this same reader and spliced into the stream at that point. |
 | `<ImportGroup>` | `Element::ImportGroup(ImportGroup)` | A `Condition`-gated wrapper around one or more `<Import>`s; each contained import is resolved exactly as a top-level one, gated by both the group's condition and its own. |
-| `<ClCompile Include="...">` (inside an `ItemGroup`) | `Item { item_type: "ClCompile", .. }` | The one item type msvclsp actually turns into output: stage 5 walks these into `SourceItem`s, stage 6 turns each into a `FileCompilation`, stage 7 into a `compile_commands.json` entry. |
+| `<ClCompile Include="...">` (inside an `ItemGroup`) | `Item { item_type: "ClCompile", .. }` | The one item type sln2cc actually turns into output: stage 5 walks these into `SourceItem`s, stage 6 turns each into a `FileCompilation`, stage 7 into a `compile_commands.json` entry. |
 | `<ClCompile>` (inside an `ItemDefinitionGroup`) | `ItemDefinition { item_type: "ClCompile", .. }` | Composed into the project's default `ClCompile` metadata in stage 5, before any item is evaluated against it. |
-| `<ProjectConfiguration Include="Debug|x64">` | `Item { item_type: "ProjectConfiguration", .. }` | Read by `items::declared_configurations` to know which configuration/platform pairs the project itself declares, purely so msvclsp can warn if you ask for one it doesn't. |
-| Any other item type (`<ClInclude>`, `<ResourceCompile>`, `<Link>`, `<None>`, ...) | `Item { item_type: "ClInclude", .. }` etc. | Parsed into the generic `Item` shape like anything else inside an `<ItemGroup>`, but never type-matched again downstream — msvclsp has no use for a header list or a resource list, so these items are read and then ignored. |
+| `<ProjectConfiguration Include="Debug|x64">` | `Item { item_type: "ProjectConfiguration", .. }` | Read by `items::declared_configurations` to know which configuration/platform pairs the project itself declares, purely so sln2cc can warn if you ask for one it doesn't. |
+| Any other item type (`<ClInclude>`, `<ResourceCompile>`, `<Link>`, `<None>`, ...) | `Item { item_type: "ClInclude", .. }` etc. | Parsed into the generic `Item` shape like anything else inside an `<ItemGroup>`, but never type-matched again downstream — sln2cc has no use for a header list or a resource list, so these items are read and then ignored. |
 | `<Target>`, `<UsingTask>`, `<ProjectExtensions>` | nothing — skipped during lowering | These describe the *build* half of MSBuild (tasks that run), not evaluation, and can't change how a file parses. Skipped silently rather than warned about, since every ordinary project file contains them. |
 | `<Choose>` / `<When>` / `<Otherwise>` | `Element::Unsupported { name: "Choose", .. }` | Not modeled. Recorded as `Unsupported` and warned about, because unlike `<Target>` a `<Choose>` block can gate real settings — dropping it in silence risks a database that looks right and isn't. |
 | Anything else unrecognized at the `<Project>` level | `Element::Unsupported { name, .. }` | Same treatment as `<Choose>`: recorded and warned about rather than silently dropped. |
 | `Condition="..."` (attribute, on almost any element above) | `Option<String>` field on the owning `Element`/`Item`/`Setting` | Carried as raw text through stages 1–3, evaluated for real in stage 3 (for `<Import>`) or stage 5 (for everything else) against whatever property bag is in scope at that point. |
 | `Include=`, `Exclude=`, `Remove=`, `Update=` (attributes on an item) | fields on `Item` | Resolved in stage 5: `Include` (and wildcards within it) adds items, `Exclude` subtracts specs from the same `Include`, `Remove` drops previously-declared items, `Update` attaches metadata to an item declared elsewhere without adding or removing anything. |
-| `Label="..."` (attribute) | not modeled | Read by nothing — it's a Visual Studio IDE grouping hint (`Label="ProjectConfigurations"`, `Label="Globals"`) with no evaluation meaning, so msvclsp's reader ignores it entirely. |
+| `Label="..."` (attribute) | not modeled | Read by nothing — it's a Visual Studio IDE grouping hint (`Label="ProjectConfigurations"`, `Label="Globals"`) with no evaluation meaning, so sln2cc's reader ignores it entirely. |
 
 Everything *inside* a `ClCompile` item or `ItemDefinitionGroup` entry — `<WarningLevel>`,
 `<PreprocessorDefinitions>`, `<AdditionalIncludeDirectories>`, `<LanguageStandard>`, and several
@@ -407,7 +407,7 @@ pub struct CompileCommand {
 `["clang-cl", "--driver-mode=cl", "/I<project includes>", "/I<toolchain includes>", "/D<defines>",
 <flags>, "<absolute file path>"]`. Project include paths are listed before the toolchain's system
 ones, matching `cl`'s own search order, so a project header shadowing a system one of the same name
-resolves the same way it would in a real build. Flags stay in MSVC spelling throughout — msvclsp
+resolves the same way it would in a real build. Flags stay in MSVC spelling throughout — sln2cc
 never translates them into native clang flags — and clangd is told to interpret them as such via
 `--driver-mode=cl`.
 

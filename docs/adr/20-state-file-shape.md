@@ -33,12 +33,12 @@ struct SolutionRecord {
 }
 
 impl Store {
-    pub fn open(msvclsp_dir: &Path) -> Result<Self>;
+    pub fn open(sln2cc_dir: &Path) -> Result<Self>;
     fn solution_key(&self, solution: &Path) -> String;
 }
 ```
 
-- **A single file, `.msvclsp/state.json`**, not one file per solution. The state file has to
+- **A single file, `.sln2cc/state.json`**, not one file per solution. The state file has to
   track *which* solutions exist and which one is active, which a per-solution file would need
   a separate index for anyway — the single file gets that for free, matching
   `engineering_spec.md`'s own "likely a single file... since it needs to track which solution
@@ -48,7 +48,7 @@ impl Store {
   moment the whole workspace relocates (a clone to a new path, a drive letter change, a
   different CI checkout path) — every key silently stops matching, with no error, and the
   cache just looks empty. Root-relative keys survive that. `Store` derives its own root once,
-  at `open()` time, as `msvclsp_dir.parent()` — "Storage Layout" already guarantees `.msvclsp`
+  at `open()` time, as `sln2cc_dir.parent()` — "Storage Layout" already guarantees `.sln2cc`
   sits directly at the project root, so no new parameter is needed on `open()` or on the
   already-published `set_active_config`/`active_config`/`is_up_to_date` signatures, none of
   which take a root today.
@@ -149,6 +149,6 @@ disambiguation mechanism to fall back on.
   the crate's existing OS-conditional test helpers (`paths.rs`, `compdb.rs`'s own `absolute()`
   helper).
 - **A solution moved independently of root still gets a new key**, same as the already-accepted
-  "moved solution directory orphans its old `.msvclsp` output directory" cost ("Storage
+  "moved solution directory orphans its old `.sln2cc` output directory" cost ("Storage
   Layout"). Root-relative keying fixes *workspace* relocation, not *solution-within-a-stable-
   root* relocation — those are different costs, and only the first was in scope here.

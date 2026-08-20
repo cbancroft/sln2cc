@@ -82,7 +82,7 @@ to worthless when the primary consumer is a program.
 and where the platform constraint decided it rather than any aesthetic preference. On Windows there
 is no system SQLite dev library to link against, so `rusqlite` effectively requires the `bundled`
 feature, which compiles the SQLite C amalgamation via `cc` — making a working C toolchain a hard
-requirement to build msvclsp *at all*. That is a bad trade when building from source is a live
+requirement to build sln2cc *at all*. That is a bad trade when building from source is a live
 distribution option and the plugin's users are Neovim users, not necessarily C developers. Weighed
 against a build-time C toolchain requirement, the stored data is a few KB: known configuration/
 platform pairs, the last-used selection per solution, and dependency mtimes.
@@ -112,7 +112,7 @@ made the change free; the cost only grows once the evaluator exists. Worth not c
 knobs: edition 2021 needs only Rust 1.56, so staying on it would have locked out nobody — but it
 would have protected nobody either. The real lever for supporting older toolchains was downgrading
 to `clap` 4.5, which holds MSRV 1.74 across all its patch releases. That was rejected because
-msvclsp only runs on Windows, where Rust arrives via rustup rather than a distro package, so the
+sln2cc only runs on Windows, where Rust arrives via rustup rather than a distro package, so the
 population stranded between 1.74 and 1.85 is small and `rustup update` fixes it.
 
 Because every other CI job uses `stable`, the declared floor would have drifted upward the first

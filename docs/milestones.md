@@ -1,6 +1,6 @@
 # Milestones
 
-This document groups MSVC LSP's planned features into release milestones. Groupings only — no
+This document groups sln2cc's planned features into release milestones. Groupings only — no
 timelines. It reflects the current two-artifact architecture (Rust CLI binary + Neovim plugin)
 described in [project_spec.md](project_spec.md) and [engineering_spec.md](engineering_spec.md), and
 supersedes the original milestone/MVP/v1 lists in [brainstorm.md](brainstorm.md), which predate the
@@ -34,7 +34,7 @@ diagnostics, and switching configuration/platform visibly changes the emitted fl
 - Basic plugin scaffolding and installation instructions.
 - Locate a `.sln` file within the project directory/subdirectories (single solution assumed).
 - Invoke the CLI binary to list configuration/platform options and present a picker.
-- Invoke the CLI binary to generate `compile_commands.json` into `.msvclsp/`.
+- Invoke the CLI binary to generate `compile_commands.json` into `.sln2cc/`.
 - Launch `clangd` pointed explicitly at the generated `compile_commands.json`.
 - Basic keymaps/commands for generating the database and selecting a configuration/platform.
 - Basic user documentation.
@@ -49,7 +49,7 @@ workflow smoother.
 - Subcommand to discover `.sln` files under a project root.
 - Per-solution state on disk: each discovered solution independently tracks its own last-used
   configuration/platform.
-- `compile_commands.json` output namespaced by solution (`.msvclsp/<solution-name>-<hash>/`).
+- `compile_commands.json` output namespaced by solution (`.sln2cc/<solution-name>-<hash>/`).
 
 ## Neovim Plugin
 

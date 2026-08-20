@@ -60,15 +60,15 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// Write this diagnostic to a human-facing stream as one complete line.
     ///
-    /// The `msvclsp:` prefix matches how `main.rs` renders errors, so warnings and failures line
+    /// The `sln2cc:` prefix matches how `main.rs` renders errors, so warnings and failures line
     /// up in a terminal; it lives here rather than at the call site because the whole line is
     /// what the tests pin. `root` and `verbose` decide how much of the path is shown — see
     /// [`display_path`].
     pub fn render_human(&self, w: &mut dyn Write, root: &Path, verbose: bool) -> io::Result<()> {
         let level = self.severity.label();
         match self.site(root, verbose) {
-            Some(site) => writeln!(w, "msvclsp: {level}: {site}: {}", self.message),
-            None => writeln!(w, "msvclsp: {level}: {}", self.message),
+            Some(site) => writeln!(w, "sln2cc: {level}: {site}: {}", self.message),
+            None => writeln!(w, "sln2cc: {level}: {}", self.message),
         }
     }
 
@@ -168,7 +168,7 @@ impl Reporter {
     /// successful generation into a failure.
     pub fn progress(&mut self, args: fmt::Arguments<'_>) {
         if let Some(sink) = self.sink.as_mut() {
-            let _ = writeln!(sink, "msvclsp: {args}");
+            let _ = writeln!(sink, "sln2cc: {args}");
         }
     }
 
@@ -313,7 +313,7 @@ mod tests {
     }
 
     /// The severity split is a decision about *volume*, so the two levels have to be reachable
-    /// separately from the call sites. `note_at` is what a producer reaches for when msvclsp did
+    /// separately from the call sites. `note_at` is what a producer reaches for when sln2cc did
     /// not lose anything — see [ADR 13](../../docs/adr/13-diagnostic-severity-and-wording.md).
     #[test]
     fn note_at_records_the_lower_severity_and_renders_as_one() {
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(recorded.severity, Severity::Note);
         assert_eq!(
             rendered(recorded, false),
-            "msvclsp: note: app.sln:1: unexpected version\n",
+            "sln2cc: note: app.sln:1: unexpected version\n",
             "a note must not read as a warning in a terminal"
         );
     }
@@ -425,7 +425,7 @@ mod tests {
 
         assert_eq!(
             buffer.contents(),
-            "msvclsp: reading app.sln\nmsvclsp: 3 projects\n"
+            "sln2cc: reading app.sln\nsln2cc: 3 projects\n"
         );
     }
 
@@ -443,7 +443,7 @@ mod tests {
         let expected = ["app", "app.vcxproj"].join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(
             rendered(&diagnostic, false),
-            format!("msvclsp: warning: {expected}:12: no `Format Version` header\n")
+            format!("sln2cc: warning: {expected}:12: no `Format Version` header\n")
         );
     }
 
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(
             rendered(&diagnostic, true),
             format!(
-                "msvclsp: warning: {}:12: no `Format Version` header\n",
+                "sln2cc: warning: {}:12: no `Format Version` header\n",
                 file.display()
             )
         );
@@ -477,7 +477,7 @@ mod tests {
         let expected = ["app", "app.vcxproj"].join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(
             String::from_utf8(out).expect("rendering is UTF-8"),
-            format!("msvclsp: warning: {expected}:7: no `Format Version` header\n")
+            format!("sln2cc: warning: {expected}:7: no `Format Version` header\n")
         );
     }
 
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(
             rendered(&diagnostic, false),
             format!(
-                "msvclsp: warning: {}: no `Format Version` header\n",
+                "sln2cc: warning: {}: no `Format Version` header\n",
                 file.display()
             )
         );
@@ -505,7 +505,7 @@ mod tests {
     fn a_diagnostic_with_no_file_renders_the_message_alone() {
         assert_eq!(
             rendered(&warning(None, None), false),
-            "msvclsp: warning: no `Format Version` header\n"
+            "sln2cc: warning: no `Format Version` header\n"
         );
     }
 

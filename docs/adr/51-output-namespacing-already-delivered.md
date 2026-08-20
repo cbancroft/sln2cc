@@ -9,12 +9,12 @@
 
 ## Problem
 
-`docs/todos.md` scoped V1-02 as: "Write to `.msvclsp/<solution-name>/` so a previously-used
+`docs/todos.md` scoped V1-02 as: "Write to `.sln2cc/<solution-name>/` so a previously-used
 solution's artifacts survive switching away and back." Read at face value, this describes new
 work — output would need to move from some single, shared location into a per-solution one.
 
 That move already happened. `compdb::resolve_output_dir`/`output_dir_name` (`cli/src/compdb.rs`)
-have written every solution's `compile_commands.json` under `.msvclsp/<solution-stem>-<hash>/`
+have written every solution's `compile_commands.json` under `.sln2cc/<solution-stem>-<hash>/`
 since MVP-17 (`feat/compdb-write`, ADR 19), with a `.source` collision marker that fails loudly
 (`Error::StorageCollision`) rather than silently sharing or overwriting a different solution's
 directory. `db::Store` (`cli/src/db.rs`) has kept `state.json` keyed per-solution path, root-
@@ -32,7 +32,7 @@ issue, that property had unit coverage on both halves in isolation
 (`compdb.rs::output_dir_name_differs_for_different_source_directories`,
 `compdb.rs::resolve_output_dir_rejects_a_genuine_collision`,
 `db.rs::two_solutions_hold_independent_selections`) but nothing exercised it through the real
-`generate` pipeline with two actual solutions sharing one `.msvclsp` root — the shape a genuine
+`generate` pipeline with two actual solutions sharing one `.sln2cc` root — the shape a genuine
 multi-solution workspace has, and the only way to prove the collision-avoidance path is actually
 wired into `generate` end to end rather than correct only in isolation.
 

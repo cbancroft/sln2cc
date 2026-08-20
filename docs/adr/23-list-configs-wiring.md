@@ -32,8 +32,8 @@ or testing against files that do not exist.
 ```rust
 fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<SolutionConfigs> {
     let solution = sln::parse_sln(&args.solution, reporter)?;
-    let msvclsp_dir = args.root().join(".msvclsp");
-    let store = db::Store::open(&msvclsp_dir)?;
+    let sln2cc_dir = args.root().join(".sln2cc");
+    let store = db::Store::open(&sln2cc_dir)?;
     let active = store.active_config(&solution.path)?;
 
     Ok(SolutionConfigs {
@@ -45,7 +45,7 @@ fn list_configs(args: &SolutionArgs, reporter: &mut Reporter) -> crate::Result<S
 ```
 
 `Store::open` is called with an immutable binding — `list-configs` only *reads* the last-used
-selection; nothing in this subcommand records one. `args.root().join(".msvclsp")` is the state
+selection; nothing in this subcommand records one. `args.root().join(".sln2cc")` is the state
 file's directory directly, per ADR 20's single-file-for-every-solution shape; it is unrelated to
 `compdb::resolve_output_dir`'s per-solution hashed subdirectory, which exists only for
 `compile_commands.json` output and has no bearing on `list-configs`.
@@ -58,7 +58,7 @@ No new `Error`/`ErrorKind` variant was needed: `parse_sln` already surfaces
 gained a small `TempSolution` helper — a directory-scoped reimplementation of the shape
 `cli/src/testing.rs::TempTree` already has, written locally because `TempTree` is `pub(crate)`
 inside the lib crate and unreachable from the separate `cli/tests/` integration-test crate — that
-writes a minimal, hand-authored `.sln` (and, for one test, a hand-written `.msvclsp/state.json`) at
+writes a minimal, hand-authored `.sln` (and, for one test, a hand-written `.sln2cc/state.json`) at
 test time. The issue's Tests: block is satisfied in substance — exact-JSON assertions against a real
 parsed solution, a real `Store` round trip, a real missing-solution error path — without touching
 `fixtures/` at all.

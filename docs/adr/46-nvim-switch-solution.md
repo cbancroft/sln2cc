@@ -3,13 +3,13 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Issue:** [V1-05 — Switch-solution command](../todos.md#v1) (`feat/nvim-switch-solution`)
-- **Affects:** `nvim/lua/msvclsp/commands.lua`, `nvim/tests/test_commands.lua`,
+- **Affects:** `nvim/lua/sln2cc/commands.lua`, `nvim/tests/test_commands.lua`,
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities"),
   [ADR 45](45-nvim-solution-picker.md)
 
 ## Problem
 
-ADR 45 (V1-03) built `:MsvclspSelectSolution` up to the point of picking a different `.sln`
+ADR 45 (V1-03) built `:Sln2ccSelectSolution` up to the point of picking a different `.sln`
 and persisting the choice, but stopped deliberately short of the rest: "restoring the newly
 active solution's own remembered configuration/platform, regenerating
 `compile_commands.json`, and restarting clangd is V1-05's ... explicit, separately-scoped
@@ -61,7 +61,7 @@ sequential steps means each has one job.
 **Why a shared helper, with `force` as a parameter, rather than two separate call sites.**
 The plan for this issue flagged extraction-vs-duplication as a genuine judgment call: the two
 call sequences are identical apart from `M._generate`'s `--bang` force (MVP-46), which has no
-equivalent user gesture on `:MsvclspSelectSolution`. An early version threaded that
+equivalent user gesture on `:Sln2ccSelectSolution`. An early version threaded that
 difference in by having `M._generate` fire a second, separate `cli.generate` call ahead of an
 always-unforced `generate_and_restart` — that shape was wrong on two counts: it issued a
 wasted extra CLI invocation with no configuration to generate against (crashing in
@@ -80,13 +80,13 @@ right thing when the *files* haven't changed.
 
 ## Consequences
 
-- `:MsvclspSelectSolution` closes the gap ADR 45 named: switching solutions now restores that
+- `:Sln2ccSelectSolution` closes the gap ADR 45 named: switching solutions now restores that
   solution's own remembered configuration/platform, regenerates if needed, and restarts clangd
-  (subject to `config.options.auto_restart_clangd`, exactly like `:MsvclspGenerate` and
-  `:MsvclspSelectConfig`).
+  (subject to `config.options.auto_restart_clangd`, exactly like `:Sln2ccGenerate` and
+  `:Sln2ccSelectConfig`).
 - A solution with no configuration ever selected still requires an explicit
-  `:MsvclspSelectConfig` after switching to it — this issue does not invent a "pick a
-  configuration for me" fallback, matching `:MsvclspGenerate`'s existing behavior for the
+  `:Sln2ccSelectConfig` after switching to it — this issue does not invent a "pick a
+  configuration for me" fallback, matching `:Sln2ccGenerate`'s existing behavior for the
   active solution.
 - `nvim/tests/test_commands.lua`'s `fake_cli` gained `list_configs_by_solution`, letting a test
   assert that two different solutions get two different generated configurations — the concrete

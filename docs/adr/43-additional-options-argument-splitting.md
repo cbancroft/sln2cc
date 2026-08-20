@@ -59,7 +59,7 @@ in MSVC form and are consumed by clangd in clang-cl mode rather than being trans
 command-line tokenizer (`TokenizeWindowsCommandLine` in LLVM's `Support/CommandLine`) implements this
 exact algorithm for MSVC compatibility — it has to, since clang-cl exists to be a drop-in for `cl.exe`
 on real build systems. One algorithm therefore matches both ends of the pipe: what `cl.exe` would
-have done with this text, and what clangd will do with the flags msvclsp hands it. There was no
+have done with this text, and what clangd will do with the flags sln2cc hands it. There was no
 tiebreak to make between "whose rules" beyond confirming they're the same rules.
 
 **Why not POSIX-shell-style splitting.** The tempting alternative is a `shlex`-shaped splitter,

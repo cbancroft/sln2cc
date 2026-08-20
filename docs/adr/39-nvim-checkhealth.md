@@ -2,8 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
-- **Issue:** [MVP-32 — `:checkhealth msvclsp`](../todos.md#neovim-plugin) (`feat/nvim-health`)
-- **Affects:** `nvim/lua/msvclsp/health.lua`, `nvim/tests/test_health.lua`, `cli/src/cli.rs`
+- **Issue:** [MVP-32 — `:checkhealth sln2cc`](../todos.md#neovim-plugin) (`feat/nvim-health`)
+- **Affects:** `nvim/lua/sln2cc/health.lua`, `nvim/tests/test_health.lua`, `cli/src/cli.rs`
   (`SolutionConfigs`, `list_configs`), `cli/tests/cli_surface.rs`,
   [engineering_spec.md](../engineering_spec.md) ("CLI Surface", "Neovim Plugin —
   Responsibilities"), [ADR 03](03-cli-surface-and-json-contract.md),
@@ -20,7 +20,7 @@ with a database present on disk.
 The first four read state `config.lua` and `discovery.lua` already expose. The fifth does not have
 anywhere to read from: `list-configs`' `SolutionConfigs` (`cli.rs`) reports `active` — the chosen
 configuration/platform — but never *where* that configuration's `compile_commands.json` would
-live. That path is computed by `compdb::resolve_output_dir(msvclsp_dir, sln_path)`, keyed on the
+live. That path is computed by `compdb::resolve_output_dir(sln2cc_dir, sln_path)`, keyed on the
 solution alone (namespacing is per-solution only; per-configuration namespacing was never scoped
 as separate work — see [ADR 51](51-output-namespacing-already-delivered.md)), and nothing on the
 Lua side duplicates that computation. Two more small gaps surfaced once the shape of
@@ -64,7 +64,7 @@ the time `M.check()` returns.
    A missing binary skips the version and database checks (both need to invoke it) but still runs
    the clangd/root/solution checks; no solution found skips the database check (nothing to call
    `list-configs` on) but still reports root and clangd. Every non-`ok` report carries a remedy —
-   `:MsvclspSelectConfig`, `:MsvclspRescan`, "install clangd and put it on PATH," or, for the two
+   `:Sln2ccSelectConfig`, `:Sln2ccRescan`, "install clangd and put it on PATH," or, for the two
    checks with no single fix to point at (a binary that doesn't respond to `--version`, a
    `list-configs` invocation that fails outright), the equivalent CLI invocation to run by hand and
    see the underlying failure — per CLAUDE.md §4's "actionable remedy rather than just a red mark."
@@ -88,12 +88,12 @@ item asks specifically for "a database present **on disk**" — a session cache 
 a solution that was generated in a previous Neovim session (or from a terminal, or by a different
 Neovim instance entirely) even though the file is sitting right there. `:checkhealth`'s whole
 premise is diagnosing a fresh, possibly-broken setup; a check that only works after the user has
-already successfully run `:MsvclspGenerate` once this session answers a much narrower question than
+already successfully run `:Sln2ccGenerate` once this session answers a much narrower question than
 the one being asked.
 
 **Why `resolve_output_dir`'s side effect (creating the output directory and its `.source` marker)
 is acceptable to trigger from `list-configs`, a nominally read-only query.** `list_configs()`
-already calls `db::Store::open`, which itself creates `.msvclsp/` and writes `state.json` if
+already calls `db::Store::open`, which itself creates `.sln2cc/` and writes `state.json` if
 neither exists — "read the current state" already mutates the filesystem to establish that state
 exists. `resolve_output_dir` creating the per-solution subdirectory and marker is the same category
 of side effect, not a new one introduced by this issue; `list-configs` was never purely read-only.
@@ -124,5 +124,5 @@ check) rather than a choice to stop early.
   `compile_commands.json` itself.
 - `discovery.lua`'s public API is unchanged; `health.lua` duplicates one `vim.fs.root()` call
   rather than gaining a dependency on a new `discovery.lua` export.
-- `nvim/doc/msvclsp.txt`'s troubleshooting section (MVP-33, still unwritten) can now point at real,
+- `nvim/doc/sln2cc.txt`'s troubleshooting section (MVP-33, still unwritten) can now point at real,
   documented `:checkhealth` behavior instead of a stub that always errors.

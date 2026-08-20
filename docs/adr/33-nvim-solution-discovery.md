@@ -4,7 +4,7 @@
 - **Date:** 2026-08-12
 - **Issue:** [MVP-27 — Solution discovery](../todos.md#neovim-plugin)
   (`feat/nvim-solution-discovery`)
-- **Affects:** `nvim/lua/msvclsp/discovery.lua`, `nvim/lua/msvclsp/config.lua`,
+- **Affects:** `nvim/lua/sln2cc/discovery.lua`, `nvim/lua/sln2cc/config.lua`,
   `nvim/tests/test_discovery.lua`
 
 ## Problem

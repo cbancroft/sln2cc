@@ -3,8 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-08-16
 - **Issue:** [V2-04 — Surface CLI errors in the plugin UI](../todos.md#v2) (`feat/nvim-error-surfacing`)
-- **Affects:** `nvim/lua/msvclsp/notify.lua` (new), `nvim/lua/msvclsp/cli.lua`,
-  `nvim/lua/msvclsp/commands.lua`, `nvim/lua/msvclsp/picker.lua`, `nvim/tests/test_notify.lua`
+- **Affects:** `nvim/lua/sln2cc/notify.lua` (new), `nvim/lua/sln2cc/cli.lua`,
+  `nvim/lua/sln2cc/commands.lua`, `nvim/lua/sln2cc/picker.lua`, `nvim/tests/test_notify.lua`
   (new), `nvim/tests/test_cli.lua`, `nvim/tests/test_commands.lua`, `nvim/tests/test_picker.lua`,
   [engineering_spec.md](../engineering_spec.md) ("Neovim Plugin — Responsibilities"),
   [ADR 02](02-structured-error-type.md), [ADR 03](03-cli-surface-and-json-contract.md),
@@ -15,7 +15,7 @@
 
 Both halves of "present structured CLI errors and evaluation warnings legibly" were vanishing.
 
-Every failure path in `commands.lua`/`picker.lua` did `vim.notify("msvclsp: " .. err.message,
+Every failure path in `commands.lua`/`picker.lua` did `vim.notify("sln2cc: " .. err.message,
 vim.log.levels.ERROR)`. `err.kind` — the entire reason ADR 34 threaded it through `cli.lua` at
 all ("V2-04 already has warnings available... and a `kind` field on every error, without needing
 to touch `cli.lua` again") — was decoded and then never read. A user saw "solution not found:
@@ -51,14 +51,14 @@ existing 2-parameter callback (`health.lua`'s `check_database`, and every test t
 issue) is unaffected: Lua silently discards a 3rd actual argument a callback's formal parameter
 list doesn't declare.
 
-**A new module, `nvim/lua/msvclsp/notify.lua`, owns both renderers.**
+**A new module, `nvim/lua/sln2cc/notify.lua`, owns both renderers.**
 
 - `M.REMEDIES`: a hand-written table, `ErrorKind` wire string → one-line, kind-specific remedy.
   All 14 of today's kinds have a row. A kind with no row (a future addition to `error.rs` not
   yet mirrored here) falls back to the message-only form rather than erroring — silently
   under-informative is an acceptable failure mode; erroring on a notification path is not.
 - `M.notify_error(err)`: `vim.notify` at `ERROR`, always. Appends the remedy when `err.kind` has
-  one; otherwise the CLI's own `message` (already legible — it's stderr's text, or "msvclsp
+  one; otherwise the CLI's own `message` (already legible — it's stderr's text, or "sln2cc
   exited with code N") stands alone.
 - `M.notify_warnings(warnings)`: no-op on `nil`/empty. Otherwise batches every diagnostic into
   **one** `vim.notify` call, not one per diagnostic — see the volume discussion below. Level is
@@ -115,7 +115,7 @@ flagged the volume risk for the *stderr* rendering of warnings — "MVP-15 will.
 the Visual Studio installation's own `.props`/`.targets`, at which point `` `$(X)` is not defined
 and expanded to nothing`` fires on the order of hundreds of times per project... a channel that is
 ignored is worse than no channel, because it looks like diligence." A notification *storm* on
-every `:MsvclspGenerate` would be strictly worse than the stderr case, since each `vim.notify`
+every `:Sln2ccGenerate` would be strictly worse than the stderr case, since each `vim.notify`
 call is its own UI event (a popup, a noice.nvim entry, a statusline flash) rather than a scrolling
 log line. One notification per call, with every diagnostic's message concatenated, keeps the
 signal ("something needs your attention, here's everything") without turning a single `generate`
@@ -152,7 +152,7 @@ own default in `config.lua`.
   across the Rust/Lua boundary; a kind added to `error.rs` without a row added here degrades to
   the message-only notification rather than breaking, per this ADR's own decision — but it is a
   drift risk worth naming for whoever next touches `error.rs`.
-- `commands.lua` and `picker.lua` each gain a `require("msvclsp.notify")` dependency, their first
+- `commands.lua` and `picker.lua` each gain a `require("sln2cc.notify")` dependency, their first
   dependency on anything outside `cli.lua`/`discovery.lua`/`picker.lua`/`lsp.lua`.
 - **New open question:** whether `:checkhealth`'s `check_database` should eventually surface
   warnings too, and through which mechanism (`vim.health.warn` per diagnostic vs. a summary

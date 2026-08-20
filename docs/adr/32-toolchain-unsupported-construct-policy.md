@@ -39,7 +39,7 @@ Actually implementing `$([MSBuild]::Unescape(...))` and, worse,
 `ToolLocationHelper.FindRootFolderWhereAllFilesExist` — real MSBuild engine logic that probes
 candidate roots on disk for a matching file set — was considered and rejected. It's the open-ended
 property-function grammar ADR 08 and 09 both deliberately declined, for one call site that
-computes nothing msvclsp needs: ADR 17 already resolves toolset include paths and
+computes nothing sln2cc needs: ADR 17 already resolves toolset include paths and
 `$(VCTargetsPath)` directly from the filesystem rather than by evaluating MSBuild's own resolution
 logic. `Microsoft.Cpp.ToolsetLocation.props` is on the import graph only because a real `.vcxproj`
 pulls it in unconditionally, not because anything downstream consumes what it would have computed.
@@ -137,7 +137,7 @@ rather than two unrelated patches landing months apart under the same issue numb
 small. `ToolLocationHelper.FindRootFolderWhereAllFilesExist` would not have been — it's real
 MSBuild engine behavior (candidate-root filesystem probing), and building even a narrow slice of
 `$([Class]::Method(...))` risks looking like an invitation to keep extending it. Since ADR 17
-already makes this file's actual output irrelevant to msvclsp, skipping it entirely is strictly
+already makes this file's actual output irrelevant to sln2cc, skipping it entirely is strictly
 simpler than partially evaluating it.
 
 ## Consequences
@@ -157,6 +157,6 @@ simpler than partially evaluating it.
   dominated by this rather than by genuine findings in the user's own tree.
 - **[ADR 42](42-makefile-configuration-missing-import.md) adds a third, narrower downgrade** for a
   case this ADR's mechanism doesn't cover: a toolchain import that resolves cleanly but is genuinely
-  absent because msvclsp deliberately doesn't seed `$(MSBuildToolsPath)`, gated on
+  absent because sln2cc deliberately doesn't seed `$(MSBuildToolsPath)`, gated on
   `ConfigurationType == Makefile` rather than on `in_toolchain` alone — the "genuinely absent stays
   fatal" guarantee this ADR's Discussion section argues for is preserved, not widened.

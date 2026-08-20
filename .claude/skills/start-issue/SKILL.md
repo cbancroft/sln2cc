@@ -125,7 +125,7 @@ All of it in this same change, per CLAUDE.md §9:
 | --- | --- |
 | `docs/adr/NN-<3-6-word-descriptor>.md` | Next unused number, never reused. Problem / Decision / Discussion / Consequences. The **discussion** is the part with value later: options rejected and why, and what the decision costs. Must reference the todo item. |
 | `docs/engineering_spec.md` | Current-state description, pointing at the ADR for the argument. Remove any Open Question this resolved; add any it surfaced. |
-| `docs/changelog.md` | `[Unreleased]`, written for someone *using* msvclsp — what changed for them, not which functions moved. Skip purely internal work. |
+| `docs/changelog.md` | `[Unreleased]`, written for someone *using* sln2cc — what changed for them, not which functions moved. Skip purely internal work. |
 | `docs/todos.md` | Tick the item, add its **Outcome** paragraph in the established voice, and record any test that could not be written as specified. |
 | Superseded ADRs | Mark the resolved question in place. Never rewrite or delete one. |
 

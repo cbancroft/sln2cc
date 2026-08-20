@@ -14,16 +14,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::Parser;
 
-use msvclsp::Reporter;
-use msvclsp::cli::{Cli, Outcome};
-use msvclsp::toolchain::{FakeToolchain, Toolchain};
+use sln2cc::Reporter;
+use sln2cc::cli::{Cli, Outcome};
+use sln2cc::toolchain::{FakeToolchain, Toolchain};
 
 /// Set to rewrite a golden file with fresh output instead of comparing against it.
 ///
 /// Always still runs under [`fake_toolchain`], so the rewritten file stays reproducible — this
 /// is for the one-time-by-hand case where a flag genuinely changes, not a way to point the suite
 /// at a real toolchain.
-const UPDATE_GOLDEN_ENV: &str = "MSVCLSP_UPDATE_GOLDEN";
+const UPDATE_GOLDEN_ENV: &str = "SLN2CC_UPDATE_GOLDEN";
 
 /// Deterministic toolchain for every fixture-driven test. Empty `include_paths` keeps toolchain
 /// system includes out of golden output entirely, so goldens only need to account for what the
@@ -43,7 +43,7 @@ pub fn fake_toolchain() -> FakeToolchain {
 }
 
 /// A directory removed when the test that made it ends — the `--root` a golden test points
-/// `generate` at, so `cargo test` never writes a `.msvclsp/` directory inside `fixtures/` itself.
+/// `generate` at, so `cargo test` never writes a `.sln2cc/` directory inside `fixtures/` itself.
 pub struct TempRoot(PathBuf);
 
 impl TempRoot {
@@ -51,7 +51,7 @@ impl TempRoot {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
 
         let path = env::temp_dir().join(format!(
-            "msvclsp-golden-{}-{name}-{}",
+            "sln2cc-golden-{}-{name}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -72,7 +72,7 @@ impl Drop for TempRoot {
 }
 
 /// Run `generate` for `fixture_sln`'s `Debug|x64` under [`fake_toolchain`], and either compare
-/// the normalized result against `golden_path` or — under `MSVCLSP_UPDATE_GOLDEN=1` — rewrite it.
+/// the normalized result against `golden_path` or — under `SLN2CC_UPDATE_GOLDEN=1` — rewrite it.
 ///
 /// `fixture_sln` must be an absolute, dot-free path (see `generate.rs`'s callers, which build one
 /// from `CARGO_MANIFEST_DIR` via `.parent()` rather than a `..` join) — the normalization below
@@ -81,7 +81,7 @@ impl Drop for TempRoot {
 pub fn assert_matches_golden(fixture_sln: &Path, golden_path: &Path) {
     let root = TempRoot::new("simple");
     let cli = Cli::try_parse_from([
-        "msvclsp",
+        "sln2cc",
         "generate",
         fixture_sln.to_str().expect("fixture path is valid UTF-8"),
         "--configuration",
@@ -93,7 +93,7 @@ pub fn assert_matches_golden(fixture_sln: &Path, golden_path: &Path) {
     ])
     .expect("parses");
     let mut reporter = Reporter::new(false);
-    let outcome = msvclsp::cli::run(&cli, &mut reporter, &fake_toolchain())
+    let outcome = sln2cc::cli::run(&cli, &mut reporter, &fake_toolchain())
         .expect("generation against a fixture succeeds");
 
     let database = match outcome {

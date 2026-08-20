@@ -38,17 +38,17 @@ local ALL_KINDS = {
   "storage-collision",
 }
 
-describe("msvclsp.notify.notify_error", function()
+describe("sln2cc.notify.notify_error", function()
   local notify_calls, restore_notify
   local notify
 
   before_each(function()
     -- stub_notify runs before the require, so `vim.notify` is captured either way -- if
-    -- `msvclsp.notify` doesn't exist yet, `after_each` can still restore it cleanly instead of
+    -- `sln2cc.notify` doesn't exist yet, `after_each` can still restore it cleanly instead of
     -- compounding one failure (missing module) into two (restore_notify never assigned).
     notify_calls, restore_notify = stub_notify()
-    package.loaded["msvclsp.notify"] = nil
-    notify = require("msvclsp.notify")
+    package.loaded["sln2cc.notify"] = nil
+    notify = require("sln2cc.notify")
   end)
 
   after_each(function()
@@ -63,13 +63,13 @@ describe("msvclsp.notify.notify_error", function()
   end)
 
   it("a nil kind (spawn failure, clap usage error) notifies the message alone", function()
-    notify.notify_error({ message = "msvclsp exited with code 2", kind = nil, code = 2 })
+    notify.notify_error({ message = "sln2cc exited with code 2", kind = nil, code = 2 })
 
     MiniTest.expect.equality(#notify_calls, 1)
     local msg = notify_calls[1].msg
-    MiniTest.expect.equality(msg:find("msvclsp exited with code 2", 1, true) ~= nil, true)
+    MiniTest.expect.equality(msg:find("sln2cc exited with code 2", 1, true) ~= nil, true)
     -- No remedy line: a nil kind has nothing in M.REMEDIES to append.
-    MiniTest.expect.equality(msg, "msvclsp: msvclsp exited with code 2")
+    MiniTest.expect.equality(msg, "sln2cc: sln2cc exited with code 2")
   end)
 
   it("an unrecognized kind string falls back to the message-only form rather than erroring", function()
@@ -80,7 +80,7 @@ describe("msvclsp.notify.notify_error", function()
     )
 
     MiniTest.expect.equality(ok, true)
-    MiniTest.expect.equality(notify_calls[1].msg, "msvclsp: something new")
+    MiniTest.expect.equality(notify_calls[1].msg, "sln2cc: something new")
   end)
 
   for _, kind in ipairs(ALL_KINDS) do
@@ -108,14 +108,14 @@ describe("msvclsp.notify.notify_error", function()
   end)
 end)
 
-describe("msvclsp.notify.notify_warnings", function()
+describe("sln2cc.notify.notify_warnings", function()
   local notify_calls, restore_notify
   local notify
 
   before_each(function()
     notify_calls, restore_notify = stub_notify()
-    package.loaded["msvclsp.notify"] = nil
-    notify = require("msvclsp.notify")
+    package.loaded["sln2cc.notify"] = nil
+    notify = require("sln2cc.notify")
   end)
 
   after_each(function()

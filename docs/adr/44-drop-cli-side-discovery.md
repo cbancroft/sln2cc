@@ -29,7 +29,7 @@ about.
 
 **The CLI will not gain a `discover` subcommand, ever, not just for MVP.** Solution discovery —
 finding `.sln` files, choosing among them, remembering a choice — is entirely
-`nvim/lua/msvclsp/discovery.lua`'s and later V1 picker work's responsibility. The CLI's contract
+`nvim/lua/sln2cc/discovery.lua`'s and later V1 picker work's responsibility. The CLI's contract
 stays exactly `list-configs <solution>` / `generate <solution> ...`: it is always handed a
 solution path, never asked to go find one.
 
@@ -78,5 +78,5 @@ here.
 - No `docs/changelog.md` entry: nothing shipped, and removing unused code is purely internal per
   CLAUDE.md §9.
 - Any future work on solution discovery (a picker, persistence, rescanning) is exclusively
-  `nvim/lua/msvclsp/discovery.lua` and its neighbors' territory — V1-03 through V1-06 in
+  `nvim/lua/sln2cc/discovery.lua` and its neighbors' territory — V1-03 through V1-06 in
   `docs/todos.md` already assumed this and need no change.

@@ -1,6 +1,6 @@
 # Project Spec
 
-This document defines the purpose of MSVC LSP: who it is for, what problem it solves, and what
+This document defines the purpose of sln2cc: who it is for, what problem it solves, and what
 the project does. It is derived from the initial thinking in [brainstorm.md](brainstorm.md) and
 will be expanded in future sessions.
 
@@ -34,7 +34,7 @@ solutions a developer might touch, and doesn't stay in sync as the solution chan
 
 # What The Project Does
 
-MSVC LSP closes that gap with two artifacts that work together:
+sln2cc closes that gap with two artifacts that work together:
 
 1. **A Rust CLI binary** that parses a Visual Studio solution and its associated project and
    property files for a given configuration/platform (e.g. `Debug|x64`), and generates a standard
@@ -56,7 +56,7 @@ MSVC LSP closes that gap with two artifacts that work together:
      `clangd`'s own directory-walking discovery.
 
 Generated artifacts — the `compile_commands.json` and the local database — are stored in a
-`.msvclsp` directory at the project root.
+`.sln2cc` directory at the project root.
 
 Together, these let a developer point Neovim at a Visual Studio solution and get working
 `clangd`-powered language support, without hand-converting the project to CMake or manually
@@ -79,11 +79,11 @@ rework.
   choice is persisted so future Neovim sessions in the same workspace don't re-prompt. An explicit
   "switch solution" command lets the user change the active solution at any time.
 - **Workspace identity is the project root**, detected using the same root markers Neovim's LSP
-  clients already use (e.g. `.git`), rather than a bespoke convention. This is also where `.msvclsp`
+  clients already use (e.g. `.git`), rather than a bespoke convention. This is also where `.sln2cc`
   lives.
-- **Storage is a single `.msvclsp` at project root, namespaced by solution** — e.g.
-  `.msvclsp/<solution-name>-<hash>/compile_commands.json`, where `<hash>` disambiguates two
-  solutions sharing a filename — rather than one `.msvclsp` per solution directory. This keeps a
+- **Storage is a single `.sln2cc` at project root, namespaced by solution** — e.g.
+  `.sln2cc/<solution-name>-<hash>/compile_commands.json`, where `<hash>` disambiguates two
+  solutions sharing a filename — rather than one `.sln2cc` per solution directory. This keeps a
   previously-used solution's cached artifacts around when switching back to it later. See
   "Storage Layout" in [engineering_spec.md](engineering_spec.md) for the naming scheme itself.
 - **Configuration/platform is remembered per solution, independently.** Different solutions can

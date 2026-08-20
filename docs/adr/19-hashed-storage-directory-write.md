@@ -10,7 +10,7 @@
 
 `compdb::build` (MVP-16, ADR 18) produces `Vec<CompileCommand>`; `compdb::write` was still
 `todo!()`. Two things needed settling that "Storage Layout" in `engineering_spec.md` had
-already designed but nothing had implemented: which `.msvclsp/<solution-name>-<hash>`
+already designed but nothing had implemented: which `.sln2cc/<solution-name>-<hash>`
 directory a given `.sln` writes into (and how a hash collision between two different
 solutions is caught instead of silently sharing output), and how the JSON itself gets to disk
 without a crash or a concurrent run leaving clangd reading a truncated file.
@@ -35,7 +35,7 @@ pub fn write(commands: &[CompileCommand], output_dir: &Path) -> Result<()>;
   lexical-path implementation.
 - **A `.source` marker file inside each output directory** records the same normalized,
   lowercased source-directory string used to compute the hash. `resolve_output_dir` creates it
-  (and the directory, and `.msvclsp` itself if absent) on first use, and on every later call
+  (and the directory, and `.sln2cc` itself if absent) on first use, and on every later call
   checks it against the current solution's own value. A mismatch is
   `Error::StorageCollision`, naming both the claimed directory and the two conflicting source
   directories — never a silent share or overwrite (CLAUDE.md §3).
@@ -89,7 +89,7 @@ comment" rule, rather than plumbing a new `Error` variant for a case that cannot
 rather than just its directory. Rejected because the directory is what disambiguates two
 solutions sharing a filename — the stated purpose of this scheme — and because a solution
 renamed in place (same directory, new `.sln` filename) would otherwise silently orphan its old
-`.msvclsp` directory for a reason unrelated to the "solution moved" cost the spec already
+`.sln2cc` directory for a reason unrelated to the "solution moved" cost the spec already
 accepts.
 
 ## Consequences
@@ -101,6 +101,6 @@ accepts.
   a `.source` marker by hand at the exact path `output_dir_name` computes, rather than
   constructing a genuine FNV-1a collision, since one can't be constructed by hand. The
   collision-handling code path is real; only the *trigger* is synthetic in tests.
-- **A moved solution directory still orphans its old `.msvclsp/<name>-<hash>/`**, unchanged
+- **A moved solution directory still orphans its old `.sln2cc/<name>-<hash>/`**, unchanged
   from what "Storage Layout" already accepted — this issue implements the scheme, not a new
   tradeoff.
