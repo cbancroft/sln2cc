@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::msbuild::eval::{self, Properties};
 use crate::msbuild::glob;
-use crate::msbuild::paths::normalize;
+use crate::msbuild::paths;
 use crate::msbuild::project::{self, Element, Import, PropertyGroup};
 use crate::msbuild::reserved;
 use crate::{Error, ErrorKind, Reporter, Result, progress};
@@ -82,7 +82,7 @@ pub fn resolve(
         reporter,
     };
 
-    walk.enter(&normalize(root), None)?;
+    walk.enter(&paths::normalize(root), None)?;
 
     Ok(ProjectTree {
         files: walk.files,
@@ -281,7 +281,7 @@ impl Walk<'_> {
         if target.contains('*') || target.contains('?') {
             return self.import_wildcard(target, base, file, import.line);
         }
-        self.enter(&normalize(&base.join(target)), Some(file))
+        self.enter(&paths::resolve(base, target), Some(file))
     }
 
     /// Evaluate a `Condition`, reporting what it could not resolve. An absent condition still holds.
@@ -422,7 +422,7 @@ mod tests {
     /// path it derived its value from — `TempTree` writes relative paths with `/`, which Windows
     /// accepts on the way in and does not preserve on the way out.
     fn this_file_directory(file: &Path) -> String {
-        let normalized = normalize(file);
+        let normalized = paths::normalize(file);
         let parent = normalized.parent().expect("a file has a directory");
         format!("{}{}", parent.display(), std::path::MAIN_SEPARATOR)
     }
@@ -1049,7 +1049,7 @@ mod tests {
     /// `Walk::in_toolchain`'s `starts_with` compares two paths built the same way.
     fn tree_with_toolchain(root: &Path, toolchain: &Path) -> (Result<ProjectTree>, Reporter) {
         let mut reporter = Reporter::new(false);
-        let toolchain = normalize(toolchain);
+        let toolchain = paths::normalize(toolchain);
         let result = resolve(root, Properties::new(), Some(&toolchain), &mut reporter);
         (result, reporter)
     }
@@ -1695,7 +1695,7 @@ mod tests {
             warning.message
         );
         assert_eq!(warning.line, Some(3), "sited where it was written");
-        let expected = normalize(&root);
+        let expected = paths::normalize(&root);
         assert_eq!(warning.file.as_deref(), Some(expected.as_path()));
     }
 
