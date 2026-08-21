@@ -2,6 +2,26 @@
 
 clangd support for C/C++ projects built with Visual Studio solutions.
 
+## Introduction
+
+This tool started as something fun to make while I was laid off from Bethesda. It served
+as an easy way to learn more about how to apply AI (mainly Claude Code) to a project while
+also teaching myself Rust and getting into Neovim plugin development. It grew out of my
+absolute love/hate relationship with Visual Studio, and its utter lack of good Vim plugins.
+Every time I tried to use it, I wished I had my Neovim setup integrated with it. I managed
+to cobble together a halfway decent CMake definition of our project that kind of did the job,
+but I wanted something that could integrate more easily with any solution. With that idea, 
+`sln2cc` was born. It's not perfect, but it does pretty close to exactly what I want it to.
+It is still very much a toy, but it has made my life easier when dealing with arbitrary 
+Windows projects that don't already have a CMake integration that other tools can 
+generate completion from.
+
+I am trying to reduce the AI-Slop feel of the project as I take a bigger hands-on role in 
+its development, so bear with me as I eliminate all the 'load-bearing's from the code base
+as I continue development.
+
+## Overview
+
 `clangd` needs a `compile_commands.json` compilation database to know how each file is
 compiled. CMake projects generate one automatically; Visual Studio solutions don't.
 sln2cc parses a `.sln` and its `.vcxproj`/`.props` files for a chosen
