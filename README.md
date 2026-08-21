@@ -40,10 +40,36 @@ installed, since toolchain and Windows SDK discovery depend on it.
 
 ## Using the Neovim plugin
 
-There's no published release yet. The plugin lives at `nvim/`, alongside `cli/`, not at the
-repository root, which affects how you point a plugin manager at it.
+There's no tagged/versioned release yet, but the repository is on GitHub and installable
+directly. The plugin lives at `nvim/`, alongside `cli/`, not at the repository root — plain
+plugin-manager specs that clone the whole repo (`"cbancroft/sln2cc"`) won't find `plugin/`,
+`lua/sln2cc/`, or `doc/`, since those end up nested under `nvim/` instead of at the clone's
+root. Point your plugin manager at the `nvim-plugin` branch instead, which CI keeps mirrored
+to `nvim/`'s current contents on every push to `main` (see
+[ADR 54](docs/adr/54-nvim-pack-subtree-branch.md)):
 
-With `lazy.nvim`, a local checkout works directly since `dir =` accepts any path:
+With `lazy.nvim`:
+
+```lua
+{
+  "cbancroft/sln2cc",
+  branch = "nvim-plugin",
+  main = "sln2cc",
+  opts = {},
+}
+```
+
+With Neovim's built-in `vim.pack.add()`:
+
+```lua
+vim.pack.add({
+  { src = "https://github.com/cbancroft/sln2cc", version = "nvim-plugin" },
+})
+require("sln2cc").setup({})
+```
+
+If you're working on the plugin itself rather than just using it, point `lazy.nvim` at a local
+checkout instead so edits take effect without pushing:
 
 ```lua
 {
@@ -51,18 +77,6 @@ With `lazy.nvim`, a local checkout works directly since `dir =` accepts any path
   main = "sln2cc",
   opts = {},
 }
-```
-
-With Neovim's built-in `vim.pack.add()`, a local `dir =`-style override doesn't exist — it
-clones a git ref and puts that clone's root on `runtimepath`, so it can't reach into a `nvim/`
-subdirectory of the main repo. Point it instead at `nvim-plugin`, a branch CI keeps mirrored
-to `nvim/`'s current contents (see [ADR 54](docs/adr/54-nvim-pack-subtree-branch.md)):
-
-```lua
-vim.pack.add({
-  { src = "https://github.com/cbancroft/sln2cc", version = "nvim-plugin" },
-})
-require("sln2cc").setup({})
 ```
 
 Either way, you'll also need the `sln2cc` binary itself on `PATH` (`cargo install --path cli`
