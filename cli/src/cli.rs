@@ -605,13 +605,27 @@ mod tests {
 
     #[test]
     fn root_defaults_to_the_solutions_directory() {
+        // Built rather than written as a `C:\`-prefixed literal: that literal is a single opaque
+        // component on the Linux CI runner, so `Path::parent()` never splits it the way it does
+        // on Windows.
+        let mut proj = PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" });
+        proj.push("proj");
+        let mut solution = proj.clone();
+        solution.push("app.sln");
+        let mut workspace = PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" });
+        workspace.push("workspace");
+
         assert_eq!(
-            solution_args(r"C:\proj\app.sln", None).root(),
-            PathBuf::from(r"C:\proj")
+            solution_args(&solution.to_string_lossy(), None).root(),
+            proj
         );
         assert_eq!(
-            solution_args(r"C:\proj\app.sln", Some(r"C:\workspace")).root(),
-            PathBuf::from(r"C:\workspace")
+            solution_args(
+                &solution.to_string_lossy(),
+                Some(&workspace.to_string_lossy())
+            )
+            .root(),
+            workspace
         );
         // `Path::parent` yields an empty path for a bare filename, not `None`.
         assert_eq!(solution_args("app.sln", None).root(), PathBuf::from("."));
