@@ -1991,6 +1991,114 @@ Goal: one solution, one manually selected configuration/platform, producing a
   exists). CI's own verification is structural: the job only runs after the `nvim` test job
   passes, so a broken plugin never reaches the published branch.
 
+- [x] **MVP-49 — Evaluate the static property functions the toolset location chain uses**
+  `fix/static-property-functions` · ~6h
+
+  **Summary:** A Debug configuration's generated entries are missing `_DEBUG`. The project never
+  writes it: `UseDebugLibraries=true` becomes `RuntimeLibrary=MultiThreadedDebugDLL` in
+  Microsoft's own toolset `.props`, `flags.rs` translates that to `/MDd`, and clang-cl defines
+  `_DEBUG` from `/MDd`. sln2cc never reaches those `.props`, so the chain breaks at its first step.
+
+  **Description:** Reported by the user against a real solution, and traced against a real VS 17
+  `v170` toolset. The break is in `Microsoft.Cpp.props`, which assigns
+  `_VCTargetsPathForToolset` from
+  `$([MSBuild]::Unescape($([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist(...))))`;
+  `Microsoft.Cpp.ToolsetLocation.props` builds `_PlatformProps` from it and imports
+  `Platform.props`, which leads through `Toolset.props` and `Microsoft.Cpp.Common.props` to
+  `Microsoft.Cl.Common.props`, where the `ClCompile` defaults live. `property_function`
+  (`eval.rs`, MVP-43) only recognizes the instance-method form `$(Prop.Method('arg'))`; every
+  static `$([Class]::Method(...))` call is left verbatim and recorded unsupported. MVP-36 then
+  taints the property and skips every import built from it with a "could not be fully resolved"
+  warning — so the whole toolset `.props` chain, and every `ClCompile` default it carries
+  (`RuntimeLibrary` from `UseDebugLibraries`, `UNICODE`/`_UNICODE` from `CharacterSet`, …), is
+  absent from real-installation output. Only fixtures that set `RuntimeLibrary` explicitly
+  (`simple`) get `/MDd`; `multi-config`'s Debug entries carry no `/MDd` at all.
+
+  [ADR 32](adr/32-toolchain-unsupported-construct-policy.md) deliberately added no static
+  property-function grammar, on the grounds that nothing downstream consumed what the location
+  chain computed. That holds for include paths (ADR 17 resolves those directly) but not for
+  compiler defaults, which exist only inside the skipped `.props`. This item revisits that half of
+  ADR 32 — the downgrade-to-warning policy itself stays.
+
+  The only static functions on the path to `Cl.Common.props` are `[MSBuild]::Unescape`,
+  `[Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist`, and
+  `[MSBuild]::GetDirectoryNameOfFileAbove` (`Microsoft.Cpp.props`'s vcpkg detection). A simplified
+  Python reimplementation of the pipeline hit the same gap and fixed it with the same three.
+  `$(Registry:...)` reads stay unsupported — confirmed with the user rather than expanded to `""`
+  as the Python version did, since that would be a silent guess.
+
+  **Split out:** loading the chain is not, on its own, enough for the user's `_DEBUG`. The real
+  `Cl.Common.props` guards each default with `Condition="'%(ClCompile.RuntimeLibrary)' == ''"`,
+  which this evaluator cannot evaluate — that is **MVP-50**. Split at the user's request so each
+  half reviews on its own.
+
+  **Tests:** Unit tests in `eval.rs`, all through `expand()`: `%XX` decoding for `Unescape` and a
+  malformed escape left alone; `FindRootFolderWhereAllFilesExist` picking the first root holding
+  every file (against a `TempTree`, `\`-spelled relative files), returning `""` when none does,
+  skipping empty roots, and matching nothing for an empty file list; `GetDirectoryNameOfFileAbove`
+  walking upward and returning `""` when absent; the real `Microsoft.Cpp.props` line resolving
+  inside out without tainting its property; quoted and bare arguments; an undefined property in an
+  argument recorded; unlisted static calls, wrong arity, an unsupported or tainted argument, and
+  differently-cased names all left verbatim and recorded unsupported; a static call inside a
+  `Condition`; and a nesting cap (32 resolves, 33 is `RecursionLimit`). In `msbuild.rs`, a stub of
+  the real chain (real property names, the real nested call, the `_PlatformProps` indirection)
+  is imported through to `Cl.Common.props` with no warnings, and its `UseDebugLibraries`-gated
+  `RuntimeLibrary` gives Debug `/MDd` and Release `/MD`.
+
+  **Outcome:** *(Draft — reconciled against the landed code by review-issue.)* `expand()` became
+  a wrapper over `expand_at(input, props, depth)`, and a new `static_function` is tried right
+  after MVP-43's `property_function`, before the unsupported fallback. It matches the three
+  `(class, method)` pairs exactly and case-sensitively, checks the arity, splits arguments on
+  top-level commas, unquotes them, and expands each one level deeper — the one place `expand()`
+  now recurses, over the literal input text only, capped at `MAX_FUNCTION_DEPTH` (32) and failing
+  as `RecursionLimit`. An argument that records anything unsupported, including a tainted
+  property, makes the whole call unsupported, so the outer reference is what gets recorded and
+  taint survives a hop through `Unescape`. `FindRootFolderWhereAllFilesExist` returns the matching
+  root as written rather than normalized, because the chain concatenates it directly with a
+  relative path. The three text helpers — `split_args` (top-level commas only, `None` when
+  unbalanced, an empty list as zero arguments), `unquote` (one matching pair) and `unescape`
+  (`%XX` only when both are hex digits, checked explicitly because `u8::from_str_radix` accepts a
+  leading `+`) — stay private to `eval.rs`; nothing else in the crate does the same job (`flags.rs`'
+  `split_arguments` follows `cl.exe`'s whitespace rules, and MVP-43's literal-argument parsing must
+  keep rejecting a bare argument). Deviation from the plan: the MVP-36 test
+  `a_real_shaped_project_imports_a_stub_toolset_chain_without_failing` was kept as-is rather than
+  rewritten — its `[Fake.ToolLocationHelper]::Find()` call is still unlisted, so it still covers
+  the downgrade at the `evaluate()` level, and the new chain tests sit beside it. See
+  [ADR 55](adr/55-static-property-function-whitelist.md).
+
+- [ ] **MVP-50 — Evaluate `%(Metadata)` references in metadata `Condition`s**
+  `fix/metadata-conditions` · ~6h
+
+  **Summary:** Microsoft's toolset `.props` set every `ClCompile` default behind a guard like
+  `<RuntimeLibrary Condition="'%(ClCompile.RuntimeLibrary)' == ''">MultiThreadedDebugDll</RuntimeLibrary>`
+  ("only if the project didn't set one"). `Condition` evaluation expands `$(...)` only, so the
+  operand stays the literal text `%(ClCompile.RuntimeLibrary)`, never equals `''`, and the default
+  is never applied. Once MVP-49 loads the chain, this is the last link between
+  `UseDebugLibraries=true` and `/MDd` (and so `_DEBUG`).
+
+  **Description:** Split from MVP-49. Two gaps, both needed:
+
+  1. A `Condition` on a metadata setting — in an `ItemDefinitionGroup` or on a `<ClCompile>`
+     item's child — must see the metadata bag being built, so `%(Name)` in an operand expands
+     against it. `items.rs::apply` evaluates these through `holds()`, which only passes
+     properties. Group-level and item-level `Condition`s stay property-only, as in MSBuild.
+  2. `expand_metadata` records the qualified form `%(ClCompile.X)` as unsupported. The toolset
+     files use the qualified form throughout, so it has to resolve. The open question is how
+     strict to be about the qualifier: only `ClCompile` is ever settled, so a qualifier naming any
+     other item type should probably stay unsupported rather than resolve against the wrong bag.
+
+  The Python reimplementation handled both (`solve.py` `apply_metadata` /
+  `TokenParser.operand` / `expand_metadata`), and also applied the `FixupCLCompileOptions`
+  target's `ClCompile` item groups — that last one is **not** in scope here; file it separately if
+  real output shows it matters.
+
+  **Tests:** `eval.rs`: a metadata-aware condition sees a set value and an unset one (`''`); the
+  qualified form resolves for `ClCompile` and stays unsupported for another qualifier. `items.rs`:
+  an `ItemDefinitionGroup` setting guarded on its own metadata applies when unset and does not
+  override a value set earlier. `msbuild.rs`: change MVP-49's `Cl.Common.props` stub to the real
+  `%(ClCompile.RuntimeLibrary)`-guarded shape and confirm Debug still gets `/MDd` — and that a
+  project setting `RuntimeLibrary` explicitly keeps its own value.
+
 ---
 
 # V1 — Multi-solution and workflow polish

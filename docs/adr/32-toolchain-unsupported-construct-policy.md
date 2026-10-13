@@ -140,6 +140,13 @@ MSBuild engine behavior (candidate-root filesystem probing), and building even a
 already makes this file's actual output irrelevant to sln2cc, skipping it entirely is strictly
 simpler than partially evaluating it.
 
+**Superseded by [ADR 55](55-static-property-function-whitelist.md).** The premise was wrong: ADR 17
+makes the chain's *include paths* irrelevant, but the `.props` it gates are also where every
+`ClCompile` default lives (`RuntimeLibrary` from `UseDebugLibraries`, and through it `_DEBUG`).
+MVP-49 found a real solution missing `_DEBUG` for exactly this reason and added a closed whitelist
+of the three static functions the chain uses. The downgrade policy above is unchanged and still
+covers every static call off that list.
+
 ## Consequences
 
 - **ADR 09's Consequences section is updated** to note this landed and point here, per CLAUDE.md

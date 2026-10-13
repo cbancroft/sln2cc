@@ -130,6 +130,10 @@ and more clearly-bounded shape; nothing here reopens that question.
 - **New open question:** whether property-function arguments should ever be expanded (a nested
   `$(...)` inside the literal). Deferred rather than guessed at — see Discussion above — and left
   for a future issue if a real file needs it.
+  **Update:** answered for *static* calls only by [ADR 55](55-static-property-function-whitelist.md)
+  (MVP-49) — arguments to the three whitelisted `$([Class]::Method(...))` functions are expanded,
+  because the real toolset location chain nests one inside another. Instance-method arguments, this
+  ADR's subject, stay literal-only.
 - **New open question:** whether the method whitelist should grow (`ToLower`/`ToUpper`/`Trim` are
   the next most likely candidates from real-world `.vcxproj` files). Deliberately not designed for
   ahead of a real case, per CLAUDE.md's "don't design for hypothetical future requirements" — add

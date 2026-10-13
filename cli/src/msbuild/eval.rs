@@ -13,7 +13,7 @@
 
 use std::{collections::HashMap, collections::HashSet, path::Path};
 
-use crate::{Error, Reporter, Result};
+use crate::{Error, Reporter, Result, msbuild::paths};
 
 /// How large one expanded value may grow before the expansion is refused.
 ///
@@ -23,6 +23,13 @@ const MAX_VALUE_BYTES: usize = 1 << 20;
 /// How deeply a condition may nest before it is refused. Real conditions rarely nest more than 3 or
 /// 4 deep, so this is very generous
 const MAX_CONDITION_DEPTH: usize = 32;
+
+/// How deeply static property-function calls may nest inside one another's arguments.
+///
+/// Argument expansion recurses, so nesting depth is stack depth. The recursion is over the literal
+/// input text, never a stored value, so it cannot cycle -- the cap only keeps a hostile file nesting
+/// tens of thousands of calls inside the 1 MiB value cap off a stack overflow.
+const MAX_FUNCTION_DEPTH: usize = 32;
 
 /// The property bag built up during evaluation. Later assignments shadow earlier ones.
 #[derive(Debug, Default, Clone)]
@@ -231,12 +238,21 @@ fn report(
 
 /// Expand `$(...)` references in `input` against the current property bag.
 ///
-/// One pass, not recursive deliberately. Values in the bag were expanded when they were assigned,
-/// so a substituted value cannot contain references. Rescanning would possibly introduce cycles.
+/// One pass over stored values, deliberately never rescanned. Values in the bag were expanded when
+/// they were assigned, so a substituted value cannot contain references, and rescanning one would
+/// make cycles possible. The only recursion is into the literal arguments of the static functions
+/// ADR 55 whitelists, which is over the input text rather than a stored value and is capped at
+/// `MAX_FUNCTION_DEPTH`.
 ///
 /// `%(Metadata)` and `@(Item)` are left alone. `$` is the only sigil handled here and `%(...)`
 /// inheritance will be completed in MVP-12.
 pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
+    expand_at(input, props, 0)
+}
+
+/// [`expand`] at `depth` levels of static-function argument nesting, which [`static_function`]
+/// checks against [`MAX_FUNCTION_DEPTH`] before recursing.
+fn expand_at(input: &str, props: &Properties, depth: usize) -> Result<Expansion> {
     let mut out = Expansion::default();
     let mut rest = input;
 
@@ -280,6 +296,8 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
             }
         } else if let Some(value) = property_function(body, props, &mut out) {
             out.value.push_str(&value);
+        } else if let Some(value) = static_function(body, props, &mut out, depth)? {
+            out.value.push_str(&value);
         } else {
             // Property function, registry read, nested reference or `$()`. Left in verbatim.
             out.record_unsupported(reference);
@@ -293,6 +311,216 @@ pub fn expand(input: &str, props: &Properties) -> Result<Expansion> {
     out.value.push_str(rest);
     check_size(&out.value, input)?;
     Ok(out)
+}
+
+/// Recognizes `$([Class]::Method(args))` for the three static functions required by ADR 55. `Ok(None)` for
+/// anything else, including a recognized call whose argument could not be fully resolved, so the
+/// caller records the *whole* reference unsupported and leaves it verbatim.
+fn static_function(
+    body: &str,
+    props: &Properties,
+    out: &mut Expansion,
+    depth: usize,
+) -> Result<Option<String>> {
+    let Some((class, rest)) = body.strip_prefix('[').and_then(|r| r.split_once("]::")) else {
+        return Ok(None);
+    };
+    let Some(open) = rest.find('(') else {
+        return Ok(None);
+    };
+    if !rest.ends_with(')') {
+        return Ok(None);
+    }
+    let method = &rest[..open];
+
+    let arity = match (class, method) {
+        ("MSBuild", "Unescape") => 1,
+        ("Microsoft.Build.Utilities.ToolLocationHelper", "FindRootFolderWhereAllFilesExist")
+        | ("MSBuild", "GetDirectoryNameOfFileAbove") => 2,
+        _ => return Ok(None),
+    };
+
+    if depth >= MAX_FUNCTION_DEPTH {
+        return Err(Error::RecursionLimit {
+            limit: MAX_FUNCTION_DEPTH,
+            context: format!("nesting property functions in `{}`", truncate(body, 60)),
+        });
+    }
+
+    let Some(raw) = split_args(&rest[open + 1..rest.len() - 1]) else {
+        return Ok(None);
+    };
+    if raw.len() != arity {
+        return Ok(None);
+    }
+
+    let mut args = Vec::with_capacity(arity);
+    let mut undefined = Vec::new();
+    for arg in raw {
+        let expansion = expand_at(unquote(arg.trim()), props, depth + 1)?;
+        if !expansion.unsupported.is_empty() {
+            // Part of the outer construct: recording the inner piece separately
+            // would name something the user never wrote
+            return Ok(None);
+        }
+        undefined.extend(expansion.undefined);
+        args.push(expansion.value);
+    }
+
+    // Only merged on success, so a failed call reports exactly one finding
+    for name in &undefined {
+        out.record_undefined(name);
+    }
+
+    Ok(Some(match method {
+        "Unescape" => unescape(&args[0]),
+        "FindRootFolderWhereAllFilesExist" => {
+            find_root_folder_where_all_files_exist(&args[0], &args[1])
+        }
+        "GetDirectoryNameOfFileAbove" => directory_name_of_file_above(&args[0], &args[1]),
+        _ => unreachable!("matched against the whitelist above"),
+    }))
+}
+
+/// The first `;`-separated root under which every `;`-separated relative file exists. Empty when
+/// nothing matches, or when `files` is empty.
+///
+/// The root is returned as written, not normalized: the toolset chain concatenates it straight
+/// onto `$(_RelativePlatformProps)`, so normalizing would drop its trailing separator and fuse two
+/// path segments together. MSBuild returns the candidate string unchanged too.
+fn find_root_folder_where_all_files_exist(roots: &str, files: &str) -> String {
+    let files: Vec<&str> = files
+        .split(';')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if files.is_empty() {
+        return String::new();
+    }
+
+    roots
+        .split(';')
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .find(|root| {
+            let base = paths::from_msbuild(root);
+            files
+                .iter()
+                .all(|file| paths::resolve(&base, file).is_file())
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Walk from `start` upward and return the first directory that contains `file`. Empty when
+/// none does.
+fn directory_name_of_file_above(start: &str, file: &str) -> String {
+    let (start, file) = (start.trim(), file.trim());
+    if start.is_empty() || file.is_empty() {
+        return String::new();
+    }
+
+    paths::normalize(&paths::from_msbuild(start))
+        .ancestors()
+        .find(|dir| dir.join(paths::from_msbuild(file)).is_file())
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Split a static call's argument list on its top-level commas -- the ones not inside a nested
+/// `(...)` or a quoted string -- so `FindRootFolderWhereAllFilesExist($(A), $(B))` is two arguments
+/// and `Unescape('a,b')` is one.
+///
+/// `None` for unbalanced input: a stray `)` or an unterminated quote has no honest split, and the
+/// caller treats it as an unrecognized call. An empty or all-whitespace list is zero arguments,
+/// not one empty argument, so `Unescape()` fails the arity check instead of unescaping `""`.
+fn split_args(text: &str) -> Option<Vec<&str>> {
+    if text.trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut args = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut start = 0;
+
+    for (at, c) in text.char_indices() {
+        if let Some(open) = quote {
+            // Inside a quoted string nothing is syntax until the matching quote closes it.
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+
+        match c {
+            '\'' | '"' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                args.push(&text[start..at]);
+                start = at + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 || quote.is_some() {
+        return None;
+    }
+
+    args.push(&text[start..]);
+    Some(args)
+}
+
+/// Strip one matching pair of `'` or `"` from around an already-trimmed argument.
+///
+/// Only one pair, and only when both ends match: `'a'b'` keeps its inner quote, and a lone `'` is
+/// left alone rather than sliced into an empty string.
+fn unquote(arg: &str) -> &str {
+    for quote in ['\'', '"'] {
+        if let Some(inner) = arg
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            return inner;
+        }
+    }
+    arg
+}
+
+/// Reverse MSBuild's `%XX` escaping, as `[MSBuild]::Unescape` does.
+///
+/// A `%` not followed by two hex digits is not an escape and is left as written -- `100%` stays
+/// `100%` rather than a guessed decoding quietly changing a path. Works on bytes because an escape
+/// can encode any byte; the result is re-read as UTF-8 lossily, since a project spelling half a
+/// multi-byte character in escapes has no meaningful decoding anyway.
+fn unescape(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            // Checked digit by digit: `from_str_radix` alone would also accept a leading `+`, and
+            // decode `%+1` as a byte the file never escaped.
+            let digits = bytes
+                .get(at + 1..at + 3)
+                .filter(|pair| pair.iter().all(u8::is_ascii_hexdigit));
+            if let Some(byte) = digits
+                .and_then(|pair| std::str::from_utf8(pair).ok())
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            {
+                out.push(byte);
+                at += 3;
+                continue;
+            }
+        }
+        out.push(bytes[at]);
+        at += 1;
+    }
+
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Substitute `%(Name)` references in `input` against `metadata` bag.
@@ -873,6 +1101,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::testing::TempTree;
     use crate::{ErrorKind, Reporter, Severity};
 
     /// A bag seeded verbatim — the shape `msbuild/reserved.rs` hands over, minus the lock.
@@ -1840,8 +2069,13 @@ mod tests {
         // construct copied through an intermediate property cannot look clean one hop later.
         let mut props = Properties::new();
         // An unsupported construct assigned raw taints the key (MVP-36's own mechanism) and is
-        // left verbatim -- so the stored value is the literal text below, not "Anti".
-        assign(&mut props, "SolutionName", "$([MSBuild]::Unescape('Anti'))");
+        // left verbatim -- so the stored value is the literal text below, not "Anti". Spelled with
+        // a static call off MVP-49's whitelist; `[MSBuild]::Unescape` would now resolve cleanly.
+        assign(
+            &mut props,
+            "SolutionName",
+            "$([System.IO.Path]::GetFileName('Anti'))",
+        );
 
         let expansion =
             expand("$(SolutionName.StartsWith('Anti'))", &props).expect("expands anyway");
@@ -1872,6 +2106,363 @@ mod tests {
         assign(&mut props, "IsContosoTests", "true");
 
         assert!(holds("'$(IsContosoTests)'=='true'", &props));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-49 — the static property functions the toolset location chain uses
+    // ---------------------------------------------------------------------------------------
+    //
+    // Every case goes through `expand()` rather than the helpers behind it: the whitelist is a
+    // behaviour of `$(...)` expansion, and how it is factored internally is the implementer's call.
+
+    /// The real `Microsoft.Cpp.props` line that decides where the toolset lives, verbatim apart
+    /// from the line break. Everything the user's `/MDd` depends on hangs off this one value.
+    const TOOLSET_LOCATION: &str = "$([MSBuild]::Unescape($([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(_VCTargetsPathFolders), $(_RelativeToolsetFiles)))))";
+
+    /// `dir` spelled the way MSBuild spells a folder property: absolute, trailing separator.
+    fn folder(dir: &Path) -> String {
+        format!("{}{}", dir.display(), std::path::MAIN_SEPARATOR)
+    }
+
+    #[test]
+    fn unescape_decodes_percent_hex_escapes() {
+        // MSBuild's own escaping for characters that would otherwise be syntax -- `;` would split
+        // a list, `$` would open a reference. Hex digits in either case, as .NET parses them.
+        assert_eq!(
+            expanded("$([MSBuild]::Unescape('a%3Bb%24c%2a'))", &Properties::new()),
+            "a;b$c*"
+        );
+    }
+
+    #[test]
+    fn unescape_passes_unescaped_text_through() {
+        // The common case in the real chain: the argument is a plain path with nothing escaped.
+        assert_eq!(
+            expanded(r"$([MSBuild]::Unescape('C:\VS\v170\'))", &Properties::new()),
+            r"C:\VS\v170\"
+        );
+    }
+
+    #[test]
+    fn unescape_leaves_a_malformed_escape_alone() {
+        // A `%` with no two hex digits after it is not an escape, and MSBuild leaves it as written.
+        // Guessing a decoding here would quietly change a path.
+        for (input, want) in [
+            ("$([MSBuild]::Unescape('100%'))", "100%"),
+            ("$([MSBuild]::Unescape('%Z1'))", "%Z1"),
+            ("$([MSBuild]::Unescape('a%4'))", "a%4"),
+        ] {
+            assert_eq!(expanded(input, &Properties::new()), want, "for {input}");
+        }
+    }
+
+    #[test]
+    fn find_root_folder_returns_the_first_root_holding_every_file() {
+        // The shape `Microsoft.Cpp.props` asks: several candidate roots, a list of relative toolset
+        // files spelled with `\`, and the answer is the root that has *all* of them. The first
+        // root holds only one of the two, so it must lose to the second.
+        let dir = TempTree::new("find-root-folder");
+        dir.write("partial/Platforms/x64/Platform.props", "");
+        dir.write("full/Platforms/x64/Platform.props", "");
+        dir.write("full/Platforms/x64/PlatformToolsets/v143/Toolset.props", "");
+        let props = bag(&[
+            (
+                "Roots",
+                format!(
+                    "{};{}",
+                    folder(&dir.path("partial")),
+                    folder(&dir.path("full"))
+                )
+                .as_str(),
+            ),
+            (
+                "Files",
+                r"Platforms\x64\Platform.props;Platforms\x64\PlatformToolsets\v143\Toolset.props",
+            ),
+        ]);
+
+        let value = expanded(
+            "$([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(Roots), $(Files)))",
+            &props,
+        );
+
+        // As written, trailing separator kept: the chain concatenates this straight onto
+        // `$(_RelativePlatformProps)`, so a normalized path would fuse two segments together.
+        assert_eq!(value, folder(&dir.path("full")));
+    }
+
+    #[test]
+    fn find_root_folder_is_empty_when_no_root_holds_every_file() {
+        // The negative case, so the check cannot pass by always picking the first root. Empty is
+        // what the real chain tests for (`'$(_VCTargetsPathForToolset)' != ''`).
+        let dir = TempTree::new("find-root-folder-none");
+        dir.write("a/one.props", "");
+        dir.write("b/two.props", "");
+        let props = bag(&[
+            (
+                "Roots",
+                format!("{};{}", folder(&dir.path("a")), folder(&dir.path("b"))).as_str(),
+            ),
+            ("Files", "one.props;two.props"),
+        ]);
+
+        let value = expanded(
+            "$([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(Roots), $(Files)))",
+            &props,
+        );
+
+        assert_eq!(value, "");
+    }
+
+    #[test]
+    fn find_root_folder_skips_empty_roots() {
+        // `$(CurrentVCTargetsPath);$(AdditionalVCTargetsPath)` with the second never set -- which
+        // is every real installation -- leaves a trailing `;`. An empty root must not resolve
+        // against the working directory and match by accident.
+        let dir = TempTree::new("find-root-folder-empty");
+        dir.write("root/one.props", "");
+        let props = bag(&[
+            ("Roots", format!(";{};", folder(&dir.path("root"))).as_str()),
+            ("Files", "one.props"),
+        ]);
+
+        let value = expanded(
+            "$([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(Roots), $(Files)))",
+            &props,
+        );
+
+        assert_eq!(value, folder(&dir.path("root")));
+    }
+
+    #[test]
+    fn find_root_folder_with_no_files_matches_nothing() {
+        // "Every file of none" is vacuously true of any root. Answering with the first root would
+        // claim a toolset was found when nothing was looked for.
+        let dir = TempTree::new("find-root-folder-no-files");
+        let props = bag(&[("Roots", &folder(dir.root()))]);
+
+        let value = expanded(
+            "$([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(Roots), ''))",
+            &props,
+        );
+
+        assert_eq!(value, "");
+    }
+
+    #[test]
+    fn directory_name_of_file_above_walks_upward() {
+        // `Microsoft.Cpp.props` uses this to find a `vcpkg.json` above the project. The marker is
+        // two levels up, so a lookup that only checks the start directory fails.
+        let dir = TempTree::new("file-above");
+        dir.write("repo/vcpkg.json", "{}");
+        std::fs::create_dir_all(dir.path("repo/src/app")).expect("the temp directory is writable");
+        let props = bag(&[(
+            "MSBuildProjectDirectory",
+            &dir.path("repo/src/app").display().to_string(),
+        )]);
+
+        let value = expanded(
+            "$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildProjectDirectory), vcpkg.json))",
+            &props,
+        );
+
+        assert_eq!(
+            PathBuf::from(value),
+            crate::msbuild::paths::normalize(&dir.path("repo"))
+        );
+    }
+
+    #[test]
+    fn directory_name_of_file_above_is_empty_when_absent() {
+        // The answer for nearly every real project, and what keeps vcpkg's imports switched off.
+        // A non-empty guess here would send evaluation after an SDK import that does not exist.
+        let dir = TempTree::new("file-above-absent");
+        std::fs::create_dir_all(dir.path("src")).expect("the temp directory is writable");
+        let props = bag(&[("Start", &dir.path("src").display().to_string())]);
+
+        let value = expanded(
+            "$([MSBuild]::GetDirectoryNameOfFileAbove($(Start), sln2cc-no-such-marker-file.json))",
+            &props,
+        );
+
+        assert_eq!(value, "");
+    }
+
+    #[test]
+    fn the_real_toolset_location_line_resolves_inside_out() {
+        // The whole reason for this issue. `FindRootFolderWhereAllFilesExist` has to run first so
+        // `Unescape` has a value to work on, which means the outer call's argument is itself
+        // expanded -- the recursion ADR 08's single pass otherwise never does.
+        let dir = TempTree::new("toolset-location");
+        dir.write("v170/Platforms/x64/Platform.props", "");
+        dir.write("v170/Platforms/x64/PlatformToolsets/v143/Toolset.props", "");
+        let mut props = bag(&[
+            (
+                "_VCTargetsPathFolders",
+                format!("{};", folder(&dir.path("v170"))).as_str(),
+            ),
+            (
+                "_RelativeToolsetFiles",
+                r"Platforms\x64\PlatformToolsets\v143\Toolset.props;Platforms\x64\Platform.props",
+            ),
+        ]);
+
+        let expansion = props
+            .assign("_VCTargetsPathForToolset", TOOLSET_LOCATION)
+            .expect("expands");
+
+        assert_eq!(expansion.value, folder(&dir.path("v170")));
+        assert!(
+            expansion.unsupported.is_empty(),
+            "{:?}",
+            expansion.unsupported
+        );
+        assert!(
+            !props.is_tainted("_VCTargetsPathForToolset"),
+            "a fully resolved call must not taint the property, or MVP-36 skips the import anyway"
+        );
+    }
+
+    #[test]
+    fn a_static_call_argument_can_be_quoted_or_bare() {
+        // The real files use both: `GetDirectoryNameOfFileAbove($(MSBuildProjectDirectory),
+        // vcpkg.json)` is bare, `Unescape('...')` is quoted. Quotes are stripped, and a comma inside
+        // a quoted argument does not split it.
+        assert_eq!(
+            expanded("$([MSBuild]::Unescape(\"a,b\"))", &Properties::new()),
+            "a,b"
+        );
+        assert_eq!(
+            expanded("$([MSBuild]::Unescape('a,b'))", &Properties::new()),
+            "a,b"
+        );
+        assert_eq!(
+            expanded("$([MSBuild]::Unescape(  plain  ))", &Properties::new()),
+            "plain"
+        );
+    }
+
+    #[test]
+    fn an_undefined_property_in_an_argument_is_recorded() {
+        // `$(AdditionalVCTargetsPath)` is never set on a stock installation. The call still
+        // resolves -- an undefined property is empty, as everywhere else -- but the name is
+        // carried up so the finding is not swallowed inside the argument.
+        let expansion =
+            expand("$([MSBuild]::Unescape($(Missing)))", &Properties::new()).expect("expands");
+
+        assert_eq!(expansion.value, "");
+        assert_eq!(expansion.undefined, ["Missing"]);
+        assert!(expansion.unsupported.is_empty());
+    }
+
+    #[test]
+    fn an_unlisted_static_call_is_recorded_and_left_verbatim() {
+        // The whitelist is three named functions, not a grammar. `NormalizePath` sits in
+        // `ToolsetLocation.props` too, but only on the vcpkg branch nothing here reaches -- it
+        // stays out until a real file needs it, and MVP-36 keeps covering it until then.
+        for input in [
+            "$([System.IO.Path]::Combine('a','b'))",
+            "$([MSBuild]::NormalizePath('x'))",
+            "$([MSBuild]::VersionGreaterThanOrEquals('17.0','16.0'))",
+            "$([Microsoft.Build.Utilities.ToolLocationHelper]::GetLatestSDKTargetPlatformVersion('Windows', '10.0'))",
+        ] {
+            let expansion = expand(input, &Properties::new()).expect("expands anyway");
+
+            assert_eq!(expansion.value, input);
+            assert_eq!(expansion.unsupported, [input]);
+        }
+    }
+
+    #[test]
+    fn the_wrong_number_of_arguments_is_left_verbatim() {
+        // No overload of these takes this many arguments. Ignoring the extra one would evaluate a
+        // call MSBuild itself would reject.
+        for input in [
+            "$([MSBuild]::Unescape('a', 'b'))",
+            "$([MSBuild]::Unescape())",
+            "$([MSBuild]::GetDirectoryNameOfFileAbove('a'))",
+        ] {
+            let expansion = expand(input, &Properties::new()).expect("expands anyway");
+
+            assert_eq!(expansion.value, input);
+            assert_eq!(expansion.unsupported, [input]);
+        }
+    }
+
+    #[test]
+    fn a_static_call_with_an_unsupported_argument_is_unsupported_as_a_whole() {
+        // `Unescape` of something we cannot compute has no honest answer. The *outer* reference is
+        // recorded -- the inner one is part of it, as `a_reference_inside_an_unsupported_construct_
+        // is_part_of_it` already settles -- so the finding names exactly what the file wrote.
+        let input = "$([MSBuild]::Unescape($([Fake]::Root())))";
+        let expansion = expand(input, &Properties::new()).expect("expands anyway");
+
+        assert_eq!(expansion.value, input);
+        assert_eq!(expansion.unsupported, [input]);
+    }
+
+    #[test]
+    fn a_static_call_with_a_tainted_argument_is_unsupported() {
+        // Taint has to survive a hop through a whitelisted call, or wrapping an untrustworthy value
+        // in `Unescape` would launder it clean again -- the exact gap MVP-36 closed for properties.
+        let mut props = Properties::new();
+        assign(&mut props, "Root", "$([Fake]::Root())");
+
+        let expansion = props
+            .assign("Folder", "$([MSBuild]::Unescape($(Root)))")
+            .expect("expands anyway");
+
+        assert_eq!(expansion.unsupported, ["$([MSBuild]::Unescape($(Root)))"]);
+        assert!(props.is_tainted("Folder"));
+    }
+
+    #[test]
+    fn the_static_class_and_method_names_are_case_sensitive() {
+        // Consistent with ADR 38: a property function's names are .NET binding, not this
+        // evaluator's own keywords, and widening the match would accept spellings no real
+        // toolset file uses.
+        for input in ["$([msbuild]::Unescape('a'))", "$([MSBuild]::unescape('a'))"] {
+            let expansion = expand(input, &Properties::new()).expect("expands anyway");
+
+            assert_eq!(expansion.unsupported, [input], "for {input}");
+        }
+    }
+
+    #[test]
+    fn a_static_call_works_inside_a_condition() {
+        // `expand()` is the single hook, so a `Condition` operand gets the whitelist for free --
+        // the same property ADR 38 relied on for the instance methods. The argument is bare, as
+        // the real toolset files write it inside a quoted operand: a nested `'` would end the
+        // operand early, in MSBuild's tokenizer as in this one.
+        assert!(holds(
+            "'$([MSBuild]::Unescape(a%3Bb))' == 'a;b'",
+            &Properties::new()
+        ));
+    }
+
+    /// `depth` `Unescape` calls wrapped around `'x'`.
+    fn nested_unescape(depth: usize) -> String {
+        format!(
+            "{}'x'{}",
+            "$([MSBuild]::Unescape(".repeat(depth),
+            "))".repeat(depth)
+        )
+    }
+
+    #[test]
+    fn static_call_nesting_at_the_limit_still_expands() {
+        // The cap must not bite on anything plausible; the real chain nests two deep.
+        assert_eq!(expanded(&nested_unescape(32), &Properties::new()), "x");
+    }
+
+    #[test]
+    fn static_call_nesting_past_the_limit_is_refused() {
+        // Argument expansion recurses, so nesting depth is stack depth. A hostile file could nest
+        // tens of thousands deep inside the 1 MiB value cap; this keeps that off a stack overflow.
+        let error = expand(&nested_unescape(33), &Properties::new())
+            .expect_err("must refuse rather than recurse without bound");
+
+        assert_eq!(error.kind(), ErrorKind::RecursionLimit);
     }
 
     #[test]

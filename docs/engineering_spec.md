@@ -245,6 +245,24 @@ Rough module breakdown implied by the parsing pipeline:
   wherever `$(...)` appears — a `Condition` operand, an ordinary property value, or metadata — with
   no changes to the `Condition` parser at all. See [ADR 38](adr/38-property-function-string-methods.md).
 
+  A second, equally closed exception covers *static* property functions (MVP-49): exactly
+  `[MSBuild]::Unescape`, `[Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist`,
+  and `[MSBuild]::GetDirectoryNameOfFileAbove` — every static call on the toolset location chain
+  from `Microsoft.Cpp.props` to `Microsoft.Cl.Common.props`, where Microsoft sets the `ClCompile`
+  defaults a project never writes down (the runtime library, and through it `_DEBUG`). Names match
+  case-sensitively and the argument count must fit; anything else stays unsupported and covered by
+  ADR 32's toolchain downgrade. These are the one place expansion recurses: each argument is
+  unquoted and expanded one level deeper, so the real nested `Unescape(FindRootFolder…(…))`
+  resolves inside out. The recursion walks the literal input text, never a stored value, so ADR
+  08's no-cycles guarantee holds, and it is capped at 32 levels (`RecursionLimit`). An argument
+  that records anything unsupported, including a tainted property, leaves the whole call
+  unsupported, so taint survives a hop through `Unescape`. The two lookup functions make
+  existence checks against the filesystem, the same kind `Exists()` already makes, and
+  `FindRootFolderWhereAllFilesExist` returns the matching root as written because the chain
+  concatenates it straight onto a relative path. `$(Registry:…)` stays unsupported. Metadata-guarded
+  defaults inside the chain (`Condition="'%(ClCompile.RuntimeLibrary)' == ''"`) still do not apply
+  until MVP-50. See [ADR 55](adr/55-static-property-function-whitelist.md).
+
   `Condition` evaluation is settled by MVP-09 and sits beside expansion in `msbuild/eval.rs`: a
   tokenizer and recursive-descent evaluator over quoted and unquoted operand comparison (`==`,
   `!=`), `And`/`Or`/`!`, parentheses, `Exists()`, `HasTrailingSlash()` (added by MVP-42, see
@@ -955,7 +973,12 @@ MSBuild-evaluation surface area bounded.
 # Open Questions / To Be Refined
 
 - Exact scope of MSBuild evaluation needed (property sheet inheritance, conditions, macros) to
-  produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md.
+  produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md. The next
+  known gap is `%(Metadata)` in metadata `Condition`s, which guards every default in Microsoft's
+  `Microsoft.Cl.Common.props` — tracked as MVP-50.
+- Whether `[MSBuild]::NormalizePath` (and the vcpkg-installed-toolset branch of
+  `Microsoft.Cpp.ToolsetLocation.props` that uses it) needs supporting. Off ADR 55's whitelist
+  until a real installation takes that branch.
 - Whether last-writer-wins state is acceptable long term, or whether two Neovim instances sharing a
   project root need real locking. Accepted for the MVP as a consequence of dropping SQLite.
 - Whether the plugin should verify the envelope's `schema_version`, or whether the field exists only

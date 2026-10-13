@@ -542,6 +542,179 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------------------------
+    // MVP-49 — the static property functions the real toolset location chain is built from
+    // -------------------------------------------------------------------------------------------
+
+    /// A project reaching a stub of the real `v170` chain, cut down to the links that decide
+    /// whether the toolset's own `.props` load at all. Returns the project path.
+    ///
+    /// Property names, the nested `Unescape(FindRootFolderWhereAllFilesExist(...))` call, and the
+    /// `_PlatformProps` indirection are copied from the real `Microsoft.Cpp.props` and
+    /// `Microsoft.Cpp.ToolsetLocation.props`. What is left out is everything that does not gate
+    /// the path to `Microsoft.Cl.Common.props`.
+    ///
+    /// The `Cl.Common.props` stub sets `RuntimeLibrary` from `UseDebugLibraries` at
+    /// `ItemDefinitionGroup` level only. The real file also guards each line with
+    /// `Condition="'%(ClCompile.RuntimeLibrary)' == ''"`, which needs metadata-aware conditions --
+    /// MVP-50's job, so it is deliberately not reproduced here.
+    fn real_shaped_toolset_chain(dir: &TempTree) -> PathBuf {
+        let vc = "vs/MSBuild/Microsoft/VC/v170";
+        dir.write(
+            &format!("{vc}/Microsoft.Cpp.Default.props"),
+            r#"<Project>
+  <PropertyGroup>
+    <CurrentVCTargetsPath>$(VCTargetsPath)</CurrentVCTargetsPath>
+    <_RelativePlatformFolder>Platforms\$(Platform)\</_RelativePlatformFolder>
+  </PropertyGroup>
+</Project>
+"#,
+        );
+        dir.write(
+            &format!("{vc}/Microsoft.Cpp.props"),
+            r#"<Project>
+  <PropertyGroup>
+    <_RelativeToolsetFolder>$(_RelativePlatformFolder)PlatformToolsets\$(PlatformToolset)\</_RelativeToolsetFolder>
+    <_RelativePlatformProps>$(_RelativePlatformFolder)Platform.props</_RelativePlatformProps>
+    <_RelativeToolsetProps>$(_RelativeToolsetFolder)Toolset.props</_RelativeToolsetProps>
+    <_RelativeToolsetFiles>$(_RelativeToolsetProps);$(_RelativePlatformProps)</_RelativeToolsetFiles>
+  </PropertyGroup>
+  <PropertyGroup>
+    <_VCTargetsPathFolders>$(CurrentVCTargetsPath)</_VCTargetsPathFolders>
+    <_VCTargetsPathForToolset>$([MSBuild]::Unescape($([Microsoft.Build.Utilities.ToolLocationHelper]::FindRootFolderWhereAllFilesExist($(_VCTargetsPathFolders), $(_RelativeToolsetFiles)))))</_VCTargetsPathForToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(_VCTargetsPathForToolset)' != ''">
+    <_ToolsetFound>true</_ToolsetFound>
+  </PropertyGroup>
+  <Import Condition="'$(_ToolsetFound)' == 'true'" Project="$(VCTargetsPath)\Microsoft.Cpp.ToolsetLocation.props" />
+</Project>
+"#,
+        );
+        dir.write(
+            &format!("{vc}/Microsoft.Cpp.ToolsetLocation.props"),
+            r#"<Project>
+  <PropertyGroup>
+    <_PlatformProps>$(_VCTargetsPathForToolset)$(_RelativePlatformProps)</_PlatformProps>
+    <_ToolsetPropsPath>$(_VCTargetsPathForToolset)$(_RelativeToolsetProps)</_ToolsetPropsPath>
+  </PropertyGroup>
+  <Import Project="$(_PlatformProps)" />
+</Project>
+"#,
+        );
+        dir.write(
+            &format!("{vc}/Platforms/x64/Platform.props"),
+            "<Project>\n  <Import Project=\"$(_ToolsetPropsPath)\" />\n</Project>\n",
+        );
+        dir.write(
+            &format!("{vc}/Platforms/x64/PlatformToolsets/v143/Toolset.props"),
+            "<Project>\n  <Import Project=\"$(VCTargetsPath)\\Microsoft.Cl.Common.props\" />\n</Project>\n",
+        );
+        dir.write(
+            &format!("{vc}/Microsoft.Cl.Common.props"),
+            r#"<Project>
+  <ItemDefinitionGroup Condition="'$(UseDebugLibraries)' == 'true'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDebugDll</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(UseDebugLibraries)' != 'true'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDll</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
+"#,
+        );
+
+        // The shape Visual Studio writes: the project never mentions `RuntimeLibrary` or `_DEBUG`,
+        // only `UseDebugLibraries` per configuration.
+        dir.project(
+            "app/App.vcxproj",
+            r#"  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+  </ItemGroup>"#,
+        )
+    }
+
+    fn toolset_scope(dir: &TempTree, config: &str) -> ProjectScope {
+        ProjectScope {
+            solution: dir.path("App.sln"),
+            project: real_shaped_toolset_chain(dir),
+            config: ConfigPlatform::new(config, "x64"),
+            toolchain: Some(stub_toolchain(dir)),
+        }
+    }
+
+    #[test]
+    fn a_real_shaped_toolset_location_chain_is_imported() {
+        // The reported bug's first link. Before MVP-49 the nested static call left
+        // `_VCTargetsPathForToolset` tainted, MVP-36 skipped every import built from it, and the
+        // toolset's `.props` -- where every compiler default lives -- never loaded. `evaluated`
+        // also refuses any warning, so a "could not be fully resolved" skip fails this too.
+        let dir = TempTree::new("toolset-chain-imported");
+
+        let project = evaluated(&toolset_scope(&dir, "Debug"));
+
+        for name in [
+            "Microsoft.Cpp.ToolsetLocation.props",
+            "Platform.props",
+            "Toolset.props",
+            "Microsoft.Cl.Common.props",
+        ] {
+            assert!(
+                project.dependencies.iter().any(|path| path.ends_with(name)),
+                "{name} was never imported: {:?}",
+                project.dependencies
+            );
+        }
+    }
+
+    #[test]
+    fn a_debug_configuration_gets_its_runtime_library_from_the_toolset_chain() {
+        // The user-visible symptom: no `/MDd`, so clang-cl never defines `_DEBUG`. Nothing in the
+        // project spells either; both come from the toolset defaults the chain has to reach.
+        let dir = TempTree::new("toolset-chain-debug");
+
+        let project = evaluated(&toolset_scope(&dir, "Debug"));
+
+        let flags = &file(&project, "main.cpp").flags;
+        assert!(flags.contains(&"/MDd".to_string()), "{flags:?}");
+    }
+
+    #[test]
+    fn a_release_configuration_gets_the_release_runtime_library() {
+        // The negative case: reaching the chain must not hand every configuration the Debug
+        // runtime. A Release database with `_DEBUG` defined is the subtly-wrong output CLAUDE.md §3
+        // warns about.
+        let dir = TempTree::new("toolset-chain-release");
+
+        let project = evaluated(&toolset_scope(&dir, "Release"));
+
+        let flags = &file(&project, "main.cpp").flags;
+        assert!(flags.contains(&"/MD".to_string()), "{flags:?}");
+        assert!(!flags.contains(&"/MDd".to_string()), "{flags:?}");
+    }
+
+    // -------------------------------------------------------------------------------------------
     // MVP-44 / V2-06 — a Makefile-configuration project's own missing toolchain import, and its
     // own NMake* compile settings
     // -------------------------------------------------------------------------------------------

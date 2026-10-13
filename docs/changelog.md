@@ -211,6 +211,12 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Fixed
 
+- On a real Visual Studio installation, sln2cc now loads the toolset's own default compiler
+  settings instead of skipping them with a "could not be fully resolved" warning. Settings your
+  project never spells out, but Visual Studio applies anyway, now reach clangd. This is the first
+  half of the fix for Debug configurations missing `_DEBUG`: the runtime-library default that
+  carries it is still blocked by a second gap, tracked separately.
+
 - A wildcarded `<Import Project="...">`, such as `$(VCTargetsPath)\ImportBefore\Default\*.props` —
   the way Visual Studio's own extension-hook directories are consumed — no longer fails generation
   outright when nothing is registered there. It now expands to every matching file, same as a
