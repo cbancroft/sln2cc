@@ -211,11 +211,14 @@ Use these categories, omitting any that are empty: `Added`, `Changed`, `Deprecat
 
 ### Fixed
 
+- Debug configurations on a real Visual Studio installation now get the Debug runtime library
+  (`/MDd`), so clangd sees `_DEBUG` the way your real build does. The other compiler defaults
+  Visual Studio fills in when your project doesn't set them now reach clangd too, and a runtime
+  library you did set — in the project or in a property sheet — is kept.
+
 - On a real Visual Studio installation, sln2cc now loads the toolset's own default compiler
   settings instead of skipping them with a "could not be fully resolved" warning. Settings your
-  project never spells out, but Visual Studio applies anyway, now reach clangd. This is the first
-  half of the fix for Debug configurations missing `_DEBUG`: the runtime-library default that
-  carries it is still blocked by a second gap, tracked separately.
+  project never spells out, but Visual Studio applies anyway, now reach clangd.
 
 - A wildcarded `<Import Project="...">`, such as `$(VCTargetsPath)\ImportBefore\Default\*.props` —
   the way Visual Studio's own extension-hook directories are consumed — no longer fails generation

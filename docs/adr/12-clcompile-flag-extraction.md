@@ -96,6 +96,12 @@ plausible-but-wrong database. This is the same argument ADR 08 used to keep `Som
 `%(ClCompile.Identity)`, `@(ClCompile->'%(Filename)')`, an unterminated `%(` — *are* recorded, and
 copied through verbatim so a flag containing them names its own cause.
 
+**Narrowed by [ADR 56](56-metadata-aware-metadata-conditions.md).** MVP-50 found Microsoft's toolset
+writes every `ClCompile` default as `%(ClCompile.Name)`, so the qualified form now resolves when the
+qualifier names the bag's own item type. It is still recorded for another item type's qualifier
+(`%(Link.X)`) and for well-known names (`%(ClCompile.Identity)`, this paragraph's example), which
+nothing seeds.
+
 There is **no literal `%(Inherited)` token** in MSBuild, though the issue text names one. That is
 Visual Studio's "inherit from parent or project defaults" checkbox, whose file representation is the
 self-reference above. Worth writing down, because looking for the token is a dead end.

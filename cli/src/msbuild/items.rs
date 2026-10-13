@@ -14,6 +14,11 @@ use crate::msbuild::project::{Element, Item, Setting};
 use crate::msbuild::reserved;
 use crate::{ConfigPlatform, Reporter, Result};
 
+/// The only item type sln2cc settles. Named once so the bags created for it and the filters that
+/// pick its elements out of the stream cannot drift apart -- a mismatch would make every qualified
+/// `%(ClCompile.Name)` silently unsupported.
+const CLCOMPILE: &str = "ClCompile";
+
 /// One `ClCompile` item, with the metadata that applies to it, everything expanded.
 #[derive(Debug, Clone)]
 pub struct SourceItem {
@@ -82,7 +87,7 @@ pub fn settle(
 
         if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
             for item in &group.items {
-                if !item.item_type.eq_ignore_ascii_case("ClCompile") {
+                if !item.item_type.eq_ignore_ascii_case(CLCOMPILE) {
                     continue;
                 }
                 if !holds(item.condition.as_deref(), &scope, item.line, reporter)? {
@@ -110,7 +115,7 @@ pub fn settle(
 fn definitions(tree: &ProjectTree, project: &Path, reporter: &mut Reporter) -> Result<Metadata> {
     let dir = project.parent().unwrap_or(Path::new(""));
     let mut properties = tree.properties.clone();
-    let mut defaults = Metadata::new();
+    let mut defaults = Metadata::for_item(CLCOMPILE);
 
     for deferred in &tree.deferred {
         let Element::ItemDefinitions(group) = &deferred.element else {
@@ -127,7 +132,7 @@ fn definitions(tree: &ProjectTree, project: &Path, reporter: &mut Reporter) -> R
 
         if holds(group.condition.as_deref(), &scope, group.line, reporter)? {
             for definition in &group.definitions {
-                if !definition.item_type.eq_ignore_ascii_case("ClCompile") {
+                if !definition.item_type.eq_ignore_ascii_case(CLCOMPILE) {
                     continue;
                 }
                 if !holds(
@@ -292,7 +297,8 @@ fn specs(raw: &str, scope: &Scope, line: usize, reporter: &mut Reporter) -> Resu
 
 /// Assign a run of metadata settings, in document order.
 ///
-/// Order matters only within `%(X)`. A later sibling sees what an earlier assigned.
+/// Order matters only within `%(X)`. A later sibling sees what an earlier assigned -- in its value,
+/// and in its own `Condition`, which reads the bag as it stands before the setting writes to it.
 fn apply(
     metadata: &mut Metadata,
     settings: &[Setting],
@@ -300,7 +306,13 @@ fn apply(
     reporter: &mut Reporter,
 ) -> Result<()> {
     for setting in settings {
-        if !holds(setting.condition.as_deref(), scope, setting.line, reporter)? {
+        if !holds_for(
+            metadata,
+            setting.condition.as_deref(),
+            scope,
+            setting.line,
+            reporter,
+        )? {
             continue;
         }
 
@@ -329,10 +341,30 @@ fn holds(
     )
 }
 
+/// [`holds`] for a metadata setting's own `Condition`, which may also read `%(...)` from
+/// `metadata` -- the live bag, so Microsoft's `'%(ClCompile.RuntimeLibrary)' == ''` guard sees
+/// whether anything earlier already chose a value (ADR 56).
+fn holds_for(
+    metadata: &Metadata,
+    condition: Option<&str>,
+    scope: &Scope,
+    line: usize,
+    reporter: &mut Reporter,
+) -> Result<bool> {
+    let Some(condition) = condition else {
+        return Ok(true);
+    };
+
+    Ok(
+        eval::metadata_condition_holds(condition, scope.props, metadata, scope.file, line)?
+            .report(reporter, scope.file, line),
+    )
+}
+
 /// Build a `ClCompile` shaped [`Metadata`] from a Makefile-configuration project's `NMake*`
 /// properties, in place of processing `ItemDefinitionGroup`s a Makefile toolchain never populates.
 pub fn nmake_metadata(properties: &Properties) -> Metadata {
-    let mut metadata = Metadata::new();
+    let mut metadata = Metadata::for_item(CLCOMPILE);
     for (nmake, clcompile) in [
         ("NMakePreprocessorDefinitions", "PreprocessorDefinitions"),
         ("NMakeIncludeSearchPath", "AdditionalIncludeDirectories"),
@@ -1361,5 +1393,150 @@ mod tests {
         let tree = from_project(vec![group(vec![include(&missing.to_string_lossy())])]);
 
         assert_eq!(only(&settled(&tree)).path, missing);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-50 — a metadata setting's `Condition` reads the bag being built
+    // -------------------------------------------------------------------------------------------
+
+    /// A metadata setting carrying its own `Condition`.
+    fn guarded(name: &str, value: &str, condition: &str) -> Setting {
+        Setting {
+            condition: Some(condition.to_string()),
+            ..setting(name, value)
+        }
+    }
+
+    /// An `<ItemDefinitionGroup><ClCompile>` whose settings are given whole, guards included.
+    fn definition_of(settings: Vec<Setting>) -> Element {
+        Element::ItemDefinitions(ItemDefinitionGroup {
+            condition: None,
+            definitions: vec![ItemDefinition {
+                item_type: "ClCompile".to_string(),
+                condition: None,
+                metadata: settings,
+                line: 3,
+            }],
+            line: 2,
+        })
+    }
+
+    /// The real toolset guard, in its qualified form.
+    const RUNTIME_GUARD: &str = "'%(ClCompile.RuntimeLibrary)' == ''";
+
+    #[test]
+    fn a_guarded_default_applies_when_the_setting_is_unset() {
+        // What `Microsoft.Cl.Common.props` does for every Debug project, and the last link
+        // between `UseDebugLibraries` and `/MDd`. Before MVP-50 the guard compared the literal
+        // `%(ClCompile.RuntimeLibrary)` against `''` and the default silently never applied.
+        let tree = from_project(vec![
+            definition_of(vec![guarded(
+                "RuntimeLibrary",
+                "MultiThreadedDebugDll",
+                RUNTIME_GUARD,
+            )]),
+            group(vec![include("main.cpp")]),
+        ]);
+
+        assert_eq!(
+            value(only(&settled(&tree)), "RuntimeLibrary"),
+            "MultiThreadedDebugDll"
+        );
+    }
+
+    #[test]
+    fn a_guarded_default_does_not_override_an_earlier_definition() {
+        // The negative case, and the whole point of the guard: a property sheet imported before
+        // `Microsoft.Cpp.props` that chose a runtime library keeps it. Applying the default
+        // anyway would flip a deliberate `/MT` build to `/MDd`.
+        let tree = from_project(vec![
+            defaults(&[("RuntimeLibrary", "MultiThreaded")]),
+            definition_of(vec![guarded(
+                "RuntimeLibrary",
+                "MultiThreadedDebugDll",
+                RUNTIME_GUARD,
+            )]),
+            group(vec![include("main.cpp")]),
+        ]);
+
+        assert_eq!(
+            value(only(&settled(&tree)), "RuntimeLibrary"),
+            "MultiThreaded"
+        );
+    }
+
+    #[test]
+    fn a_guard_sees_an_earlier_sibling_in_the_same_definition() {
+        // The bag is live, not a snapshot taken when the definition started: MSBuild evaluates
+        // a definition's children in order. `Cl.Common.props` sets `DebugInformationFormatDefined`
+        // from exactly this kind of guard on `DebugInformationFormat`, and `Platform.Common.props`
+        // keys a later default off the result.
+        let tree = from_project(vec![
+            definition_of(vec![
+                setting("DebugInformationFormat", "ProgramDatabase"),
+                guarded(
+                    "DebugInformationFormatDefined",
+                    "true",
+                    "'%(ClCompile.DebugInformationFormat)' != ''",
+                ),
+            ]),
+            group(vec![include("main.cpp")]),
+        ]);
+
+        assert_eq!(
+            value(only(&settled(&tree)), "DebugInformationFormatDefined"),
+            "true"
+        );
+    }
+
+    #[test]
+    fn a_per_item_metadata_condition_sees_the_items_own_bag() {
+        // The same rule one level down: a setting under `<ClCompile Include=...>` reads that
+        // item's metadata -- the inherited defaults plus what the item set before it -- and not
+        // some other file's.
+        let item = Item {
+            metadata: vec![
+                setting("CompileAs", "CompileAsC"),
+                guarded(
+                    "PreprocessorDefinitions",
+                    "C_ONLY;%(PreprocessorDefinitions)",
+                    "'%(CompileAs)' == 'CompileAsC'",
+                ),
+            ],
+            ..include("legacy.c")
+        };
+        let tree = from_project(vec![
+            defaults(&[("PreprocessorDefinitions", "APP")]),
+            group(vec![item, include("main.cpp")]),
+        ]);
+
+        let sources = settled(&tree);
+
+        let legacy = sources
+            .iter()
+            .find(|source| source.path.ends_with("legacy.c"))
+            .expect("legacy.c settles");
+        let main = sources
+            .iter()
+            .find(|source| source.path.ends_with("main.cpp"))
+            .expect("main.cpp settles");
+        assert_eq!(value(legacy, "PreprocessorDefinitions"), "C_ONLY;APP");
+        assert_eq!(value(main, "PreprocessorDefinitions"), "APP");
+    }
+
+    #[test]
+    fn a_group_condition_does_not_see_metadata() {
+        // Group-level conditions stay property-only, as MSBuild scopes them outside a target. The
+        // group below would apply if its `%(` operand were read against the (empty) bag; it must
+        // not, because there is no bag at that level to read.
+        let tree = from_project(vec![
+            guarded_defaults(
+                Some("'%(ClCompile.RuntimeLibrary)' == ''"),
+                &[("RuntimeLibrary", "MultiThreadedDebugDll")],
+            ),
+            group(vec![include("main.cpp")]),
+        ]);
+
+        assert_eq!(only(&settled(&tree)).metadata.get("RuntimeLibrary"), None);
     }
 }

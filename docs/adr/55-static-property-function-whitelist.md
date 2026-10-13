@@ -134,6 +134,8 @@ ADR's end-to-end tests use a stub whose default is gated at `ItemDefinitionGroup
   Real output changes for every project, which is the point, but users will see new flags.
 - **The `_DEBUG` symptom itself is not fixed until MVP-50 lands.** This ADR fixes the import
   chain; MVP-50 makes the metadata-guarded defaults inside it apply.
+  **Update:** fixed by [ADR 56](56-metadata-aware-metadata-conditions.md) (MVP-50) — metadata
+  setting conditions now read the bag being built, so the guarded defaults apply.
 - **`expand()` can read the filesystem**, but only for existence checks inside the two lookup
   functions, the same kind of check `Exists()` already makes during `Condition` evaluation.
   Nothing is executed.

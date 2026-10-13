@@ -259,9 +259,9 @@ Rough module breakdown implied by the parsing pipeline:
   unsupported, so taint survives a hop through `Unescape`. The two lookup functions make
   existence checks against the filesystem, the same kind `Exists()` already makes, and
   `FindRootFolderWhereAllFilesExist` returns the matching root as written because the chain
-  concatenates it straight onto a relative path. `$(Registry:…)` stays unsupported. Metadata-guarded
-  defaults inside the chain (`Condition="'%(ClCompile.RuntimeLibrary)' == ''"`) still do not apply
-  until MVP-50. See [ADR 55](adr/55-static-property-function-whitelist.md).
+  concatenates it straight onto a relative path. `$(Registry:…)` stays unsupported. The
+  metadata-guarded defaults inside the chain (`Condition="'%(ClCompile.RuntimeLibrary)' == ''"`)
+  apply as of MVP-50, below. See [ADR 55](adr/55-static-property-function-whitelist.md).
 
   `Condition` evaluation is settled by MVP-09 and sits beside expansion in `msbuild/eval.rs`: a
   tokenizer and recursive-descent evaluator over quoted and unquoted operand comparison (`==`,
@@ -392,11 +392,21 @@ Rough module breakdown implied by the parsing pipeline:
   otherwise compare a path Windows never produces. `msbuild::evaluate` becomes the orchestrator and
   takes a `ProjectScope`, which is the signature ADR 11 said it needed: seeding requires the solution
   path, and its `config` is the **project** pair per ADR 05.
+  Every `Metadata` bag knows the item type it describes (`Metadata::for_item`), so the qualified
+  form `%(ClCompile.Name)` — how Microsoft's toolset writes every `ClCompile` default — resolves only
+  against a bag of that type (case-insensitively, as MSBuild matches item types). The `Condition` on a
+  metadata *setting* — a child of an `ItemDefinitionGroup`'s `<ClCompile>` or of a `<ClCompile
+  Include=…>` — is evaluated by `eval::metadata_condition_holds` against the bag being built, live:
+  operands expand `$(…)` then `%(…)`, still after tokenizing, so a guard like `Condition="'%(ClCompile.RuntimeLibrary)' == ''"`
+  sees what earlier definitions and siblings assigned and applies the toolset default only when
+  nothing did. Group- and item-level conditions stay property-only (`condition_holds`), as MSBuild
+  scopes them outside a target. See [ADR 56](adr/56-metadata-aware-metadata-conditions.md) (MVP-50).
   Four rules carry the design. An unset `%(Name)` expands to nothing and is **not** recorded, because
   `WIN32;%(PreprocessorDefinitions)` against an empty bag is what every real project file writes and
   warning on it would devalue the whole channel — ADR 08's `Some("")`-versus-`None` argument applied to
-  the other sigil; genuinely unsupported forms (`%(ClCompile.Identity)`, `@(...)`, an unterminated
-  `%(`) are still recorded and copied through verbatim. `$` expands before `%`, since a property's
+  the other sigil; genuinely unsupported forms (`%(Link.X)` against `ClCompile` metadata, a
+  qualified well-known name like `%(ClCompile.Identity)`, `@(...)`, an unterminated `%(`) are still
+  recorded and copied through verbatim. `$` expands before `%`, since a property's
   value cannot contain `%(` but a property reference can expand into one. `items.rs` settles
   `ItemDefinitionGroup`s in a pass of their own, fully resolving them into their final `ClCompile`
   defaults, before evaluating any item against those defaults — matching MSBuild's own evaluation
@@ -973,9 +983,13 @@ MSBuild-evaluation surface area bounded.
 # Open Questions / To Be Refined
 
 - Exact scope of MSBuild evaluation needed (property sheet inheritance, conditions, macros) to
-  produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md. The next
-  known gap is `%(Metadata)` in metadata `Condition`s, which guards every default in Microsoft's
-  `Microsoft.Cl.Common.props` — tracked as MVP-50.
+  produce accurate flags for VS2019/2022 solutions — carried over from project_spec.md. The
+  metadata-guarded toolset defaults that MVP-50 settled were the last known gap on the path to a
+  correct `RuntimeLibrary`.
+- Whether unqualified well-known metadata (`%(Filename)`, `%(Identity)`, …) should be recorded as
+  unsupported rather than expanding silently to `""`. Its qualified spelling is recorded since
+  MVP-50; changing the unqualified one would add warnings to projects writing
+  `$(IntDir)%(Filename).obj`. See [ADR 56](adr/56-metadata-aware-metadata-conditions.md).
 - Whether `[MSBuild]::NormalizePath` (and the vcpkg-installed-toolset branch of
   `Microsoft.Cpp.ToolsetLocation.props` that uses it) needs supporting. Off ADR 55's whitelist
   until a real installation takes that branch.

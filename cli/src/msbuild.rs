@@ -553,11 +553,17 @@ mod tests {
     /// `Microsoft.Cpp.ToolsetLocation.props`. What is left out is everything that does not gate
     /// the path to `Microsoft.Cl.Common.props`.
     ///
-    /// The `Cl.Common.props` stub sets `RuntimeLibrary` from `UseDebugLibraries` at
-    /// `ItemDefinitionGroup` level only. The real file also guards each line with
-    /// `Condition="'%(ClCompile.RuntimeLibrary)' == ''"`, which needs metadata-aware conditions --
-    /// MVP-50's job, so it is deliberately not reproduced here.
+    /// The `Cl.Common.props` stub sets `RuntimeLibrary` from `UseDebugLibraries` exactly as the
+    /// real file does: each default guarded by `Condition="'%(ClCompile.RuntimeLibrary)' == ''"`,
+    /// so it applies only when nothing earlier chose a runtime library (MVP-50).
     fn real_shaped_toolset_chain(dir: &TempTree) -> PathBuf {
+        real_shaped_toolset_chain_with(dir, "", "")
+    }
+
+    /// [`real_shaped_toolset_chain`], with `before` spliced into the project ahead of its
+    /// `Microsoft.Cpp.props` import and `after` behind it -- where a property sheet and the
+    /// project's own `ItemDefinitionGroup`s respectively sit in a Visual Studio project.
+    fn real_shaped_toolset_chain_with(dir: &TempTree, before: &str, after: &str) -> PathBuf {
         let vc = "vs/MSBuild/Microsoft/VC/v170";
         dir.write(
             &format!("{vc}/Microsoft.Cpp.Default.props"),
@@ -613,12 +619,12 @@ mod tests {
             r#"<Project>
   <ItemDefinitionGroup Condition="'$(UseDebugLibraries)' == 'true'">
     <ClCompile>
-      <RuntimeLibrary>MultiThreadedDebugDll</RuntimeLibrary>
+      <RuntimeLibrary Condition="'%(ClCompile.RuntimeLibrary)' == ''">MultiThreadedDebugDll</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(UseDebugLibraries)' != 'true'">
     <ClCompile>
-      <RuntimeLibrary>MultiThreadedDll</RuntimeLibrary>
+      <RuntimeLibrary Condition="'%(ClCompile.RuntimeLibrary)' == ''">MultiThreadedDll</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
 </Project>
@@ -629,7 +635,8 @@ mod tests {
         // only `UseDebugLibraries` per configuration.
         dir.project(
             "app/App.vcxproj",
-            r#"  <ItemGroup Label="ProjectConfigurations">
+            &format!(
+                r#"  <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
@@ -648,17 +655,24 @@ mod tests {
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
+{before}
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+{after}
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
-  </ItemGroup>"#,
+  </ItemGroup>"#
+            ),
         )
     }
 
     fn toolset_scope(dir: &TempTree, config: &str) -> ProjectScope {
+        toolset_scope_for(dir, real_shaped_toolset_chain(dir), config)
+    }
+
+    fn toolset_scope_for(dir: &TempTree, project: PathBuf, config: &str) -> ProjectScope {
         ProjectScope {
             solution: dir.path("App.sln"),
-            project: real_shaped_toolset_chain(dir),
+            project,
             config: ConfigPlatform::new(config, "x64"),
             toolchain: Some(stub_toolchain(dir)),
         }
@@ -711,6 +725,53 @@ mod tests {
 
         let flags = &file(&project, "main.cpp").flags;
         assert!(flags.contains(&"/MD".to_string()), "{flags:?}");
+        assert!(!flags.contains(&"/MDd".to_string()), "{flags:?}");
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // MVP-50 — the toolset's metadata-guarded defaults against a project's own choices
+    // -------------------------------------------------------------------------------------------
+
+    /// One `ClCompile` definition setting `RuntimeLibrary` to `value`, as a project or sheet
+    /// writes it.
+    fn runtime_library_definition(value: &str) -> String {
+        format!(
+            "  <ItemDefinitionGroup>\n    <ClCompile>\n      \
+             <RuntimeLibrary>{value}</RuntimeLibrary>\n    </ClCompile>\n  </ItemDefinitionGroup>"
+        )
+    }
+
+    #[test]
+    fn an_explicit_runtime_library_wins_over_the_toolset_default() {
+        // The project's own `ItemDefinitionGroup` sits after `Microsoft.Cpp.props`, so it
+        // overrides the default whether or not the guard fired. A Debug build that asked for the
+        // static runtime must get `/MT`, not the toolset's `/MDd`.
+        let dir = TempTree::new("toolset-chain-explicit");
+        let project =
+            real_shaped_toolset_chain_with(&dir, "", &runtime_library_definition("MultiThreaded"));
+        let scope = toolset_scope_for(&dir, project, "Debug");
+
+        let project = evaluated(&scope);
+
+        let flags = &file(&project, "main.cpp").flags;
+        assert!(flags.contains(&"/MT".to_string()), "{flags:?}");
+        assert!(!flags.contains(&"/MDd".to_string()), "{flags:?}");
+    }
+
+    #[test]
+    fn a_property_sheet_value_set_before_the_toolset_is_kept() {
+        // This one only the guard can get right: the sheet's value is already in the bag when
+        // `Cl.Common.props` runs, so an unguarded default would overwrite it. `'%(...)' == ''`
+        // reading the live bag is what keeps it.
+        let dir = TempTree::new("toolset-chain-sheet");
+        let project =
+            real_shaped_toolset_chain_with(&dir, &runtime_library_definition("MultiThreaded"), "");
+        let scope = toolset_scope_for(&dir, project, "Debug");
+
+        let project = evaluated(&scope);
+
+        let flags = &file(&project, "main.cpp").flags;
+        assert!(flags.contains(&"/MT".to_string()), "{flags:?}");
         assert!(!flags.contains(&"/MDd".to_string()), "{flags:?}");
     }
 

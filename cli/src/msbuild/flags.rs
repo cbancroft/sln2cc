@@ -371,7 +371,7 @@ mod tests {
 
     /// A settled item carrying `metadata`, as `items::settle` would produce it.
     fn source(metadata: &[(&str, &str)]) -> SourceItem {
-        let mut bag = Metadata::new();
+        let mut bag = Metadata::for_item("ClCompile");
         for (name, value) in metadata {
             bag.set(name, *value);
         }

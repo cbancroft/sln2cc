@@ -125,14 +125,31 @@ impl Properties {
 /// The `%(Name)` counterpart to [`Properties`], and a separate type rather than a second bag within
 /// the same one. This is because Metadata is scoped to an *item* rather than to the evaluation, so
 /// an item takes a clone of the `ItemDefinitionGroup` defaults at the time of its declaration.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// The bag also knows which item type it describes, because MSBuild's qualified form
+/// `%(ClCompile.RuntimeLibrary)` names one, and resolving `%(Link.TargetMachine)` against `ClCompile`
+/// metadata would hand clangd a linker value as if it were a compiler one (ADR 56).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
+    item_type: String,
     values: HashMap<String, String>,
 }
 
 impl Metadata {
-    pub fn new() -> Self {
-        Metadata::default()
+    /// An empty bag for items of `item_type`.
+    ///
+    /// There is deliberately no `Default`: an untyped bag would have to either accept or reject
+    /// every qualifier, and which one would be a guess.
+    pub fn for_item(item_type: &str) -> Self {
+        Metadata {
+            item_type: item_type.to_string(),
+            values: HashMap::new(),
+        }
+    }
+
+    /// The item type a qualified `%(Type.Name)` reference must name to resolve against this bag.
+    pub fn item_type(&self) -> &str {
+        &self.item_type
     }
 
     /// `Some("")` and `None` stay distinct, as they do in [`Properties::get`].
@@ -530,9 +547,12 @@ fn unescape(value: &str) -> String {
 /// `WIN32;%(PreprocessorDefinitions)` against an empty bag, so recording it would warn on every
 /// idiomatic project file.
 ///
-/// Qualified references (`%(ClCompile.Identity)`), item transforms (`@(...)`) and an unterminated
-/// `%(` are copied through verbatim and recorded, as [`expand`] does for the `$` equivalents.
-/// `%XX` character escapes are not decoded and not recorded.
+/// The qualified form `%(Type.Name)` resolves exactly like `%(Name)` when `Type` is the bag's own
+/// item type, matched case-insensitively as MSBuild matches item types -- it is how Microsoft's
+/// toolset writes every `ClCompile` default (ADR 56). Another item type's qualifier, a qualified
+/// well-known name (`%(ClCompile.Identity)`, which nothing seeds), item transforms (`@(...)`) and
+/// an unterminated `%(` are copied through verbatim and recorded, as [`expand`] does for the `$`
+/// equivalents. `%XX` character escapes are not decoded and not recorded.
 pub fn expand_metadata(input: &str, metadata: &Metadata) -> Result<Expansion> {
     let mut out = Expansion::default();
     let mut rest = input;
@@ -552,11 +572,22 @@ pub fn expand_metadata(input: &str, metadata: &Metadata) -> Result<Expansion> {
         let body = &rest[body_start..close];
         let reference = &rest[open..close + 1];
 
-        if rest.as_bytes()[open] == b'@' || !is_property_name(body) {
-            out.record_unsupported(reference);
-            out.value.push_str(reference);
-        } else if let Some(value) = metadata.get(body) {
-            out.value.push_str(value);
+        let name = if rest.as_bytes()[open] == b'@' {
+            None
+        } else {
+            metadata_name(body, metadata)
+        };
+
+        match name {
+            Some(name) => {
+                if let Some(value) = metadata.get(name) {
+                    out.value.push_str(value);
+                }
+            }
+            None => {
+                out.record_unsupported(reference);
+                out.value.push_str(reference);
+            }
         }
 
         check_size(&out.value, input)?;
@@ -566,6 +597,47 @@ pub fn expand_metadata(input: &str, metadata: &Metadata) -> Result<Expansion> {
     out.value.push_str(rest);
     check_size(&out.value, input)?;
     Ok(out)
+}
+
+/// MSBuild's well-known item metadata, matched case-insensitively.
+///
+/// Never seeded into a [`Metadata`] bag, so a *qualified* reference to one stays unsupported rather
+/// than resolving to a silent `""` -- a flag containing `%(ClCompile.Identity)` names its own cause,
+/// where an empty one leaves a missing include path with nothing to trace it to (ADR 12, ADR 56).
+const WELL_KNOWN_METADATA: [&str; 14] = [
+    "FullPath",
+    "RootDir",
+    "Filename",
+    "Extension",
+    "RelativeDir",
+    "Directory",
+    "RecursiveDir",
+    "Identity",
+    "ModifiedTime",
+    "CreatedTime",
+    "AccessedTime",
+    "DefiningProjectFullPath",
+    "DefiningProjectDirectory",
+    "DefiningProjectName",
+];
+
+/// The metadata name a `%(...)` body refers to in `metadata`, or `None` when it is outside the
+/// supported subset.
+///
+/// `Name` is looked up as written. `Type.Name` is looked up as `Name` only when `Type` is the bag's
+/// own item type and `Name` is not well-known; anything else -- another item type, a well-known
+/// name, a malformed body -- is `None`, so the caller records it and leaves it verbatim.
+fn metadata_name<'a>(body: &'a str, metadata: &Metadata) -> Option<&'a str> {
+    match body.split_once('.') {
+        Some((qualifier, name)) => {
+            let own_type = qualifier.eq_ignore_ascii_case(metadata.item_type());
+            let well_known = WELL_KNOWN_METADATA
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(name));
+            (own_type && is_property_name(name) && !well_known).then_some(name)
+        }
+        None => is_property_name(body).then_some(body),
+    }
 }
 
 /// The offset of the next `%(` or `@(`, whichever comes first.
@@ -741,10 +813,41 @@ impl Evaluation {
 ///
 /// `file` names the file the condition came from.
 ///
-/// An empty condition holds, so does an absent one
+/// An empty condition holds, so does an absent one.
+///
+/// `%(...)` is not read here and is compared as written: a group- or item-level `Condition` has no
+/// item to take metadata from. A metadata setting's own `Condition` goes through
+/// [`metadata_condition_holds`] instead.
 pub fn condition_holds(
     condition: &str,
     props: &Properties,
+    file: &Path,
+    line: usize,
+) -> Result<Evaluation> {
+    evaluate(condition, props, None, file, line)
+}
+
+/// [`condition_holds`] for the `Condition` on a metadata setting, where `%(Name)` and
+/// `%(ItemType.Name)` read `metadata`.
+///
+/// `metadata` is the bag being built, so a guard sees what earlier definitions and earlier siblings
+/// assigned. That is how Microsoft's toolset writes "default only if the project didn't set one":
+/// `Condition="'%(ClCompile.RuntimeLibrary)' == ''"` (ADR 56).
+pub fn metadata_condition_holds(
+    condition: &str,
+    props: &Properties,
+    metadata: &Metadata,
+    file: &Path,
+    line: usize,
+) -> Result<Evaluation> {
+    evaluate(condition, props, Some(metadata), file, line)
+}
+
+/// The shared body of [`condition_holds`] and [`metadata_condition_holds`].
+fn evaluate(
+    condition: &str,
+    props: &Properties,
+    metadata: Option<&Metadata>,
     file: &Path,
     line: usize,
 ) -> Result<Evaluation> {
@@ -766,6 +869,7 @@ pub fn condition_holds(
         line,
         condition,
         found: Evaluation::default(),
+        metadata,
     };
 
     let holds = parser.expression()?;
@@ -928,6 +1032,9 @@ struct Parser<'a> {
     line: usize,
     condition: &'a str,
     found: Evaluation,
+    /// The bag a metadata setting's own `Condition` reads `%(...)` from. `None` everywhere else,
+    /// where `%(...)` is left as written exactly as before MVP-50.
+    metadata: Option<&'a Metadata>,
 }
 
 impl Parser<'_> {
@@ -1031,13 +1138,25 @@ impl Parser<'_> {
         base.join(path).exists()
     }
 
-    /// Expand an operand and take its findings.
+    /// Expand an operand -- `$(...)`, then `%(...)` when there is a bag to read -- and take its
+    /// findings.
+    ///
+    /// Still called only after the whole condition is tokenized (ADR 09), so a metadata value
+    /// containing `' or '` is one operand's text, not syntax. `$` goes first for the reason
+    /// [`Metadata::assign`] gives.
     fn operand(&mut self, token: Token) -> Result<String> {
         let raw = match token {
             Token::Quoted(text) | Token::Bare(text) => text,
             _ => return Err(self.unsupported()),
         };
-        let expansion = expand(&raw, self.props)?;
+        let mut expansion = expand(&raw, self.props)?;
+        if let Some(metadata) = self.metadata {
+            let substituted = expand_metadata(&expansion.value, metadata)?;
+            expansion.value = substituted.value;
+            for reference in substituted.unsupported {
+                expansion.record_unsupported(&reference);
+            }
+        }
         Ok(self.found.absorb(expansion))
     }
 
@@ -2613,7 +2732,7 @@ mod tests {
 
     /// A metadata bag holding `pairs`, the counterpart to `bag`.
     fn meta(pairs: &[(&str, &str)]) -> Metadata {
-        let mut metadata = Metadata::new();
+        let mut metadata = Metadata::for_item("ClCompile");
         for (name, value) in pairs {
             metadata.set(name, *value);
         }
@@ -2638,8 +2757,11 @@ mod tests {
         // `WIN32;%(PreprocessorDefinitions)` against an empty bag, and every real project file does
         // this — recording it would put a warning on output that is completely correct, which is
         // exactly how a user learns to ignore the warning channel.
-        let expansion =
-            expand_metadata("WIN32;%(PreprocessorDefinitions)", &Metadata::new()).expect("expands");
+        let expansion = expand_metadata(
+            "WIN32;%(PreprocessorDefinitions)",
+            &Metadata::for_item("ClCompile"),
+        )
+        .expect("expands");
 
         assert_eq!(expansion.value, "WIN32;");
         assert!(expansion.unsupported.is_empty());
@@ -2733,15 +2855,22 @@ mod tests {
     }
 
     #[test]
-    fn a_qualified_reference_is_copied_through_and_recorded() {
-        // `%(ClCompile.Identity)` and the rest of the well-known metadata are not modelled. Left as
-        // written on purpose: a flag containing `%(ClCompile.Identity)` names its own cause, where
-        // an empty one leaves a user with an include path that is simply missing.
-        let expansion =
-            expand_metadata("%(ClCompile.Identity)", &Metadata::new()).expect("expands");
+    fn qualified_well_known_metadata_stays_unsupported() {
+        // `%(ClCompile.Identity)` and the rest of MSBuild's well-known metadata are never seeded.
+        // MVP-50 resolves the qualified form for ordinary names, but resolving these would quietly
+        // produce `""`: a flag containing `%(ClCompile.Identity)` names its own cause, where an
+        // empty one leaves a user with an include path that is simply missing (ADR 12, ADR 56).
+        for input in [
+            "%(ClCompile.Identity)",
+            "%(ClCompile.Filename)",
+            "%(clcompile.FullPath)",
+        ] {
+            let expansion =
+                expand_metadata(input, &Metadata::for_item("ClCompile")).expect("expands");
 
-        assert_eq!(expansion.value, "%(ClCompile.Identity)");
-        assert_eq!(expansion.unsupported, ["%(ClCompile.Identity)"]);
+            assert_eq!(expansion.value, input);
+            assert_eq!(expansion.unsupported, [input]);
+        }
     }
 
     #[test]
@@ -2765,7 +2894,8 @@ mod tests {
         // MSBuild fails the build on this. Recorded and copied through instead, matching what
         // `expand` does for `$(` — one stray sigil in metadata nothing reads should not fail a
         // generation that has a warning channel to report it on.
-        let expansion = expand_metadata("inc;%(Unterminated", &Metadata::new()).expect("expands");
+        let expansion = expand_metadata("inc;%(Unterminated", &Metadata::for_item("ClCompile"))
+            .expect("expands");
 
         assert_eq!(expansion.value, "inc;%(Unterminated");
         assert_eq!(expansion.unsupported, ["%(Unterminated"]);
@@ -2775,7 +2905,7 @@ mod tests {
     fn findings_from_both_passes_reach_one_expansion() {
         // `Metadata::assign` runs two expansions and the caller reports once, so a value with a
         // problem of each kind must not lose either half on the way through.
-        let mut metadata = Metadata::new();
+        let mut metadata = Metadata::for_item("ClCompile");
 
         let expansion = metadata
             .assign(
@@ -2810,11 +2940,169 @@ mod tests {
         // a value that is fine as it stands. The escapes are not *decoded* either: MVP-13 settled
         // that they stay as written, because a `%3B` reaching a flag is visible in the database
         // where a `%`-scanning warning would false-positive on every ordinary path. See ADR 13.
-        let metadata = Metadata::new();
+        let metadata = Metadata::for_item("ClCompile");
 
         assert_eq!(substitute("100%", &metadata), "100%");
         assert_eq!(substitute("a%3Bb", &metadata), "a%3Bb");
         assert_eq!(substitute("user@host", &metadata), "user@host");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // MVP-50 — `%(Metadata)` in a metadata setting's own `Condition`
+    // ---------------------------------------------------------------------------------------
+
+    /// Evaluate a metadata setting's `Condition` against `metadata`, asserting nothing was
+    /// recorded.
+    fn holds_with(condition: &str, props: &Properties, metadata: &Metadata) -> bool {
+        let evaluation =
+            metadata_condition_holds(condition, props, metadata, &site(), 12).expect("evaluates");
+        assert!(
+            evaluation.unsupported.is_empty(),
+            "unexpected unsupported: {:?}",
+            evaluation.unsupported
+        );
+        evaluation.holds
+    }
+
+    #[test]
+    fn a_metadata_condition_sees_a_set_value() {
+        let metadata = meta(&[("RuntimeLibrary", "MultiThreaded")]);
+
+        assert!(holds_with(
+            "'%(RuntimeLibrary)' == 'MultiThreaded'",
+            &Properties::new(),
+            &metadata
+        ));
+        assert!(!holds_with(
+            "'%(RuntimeLibrary)' == 'MultiThreadedDLL'",
+            &Properties::new(),
+            &metadata
+        ));
+    }
+
+    #[test]
+    fn a_metadata_condition_sees_an_unset_value_as_empty() {
+        // Microsoft's "default only if the project didn't say" guard. Unset must read as `''` --
+        // the same silence an unset `%(Name)` already has in a value (ADR 12) -- and a set value
+        // must not, or the toolset default would clobber the project's own choice.
+        let guard = "'%(RuntimeLibrary)' == ''";
+
+        assert!(holds_with(guard, &Properties::new(), &meta(&[])));
+        assert!(!holds_with(
+            guard,
+            &Properties::new(),
+            &meta(&[("RuntimeLibrary", "MultiThreaded")])
+        ));
+    }
+
+    #[test]
+    fn the_qualified_form_resolves_against_its_own_item_type() {
+        // How the toolset actually writes it, 143 times in the v170 `.props`. The qualifier is an
+        // item type, which MSBuild matches case-insensitively.
+        let metadata = meta(&[("RuntimeLibrary", "MultiThreaded")]);
+
+        for condition in [
+            "'%(ClCompile.RuntimeLibrary)' == 'MultiThreaded'",
+            "'%(clcompile.RuntimeLibrary)' == 'MultiThreaded'",
+        ] {
+            assert!(
+                holds_with(condition, &Properties::new(), &metadata),
+                "for {condition}"
+            );
+        }
+        assert_eq!(
+            substitute("%(ClCompile.RuntimeLibrary)", &metadata),
+            "MultiThreaded"
+        );
+    }
+
+    #[test]
+    fn another_item_types_qualifier_is_unsupported_and_left_verbatim() {
+        // `%(Link.TargetMachine)` against `ClCompile` metadata would hand clangd a linker setting
+        // as if it were a compiler one -- the wrong-bag answer the item type on `Metadata` exists
+        // to refuse. Recorded, not silently empty.
+        let metadata = meta(&[("TargetMachine", "MachineX64")]);
+
+        let expansion = expand_metadata("%(Link.TargetMachine)", &metadata).expect("expands");
+        assert_eq!(expansion.value, "%(Link.TargetMachine)");
+        assert_eq!(expansion.unsupported, ["%(Link.TargetMachine)"]);
+
+        let evaluation = metadata_condition_holds(
+            "'%(Link.TargetMachine)' == ''",
+            &Properties::new(),
+            &metadata,
+            &site(),
+            12,
+        )
+        .expect("an unsupported operand is a finding, not an error (ADR 09)");
+        assert!(!evaluation.holds, "the verbatim text is not empty");
+        assert_eq!(evaluation.unsupported, ["%(Link.TargetMachine)"]);
+    }
+
+    #[test]
+    fn metadata_and_properties_mix_in_one_condition() {
+        // `Platform.Common.props`' own shape: a metadata guard `and`ed with property tests. Both
+        // sigils have to resolve in the same operand pass.
+        let condition = "'%(ClCompile.DebugInformationFormatDefined)' != 'true' and '$(UseDebugLibraries)' == 'true'";
+        let debug = bag(&[("UseDebugLibraries", "true")]);
+
+        assert!(holds_with(condition, &debug, &meta(&[])));
+        assert!(!holds_with(
+            condition,
+            &debug,
+            &meta(&[("DebugInformationFormatDefined", "true")])
+        ));
+        assert!(!holds_with(
+            condition,
+            &bag(&[("UseDebugLibraries", "false")]),
+            &meta(&[])
+        ));
+    }
+
+    #[test]
+    fn the_real_optimization_guard_evaluates() {
+        // `Microsoft.Cl.Common.props:84-86`, verbatim apart from whitespace: two references to the
+        // bag, an `and`, and a parenthesized `or`.
+        let condition = "'%(ClCompile.Optimization)' == '' and ('%(ClCompile.BasicRuntimeChecks)' == '' or '%(ClCompile.BasicRuntimeChecks)' == 'Default')";
+
+        assert!(holds_with(condition, &Properties::new(), &meta(&[])));
+        assert!(holds_with(
+            condition,
+            &Properties::new(),
+            &meta(&[("BasicRuntimeChecks", "Default")])
+        ));
+        assert!(!holds_with(
+            condition,
+            &Properties::new(),
+            &meta(&[("BasicRuntimeChecks", "EnableFastChecks")])
+        ));
+        assert!(!holds_with(
+            condition,
+            &Properties::new(),
+            &meta(&[("Optimization", "Disabled")])
+        ));
+    }
+
+    #[test]
+    fn a_property_only_condition_still_ignores_metadata() {
+        // Group- and item-level conditions keep going through `condition_holds`, which has no bag
+        // to read. Unchanged from before MVP-50: the `%(` text is compared as written.
+        assert!(!holds_bare("'%(RuntimeLibrary)' == ''"));
+        assert!(holds_bare("'%(RuntimeLibrary)' == '%(RuntimeLibrary)'"));
+    }
+
+    #[test]
+    fn a_metadata_value_is_never_rescanned_as_a_condition() {
+        // ADR 09's parse-before-expand guarantee, extended to the second sigil. A value containing
+        // `' or '` is one operand's text, not syntax -- otherwise a project file could rewrite the
+        // toolset's guard around it.
+        let metadata = meta(&[("RuntimeLibrary", "x' or 'a' == 'a")]);
+
+        assert!(!holds_with(
+            "'%(RuntimeLibrary)' == ''",
+            &Properties::new(),
+            &metadata
+        ));
     }
 
     // ---------------------------------------------------------------------------------------

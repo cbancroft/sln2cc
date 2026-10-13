@@ -2066,7 +2066,7 @@ Goal: one solution, one manually selected configuration/platform, producing a
   the downgrade at the `evaluate()` level, and the new chain tests sit beside it. See
   [ADR 55](adr/55-static-property-function-whitelist.md).
 
-- [ ] **MVP-50 — Evaluate `%(Metadata)` references in metadata `Condition`s**
+- [x] **MVP-50 — Evaluate `%(Metadata)` references in metadata `Condition`s**
   `fix/metadata-conditions` · ~6h
 
   **Summary:** Microsoft's toolset `.props` set every `ClCompile` default behind a guard like
@@ -2098,6 +2098,24 @@ Goal: one solution, one manually selected configuration/platform, producing a
   override a value set earlier. `msbuild.rs`: change MVP-49's `Cl.Common.props` stub to the real
   `%(ClCompile.RuntimeLibrary)`-guarded shape and confirm Debug still gets `/MDd` — and that a
   project setting `RuntimeLibrary` explicitly keeps its own value.
+
+  **Outcome:** Implemented by Claude at the user's request, from the plan's reference sketch.
+  `Metadata` now carries the item type it describes: `Metadata::for_item("ClCompile")` replaces `Metadata::new()`,
+  and `expand_metadata` resolves `%(Type.Name)` (via a private `metadata_name` helper) only when
+  `Type` matches the bag's type case-insensitively — chosen with the user over hard-coding `ClCompile.` in `eval.rs` or, as the
+  Python version did, accepting any qualifier and risking a `Link` value resolving against `ClCompile`
+  metadata. Qualified well-known names (`%(ClCompile.Identity)`, `Filename`, …) stay unsupported,
+  since nothing seeds them and resolving them would read as a silent `""`; unqualified well-known
+  names keep their existing silent behaviour, recorded as an Open Question rather than changed here.
+  `eval.rs` gains `metadata_condition_holds(condition, props, metadata, file, line)`; the parser
+  carries an optional bag, and each operand expands `$(…)` then `%(…)`, still after tokenizing.
+  `items.rs::apply` evaluates every metadata setting's own `Condition` through a new `holds_for`
+  against the bag
+  being written — live, so a guard sees earlier siblings and earlier definition groups — while
+  group- and item-level conditions stay on `condition_holds`. MVP-49's stub `Cl.Common.props` now
+  uses the real guarded shape, so the existing Debug `/MDd` and Release `/MD` tests are the
+  end-to-end fix, joined by an explicit project value and an early property-sheet value both
+  surviving the guard. See [ADR 56](adr/56-metadata-aware-metadata-conditions.md).
 
 ---
 
